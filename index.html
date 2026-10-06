@@ -436,7 +436,6 @@ function scheduleAutoSave() {
   clearTimeout(autoTimer);
   autoTimer = setTimeout(async () => {
     if (!isDirty() || ROOT.querySelector(".modal")) return;
-    if (DOC.name !== fileBase() + ".poap.json") return showStatus();   // waits for a manual Save
     if (saving) return scheduleAutoSave();
     await saveDoc({ auto: true });
     if (isDirty()) scheduleAutoSave();                                   // edited while saving
@@ -2028,22 +2027,25 @@ async function buildPdfBlob() {
 const timeAgo = iso => { const m = Math.round((Date.now() - new Date(iso)) / 6e4); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(iso).toLocaleDateString("en-AU"); };
 const clock = iso => new Date(iso).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
 const canPickFiles = !HOST && "showSaveFilePicker" in window;
+/* the title block (number, title, revision) as it was when this file was opened or last named;
+   a change suggests a new revision file, but never stops auto-save. The file's own name can be anything. */
+const titleChanged = () => !!DOC && !!DOC.titleKey && DOC.kind !== "download" && DOC.titleKey !== fileBase();
 function showStatus() {
   const box = $("saveStatus"), s = $("saved"), btn = $("bSaveNow"); if (!box) return;
-  const name = DOC && DOC.name.replace(/\.poap\.json$/i, ""), dirty = isDirty();
-  const renamed = DOC && DOC.name !== fileBase() + ".poap.json";
-  let state, text, button = false;
+  const dirty = isDirty();
+  let state, text, button = "";
   if (saving) { state = "saving"; text = "Saving…"; }
-  else if (!DOC) { state = "none"; text = HOST ? "Not saved to the library" : "Not saved"; button = true; }
-  else if (dirty && renamed) { state = "pending"; text = "Title block changed · save to choose the file"; button = true; }
-  else if (dirty && DOC.kind === "download") { state = "pending"; text = `Changes since ${clock(DOC.savedAt)} download`; button = true; }
+  else if (!DOC) { state = "none"; text = HOST ? "Not saved to the library" : "Not saved"; button = "Save now"; }
+  else if (dirty && DOC.kind === "download") { state = "pending"; text = `Changes since ${clock(DOC.savedAt)} download`; button = "Save now"; }
   else if (dirty) { state = "pending"; text = "Unsaved changes · saving in a few seconds"; }
   else { state = "saved"; text = `All changes saved ${clock(DOC.savedAt)}`; }
-  box.dataset.state = state; s.textContent = text; btn.hidden = !button;
+  if (!saving && titleChanged()) { text += " · title block changed"; button = "Save as new file…"; }
+  box.dataset.state = state; s.textContent = text; btn.hidden = !button; if (button) btn.textContent = button;
   box.title = DOC ? `Saved to ${HOST ? DOC.path : DOC.kind === "file" ? DOC.name + " on this computer" : "your downloads as " + DOC.name}${DOC.kind === "download" ? "" : ". Changes save automatically."}` : "Save once and every change after that is saved automatically.";
 }
 function loadDoc(project, doc) {
   P = upgradeProject(project); DOC = doc; past = []; future = []; sel = null; touched = false;
+  if (DOC && !DOC.titleKey) DOC.titleKey = fileBase();
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   rememberFile();
   render(); renderSide(); showStatus();
@@ -2098,9 +2100,9 @@ async function fileOpen() {
   catch (err) { toast("Couldn't open the file: " + err.message, 5000); }
 }
 async function fileSave(opts = {}) {
-  const wanted = fileBase() + ".poap.json";
-  if (DOC && DOC.kind === "file" && DOC.name !== wanted && !opts.keepName) {
-    return new Promise(done => showModal(`<header><h3>Save as a new file?</h3><p>The title block now reads “${esc(wanted.replace(/\.poap\.json$/i, ""))}” but this programme is saved as “${esc(DOC.name.replace(/\.poap\.json$/i, ""))}”. A new file keeps the old one as it was, which suits a new revision.</p></header>
+  const wanted = fileBase() + ".poap.json", prevKey = DOC?.titleKey;
+  if (DOC && DOC.kind === "file" && titleChanged() && !opts.keepName && !opts.newFile && !opts.auto) {
+    return new Promise(done => showModal(`<header><h3>Save as a new file?</h3><p>The title block now reads “${esc(fileBase())}” (it was “${esc(DOC.titleKey)}”). A new file keeps “${esc(DOC.name)}” as it was, which suits a new revision. Keeping the old file saves the changes into it.</p></header>
       <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn" data-act="keep">Keep the old file</button><button class="btn primary" data-act="new">Save as new file</button></footer>`, {
       keep: () => { fileSave({ keepName: true }).then(done); },
       new: () => { fileSave({ newFile: true }).then(done); },
@@ -2121,8 +2123,16 @@ async function fileSave(opts = {}) {
     } else {
       // someone (or OneDrive sync) changed the file since our last save?
       const f = await handle.getFile();
+      let onDisk = null;
       if (f.lastModified > DOC.lastMod + 1500) {
-        const theirs = { text: await f.text(), modified: new Date(f.lastModified).toISOString(), by: "Someone" };
+        // OneDrive sync can touch the file's date without changing it: only a real content change is a conflict
+        const text = await f.text();
+        try { onDisk = JSON.stringify(JSON.parse(text)); } catch (e) { onDisk = text; }
+        if (onDisk === DOC.base) { DOC.lastMod = f.lastModified; onDisk = null; }
+        else onDisk = text;
+      }
+      if (onDisk !== null) {
+        const theirs = { text: onDisk, modified: new Date(f.lastModified).toISOString(), by: "Someone" };
         conflictPrompt(theirs, {
           loadTheirs: t => loadDoc(t, { ...DOC, base: JSON.stringify(t), lastMod: f.lastModified, savedAt: theirs.modified }),
           saveMerged: base => { DOC = { ...DOC, base, lastMod: f.lastModified }; },
@@ -2133,7 +2143,7 @@ async function fileSave(opts = {}) {
     if ((await handle.queryPermission?.({ mode: "readwrite" })) === "prompt" && (await handle.requestPermission({ mode: "readwrite" })) !== "granted") throw new Error("permission to save to the file was refused");
     const w = await handle.createWritable(); await w.write(text); await w.close();
     const f = await handle.getFile();
-    DOC = { kind: "file", handle, name: f.name, lastMod: f.lastModified, base: snapshot, savedAt: new Date().toISOString() };
+    DOC = { kind: "file", handle, name: f.name, lastMod: f.lastModified, base: snapshot, savedAt: new Date().toISOString(), titleKey: opts.auto && prevKey ? prevKey : fileBase() };
     rememberFile();
     if (!opts.auto) toast("Saved " + f.name + ". Changes now save automatically.");
     return true;
@@ -2150,7 +2160,7 @@ function rememberFile() {
     return;
   }
   if (!("indexedDB" in window)) return;
-  idbSet("doc", DOC?.kind === "file" ? { handle: DOC.handle, name: DOC.name, lastMod: DOC.lastMod, base: DOC.base, savedAt: DOC.savedAt } : null);
+  idbSet("doc", DOC?.kind === "file" ? { handle: DOC.handle, name: DOC.name, lastMod: DOC.lastMod, base: DOC.base, savedAt: DOC.savedAt, titleKey: DOC.titleKey } : null);
 }
 /* SharePoint: after a reload, carry on with the programme from the library */
 async function offerLibraryReconnect() {
@@ -2184,7 +2194,7 @@ async function offerReconnect() {
     go: async () => {
       try {
         if ((await last.handle.requestPermission({ mode: "readwrite" })) !== "granted") return toast("Permission to the file wasn't given, so changes won't save to it.", 5000);
-        DOC = { kind: "file", handle: last.handle, name: last.name, lastMod: last.lastMod, base: last.base, savedAt: last.savedAt };
+        DOC = { kind: "file", handle: last.handle, name: last.name, lastMod: last.lastMod, base: last.base, savedAt: last.savedAt, titleKey: last.titleKey || fileBase() };
         const f = await last.handle.getFile();
         if (f.lastModified > last.lastMod + 1500 && !unsaved) {          // changed elsewhere, nothing new here: just load it
           const t = JSON.parse(await f.text()); loadDoc(t, { ...DOC, base: JSON.stringify(t), lastMod: f.lastModified, savedAt: new Date(f.lastModified).toISOString() });
@@ -2222,9 +2232,9 @@ async function libraryOpen() {
 
 async function librarySave(opts = {}) {
   // project number, title or revision changed since the file was named: new file or same file?
-  const wanted = fileBase() + ".poap.json";
-  if (DOC && DOC.name !== wanted && !opts.keepName) {
-    return new Promise(done => showModal(`<header><h3>Save as a new file?</h3><p>The title block now reads “${esc(wanted.replace(/\.poap\.json$/i, ""))}” but this programme is saved as “${esc(DOC.name.replace(/\.poap\.json$/i, ""))}”. A new file keeps the old one as it was, which suits a new revision.</p></header>
+  const prevKey = DOC?.titleKey;
+  if (DOC && titleChanged() && !opts.keepName && !opts.auto) {
+    return new Promise(done => showModal(`<header><h3>Save as a new file?</h3><p>The title block now reads “${esc(fileBase())}” (it was “${esc(DOC.titleKey)}”). A new file keeps “${esc(DOC.name)}” as it was, which suits a new revision. Keeping the old name saves the changes into it.</p></header>
       <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn" data-act="keep">Keep the old name</button><button class="btn primary" data-act="new">Save as new file</button></footer>`, {
       keep: () => { librarySave({ keepName: true }).then(done); },
       new: () => { DOC = null; librarySave().then(done); },
@@ -2242,7 +2252,7 @@ async function librarySave(opts = {}) {
         { replace: () => { saveDoc({ replace: true }); } });
     }
     if (r.conflict) { await resolveConflict(path, name); return false; }
-    DOC = { kind: "library", path, name, etag: r.etag, base: snapshot, savedAt: new Date().toISOString() };
+    DOC = { kind: "library", path, name, etag: r.etag, base: snapshot, savedAt: new Date().toISOString(), titleKey: opts.auto && prevKey ? prevKey : fileBase() };
     rememberFile();
     showStatus(); if (!opts.auto) toast("Saved " + name);
     return true;
