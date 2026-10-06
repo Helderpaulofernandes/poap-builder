@@ -162,6 +162,7 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <button class="btn" id="bLane" title="Add a swimlane">+ Lane</button>
     <button class="btn" id="bBar" title="Add a bar to the selected lane">+ Bar</button>
     <button class="btn" id="bMs" title="Add a milestone to the selected lane">+ Milestone</button>
+    <button class="btn" id="bCurtain" title="Add a shaded date range across all lanes: contingency, saving or allowance">+ Curtain</button>
   </div>
   <div class="grp">
     <button class="btn" id="bUndo" title="Undo (Ctrl+Z)">Undo</button>
@@ -245,7 +246,28 @@ const DEFAULT_STYLES = [
   { name: "ML_Triangle", shape: "triangle", behaviour: "Move",    fill: "#FFD965", stroke: "#8A6A00", notes: "Design Milestone" },
   { name: "ML_Square",   shape: "square",   behaviour: "Move",    fill: "#C4D6A0", stroke: "#5B7330", notes: "Construction Milestone" },
   { name: "ML_Circle",   shape: "circle",   behaviour: "Move",    fill: "#FFD200", stroke: "#163E6B", notes: "Circuit Book" },
+  ...curtainDefaults(),
 ];
+/* Curtains: shaded date ranges that run through every lane (contingency, savings, allowances).
+   opacity is the fill's see-through level; days is how the duration shows in the tag: "", "plain", "+" or "−". */
+function curtainDefaults() {
+  return [
+    { name: "CUR_CONTINGENCY", shape: "hatched", behaviour: "Curtain", fill: "#F47920", stroke: "#C2570A", notes: "Contingency", opacity: 0.18, days: "+" },
+    { name: "CUR_SAVING",      shape: "edges",   behaviour: "Curtain", fill: "#2E9E5B", stroke: "#1F7A4D", notes: "Saving",      opacity: 0.16, days: "−" },
+    { name: "CUR_ALLOWANCE",   shape: "solid",   behaviour: "Curtain", fill: "#4F7CAC", stroke: "#2F5A87", notes: "Allowance",   opacity: 0.14, days: "plain" },
+  ];
+}
+/* programmes saved before curtains existed get the default curtain types */
+function upgradeProject(p) {
+  if (!p.styles.some(s => s.behaviour === "Curtain")) p.styles.push(...curtainDefaults().filter(c => !p.styles.some(s => s.name === c.name)));
+  return p;
+}
+const isCurtain = (p, name) => styleOf(p, name).behaviour === "Curtain";
+const curtainDays = it => toDays(it.end) - toDays(it.start) + 1;
+function curtainTag(it, st) {
+  const d = curtainDays(it), sign = st.days === "+" ? "+" : st.days === "−" ? "−" : "";
+  return st.days ? `${it.name} · ${sign}${d}d` : it.name;
+}
 
 // Seed: rows from "Pxx-xxxx ProjectTitle PoaP_Shape_Data.xlsx" (ShapeID, Name, Style, Lane, Start, End, Status, Y_mm)
 const SEED_ROWS = [["MS0001","Date for Contract Award (Indicative)","ML_Diamond","Milestones","2026-11-03","2026-11-03","Active",542],["MS0002","Site Investigation Complete","ML_Square","Milestones","2026-01-22","2026-01-22","Active",null],["MS0003","Design IFC Issued","ML_Triangle","Milestones","2026-12-22","2026-12-22","Active",535],["MS0003","Site Establishment Complete","ML_Square","Milestones","2027-03-05","2027-03-05","Active",null],["MS0004","Retaining Wall Works Complete","ML_Square","Milestones","2027-04-13","2027-04-13","Active",540],["MS0005","Subgrade Complete","ML_Square","Milestones","2027-05-10","2027-05-10","Active",null],["MS0006","Underground Services Complete","ML_Square","Milestones","2027-06-03","2027-06-03","Active",null],["MS0007","Pavement Complete","ML_Square","Milestones","2027-06-25","2027-06-25","Active",null],["MS0008","Carpark Extension Complete","ML_Square","Milestones","2027-08-21","2027-08-21","Active",535],["MS0009","All Testing & Commissioning Complete","ML_Square","Milestones","2027-07-26","2027-07-26","Active",null],["MS0010","Deterministic Date of Construction Completion","ML_Circle","Milestones","2027-07-27","2027-07-27","Active",null],["MS0011","Forecast Date of Construction Completion","ML_Circle","Milestones","2027-07-30","2027-07-30","Active",null],["MS0012","Date for Construction Completion","ML_Diamond","Milestones","2027-07-30","2027-07-30","Active",542],["PRE001","Site Access Preconditions","BAR","Preconstruction","2026-11-04","2027-03-30","Active",437.3],["PRE002","Construction Preconditions","BAR","Preconstruction","2027-01-13","2027-03-05","Active",430.3],["PRE003","Management Plans","BAR","Preconstruction","2026-11-04","2027-02-11","Active",423.3],["DES001","Design Development 30%","BAR","Design","2026-11-11","2026-12-09","Active",411.3],["DES002","Design Development 60%","BAR","Design","2026-12-09","2027-01-06","Active",404.3],["DES003","Design Development 90%","BAR","Design","2027-01-06","2027-01-25","Active",397.3],["DES004","Design Development IFC","BAR","Design","2027-01-25","2027-02-15","Active",390.3],["PRO001","Key Package 21 Combined Civils, Structural & Finishes","BAR","Procurement","2027-01-06","2027-03-01","Active",378.3],["PRO002","Key Package 23 Electrical, Lighting and CCTV","BAR","Procurement","2027-01-04","2027-05-28","Active",371.3],["CON001","SI","BAR","Construction","2026-12-17","2026-12-22","Active",359.3],["CON002","Demolition & Retaining Wall Works","BAR","Construction","2027-03-01","2027-04-13","Active",352.3],["CON003","Bulk Earthworks & Drainage","BAR","Construction","2027-04-14","2027-05-10","Active",345.3],["CON004","Services & Foundations","BAR","Construction","2027-05-11","2027-06-03","Active",338.3],["CON005","Pavement Construction","BAR","Construction","2027-06-07","2027-06-25","Active",331.3],["CON006","Fit-Out & Finishing Works","BAR","Construction","2027-06-28","2027-07-21","Active",324.3],["CON007","Testing & Commissioning","BAR","Testing & Commissioning","2027-07-22","2027-07-26","Active",312.3],["CON008","Handover & Demobilisation","BAR","Handover & Demobilisation","2027-07-14","2027-07-27","Active",300.3]];
@@ -278,12 +300,12 @@ function projectFromRows(rows, laneRows, base) {
   const reserved = new Set(rows.map(r => (r.id || "").trim()).filter(Boolean));
   const yGroups = new Map();
   for (const r of rows) {
-    const lane = ensureLane(r.lane);
+    const st = styleOf(p, r.style), curtain = st.behaviour === "Curtain";
+    const lane = curtain ? { id: "" } : ensureLane(r.lane);   // curtains span every lane
     let id = (r.id || "").trim() || nextId(p, r.style, null, reserved);
     if (seen.has(id)) id = nextId(p, r.style, id, reserved);
     seen.add(id);
-    const st = styleOf(p, r.style);
-    const it = { id, name: r.name || "", style: st.name, lane: lane.id, start: r.start, end: isMs(p, st.name) ? r.start : (r.end || r.start), status: r.status || "Active", row: Number.isFinite(r.row) ? r.row : null, fill: r.fill || "", stroke: r.stroke || "" };
+    const it = { id, name: r.name || "", style: st.name, lane: lane.id, start: r.start, end: isMs(p, st.name) ? r.start : (r.end || r.start), status: r.status || "Active", row: curtain ? 0 : Number.isFinite(r.row) ? r.row : null, fill: r.fill || "", stroke: r.stroke || "" };
     p.items.push(it);
     if (it.row == null && Number.isFinite(r.y)) { (yGroups.get(lane.id) || yGroups.set(lane.id, []).get(lane.id)).push([it, r.y]); }
   }
@@ -301,7 +323,12 @@ function seedProject() {
   const base = blankProject();
   Object.assign(base.meta, { program: "SAMPLE STATION UPGRADE PROGRAM", number: "P00-0000", title: "Example Commuter Car Park Extension", subtitle: "Summary program (example data)", client: "", author: "" });
   base.timeline = { start: "2026-11-01", end: "2027-08-31" };
-  return projectFromRows(rows, null, base);
+  const p = projectFromRows(rows, null, base);
+  p.items.push(
+    { id: "CUR001", name: "Wet weather allowance", style: "CUR_ALLOWANCE", lane: "", start: "2027-05-17", end: "2027-05-28", status: "Active", row: 0, fill: "", stroke: "" },
+    { id: "CUR002", name: "Contingency", style: "CUR_CONTINGENCY", lane: "", start: "2027-07-31", end: "2027-08-20", status: "Active", row: 0, fill: "", stroke: "" },
+  );
+  return p;
 }
 
 function newLane(p, name) {
@@ -312,7 +339,7 @@ function newLane(p, name) {
 const styleOf = (p, name) => p.styles.find(s => s.name.toLowerCase() === String(name||"").toLowerCase()) || p.styles[0];
 const isMs = (p, name) => styleOf(p, name).behaviour === "Move";
 function nextId(p, styleName, hint, reserved) {
-  let prefix = isMs(p, styleName) ? "MS" : "ACT";
+  let prefix = isMs(p, styleName) ? "MS" : isCurtain(p, styleName) ? "CUR" : "ACT";
   if (hint) prefix = hint.replace(/\d+$/, "") || prefix;
   const used = new Set([...p.items.map(i => i.id), ...(reserved || [])]);
   const width = prefix === "MS" ? 4 : 3;
@@ -333,6 +360,7 @@ let DOC = null;   // with a host: the library file this programme was opened fro
 let P, sel = null, past = [], future = [];
 try { const s = localStorage.getItem(STORE); if (s) P = JSON.parse(s); } catch (e) {}
 if (!P || P.format !== "poap/2") P = seedProject();
+upgradeProject(P);
 
 function commit(mutator, keepSel) {
   past.push(JSON.stringify(P)); if (past.length > 200) past.shift(); future = [];
@@ -446,12 +474,17 @@ function draw(svg, opts) {
     el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: "#C8102E", "stroke-width": 1, "stroke-dasharray": "5 3" }, gg);
   }
 
+  // curtains: shading behind the bars, tags and drag handles above them
+  const curtains = P.items.filter(it => isCurtain(P, it.style));
+  drawCurtainShades(svg, curtains, L);
+
   // items
   const gi = el("g", {}, svg);
   for (const it of P.items) {
     const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
     drawItem(gi, it, ln, L, opts, F);
   }
+  drawCurtainTags(svg, curtains, L, opts, F);
 
   // lane titles (vertical, in the swimlane colour)
   const gh = el("g", {}, svg);
@@ -473,6 +506,49 @@ function draw(svg, opts) {
   // the PDF engine's fonts only have normal/bold
   if (opts.print) svg.querySelectorAll("[font-weight]").forEach(t => t.setAttribute("font-weight", +t.getAttribute("font-weight") >= 600 ? "bold" : "normal"));
   return L;
+}
+
+function curtainColours(it) {
+  const st = styleOf(P, it.style);
+  return { st, fill: it.fill || st.fill || BRAND.orange, stroke: it.stroke || st.stroke || BRAND.navy, opacity: it.opacity ?? st.opacity ?? 0.18 };
+}
+function drawCurtainShades(svg, curtains, L) {
+  const g = el("g", { "pointer-events": "none" }, svg), y1 = L.bodyTop, h = L.bodyBottom - L.bodyTop;
+  for (const it of curtains) {
+    const { st, fill, stroke, opacity } = curtainColours(it);
+    const x1 = Math.max(G.headW, L.x(it.start)), x2 = Math.min(L.W, L.x(it.end) + L.ppd), w = x2 - x1;
+    if (w <= 0) continue;
+    el("rect", { x: x1, y: y1, width: w, height: h, fill, "fill-opacity": opacity }, g);
+    if (st.shape === "hatched") {
+      // diagonal hatching clipped to the band by stepping along its width
+      for (let hx = x1 - h; hx < x2; hx += 9) {
+        const ax = Math.max(hx, x1), ay = y1 + h - (ax - hx), bx = Math.min(hx + h, x2), by = y1 + h - (bx - hx);
+        if (bx > ax) el("line", { x1: ax, y1: ay, x2: bx, y2: by, stroke, "stroke-width": .6, "stroke-opacity": Math.min(1, opacity * 2.2) }, g);
+      }
+    }
+    if (st.shape !== "solid") for (const x of [x1, x2]) el("line", { x1: x, x2: x, y1, y2: y1 + h, stroke, "stroke-width": 1.1, "stroke-dasharray": "5 3" }, g);
+  }
+}
+/* tag pills at the top of the body; overlapping tags stack into rows */
+function drawCurtainTags(svg, curtains, L, opts, F) {
+  const g = el("g", {}, svg), rows = [];
+  [...curtains].sort((a, b) => toDays(a.start) - toDays(b.start)).forEach(it => {
+    const { st, stroke } = curtainColours(it);
+    const x1 = Math.max(G.headW, L.x(it.start)), x2 = Math.min(L.W, L.x(it.end) + L.ppd);
+    if (x2 <= x1) return;
+    const text = curtainTag(it, st), w = textW(text, 9, 700) + 14;
+    let r = rows.findIndex(end => end + 4 < x1); if (r < 0) { r = rows.length; rows.push(0); }
+    rows[r] = x1 + w;
+    const y = L.bodyTop + 4 + r * 18, selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+    const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
+    el("rect", { x: x1 + 2, y, width: w, height: 15, rx: 7.5, fill: stroke, "data-id": it.id, "data-part": "body" }, grp);
+    el("text", { x: x1 + 9, y: y + 10.8, fill: "#FFFFFF", "font-size": 9, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, text);
+    if (selected) el("rect", { x: x1, y: L.bodyTop, width: x2 - x1, height: L.bodyBottom - L.bodyTop, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, grp);
+    if (!opts.print) {   // full-height edge strips to drag the start and finish
+      el("rect", { x: x1 - 3, y: L.bodyTop, width: 6, height: L.bodyBottom - L.bodyTop, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
+      el("rect", { x: x2 - 3, y: L.bodyTop, width: 6, height: L.bodyBottom - L.bodyTop, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
+    }
+  });
 }
 
 function drawHeader(svg, L, F, opts) {
@@ -503,10 +579,11 @@ function drawFooter(svg, L, F) {
   el("text", { x: 14, y: cy + 4, fill: BRAND.ink, "font-size": 11, "font-weight": 700, "font-family": F.font }, g, "Legend:");
   let x = 14 + textW("Legend:", 11, 700) + 14;
   // milestone types, plus bar types that have their own colour (lane-coloured bars need no key)
-  const used = P.styles.filter(s => (s.behaviour === "Move" || s.fill) && P.items.some(i => i.style === s.name));
+  const used = P.styles.filter(s => (s.behaviour !== "Stretch" || s.fill) && P.items.some(i => i.style === s.name));
   for (const s of used) {
     if (x > bx - 120) break;
     if (s.behaviour === "Move") drawMarker(g, s.shape, x + 6, cy, 13, s.fill, s.stroke);
+    else if (s.behaviour === "Curtain") { el("rect", { x, y: cy - 7, width: 22, height: 14, fill: s.fill, "fill-opacity": Math.max(.25, s.opacity ?? .18), stroke: s.stroke, "stroke-dasharray": s.shape === "solid" ? null : "3 2" }, g); }
     else drawBarShape(g, s.shape, x, cy - 6, 22, 12, s.fill || laneBar(BRAND.navy), s.stroke);
     const tx = x + (s.behaviour === "Move" ? 18 : 28);
     el("text", { x: tx, y: cy + 3.5, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, s.notes || s.name);
@@ -637,8 +714,8 @@ function drawBarShape(g, shape, x, y, w, h, fill, stroke) {
 }
 const defaultStyle = behaviour => (P.styles.find(s => s.behaviour === behaviour && (s.name === "BAR" || s.name === "ML_Square")) || P.styles.find(s => s.behaviour === behaviour) || P.styles[0]).name;
 /* Excel code for a new type, from its label: "Utility Shutdown" -> ML_UTILITY_SHUTDOWN */
-function styleCode(label, ms, p) {
-  const base = (ms ? "ML_" : "BAR_") + (label || "TYPE").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 24);
+function styleCode(label, behaviour, p) {
+  const base = ({ Move: "ML_", Curtain: "CUR_" }[behaviour] || "BAR_") + (label || "TYPE").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 24);
   let code = base, n = 2;
   while (p.styles.some(s => s.name.toLowerCase() === code.toLowerCase())) code = base + "_" + n++;
   return code;
@@ -696,8 +773,10 @@ window.addEventListener("pointermove", e => {
   else if (drag.part === "r") it.end = fromDays(Math.max(toDays(o.end) + dd, toDays(o.start)));
   else {
     it.start = addDays(o.start, dd); it.end = ms ? it.start : addDays(o.end, dd);
-    const s = slotAt(p.y - (drag.y0 - rowCenter(o)));
-    if (s) { it.lane = s.lane; it.row = s.row; }
+    if (!isCurtain(P, it.style)) {   // curtains only move in time
+      const s = slotAt(p.y - (drag.y0 - rowCenter(o)));
+      if (s) { it.lane = s.lane; it.row = s.row; }
+    }
   }
   render();
 });
@@ -716,11 +795,12 @@ $("chart").addEventListener("dblclick", e => {
 
 function addItem(styleName, laneId, start, row) {
   if (!P.lanes.length) { toast("Add a swimlane first."); return; }
-  laneId = laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null) || P.lanes[0].id;
-  const ms = isMs(P, styleName);
+  const ms = isMs(P, styleName), curtain = isCurtain(P, styleName);
+  laneId = curtain ? "" : laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null) || P.lanes[0].id;
   if (!start) { const st = $("stage"); start = dayAt(st.scrollLeft + st.clientWidth / 2); }
-  const it = { id: nextId(P, styleName), name: ms ? "New milestone" : "New activity", style: styleName, lane: laneId, start, end: ms ? start : addDays(start, 13), status: "Active", row: 0, fill: "", stroke: "" };
-  it.row = row != null ? row : freeRow(P, it);
+  const name = ms ? "New milestone" : curtain ? styleOf(P, styleName).notes : "New activity";
+  const it = { id: nextId(P, styleName), name, style: styleName, lane: laneId, start, end: ms ? start : addDays(start, curtain ? 9 : 13), status: "Active", row: 0, fill: "", stroke: "" };
+  it.row = row != null ? row : curtain ? 0 : freeRow(P, it);
   commit(p => p.items.push(it));
   sel = { type: "item", id: it.id }; render(); renderSide();
   setTimeout(() => { const f = $("iName"); if (f) { f.focus(); f.select(); } }, 0);
@@ -759,6 +839,7 @@ document.addEventListener("keydown", e => {
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 function renderSide() {
   const side = $("side"), cur = findSel();
+  if (sel && sel.type === "item" && cur && isCurtain(P, cur.style)) { renderCurtainSide(side, cur); return; }
   if (sel && sel.type === "item" && cur) {
     const st = styleOf(P, cur.style), ms = st.behaviour === "Move";
     const lane = P.lanes.find(l => l.id === cur.lane), eff = itemColours(cur, lane);
@@ -773,7 +854,7 @@ function renderSide() {
       </div>
       ${ms ? "" : `<p class="note">${dur} calendar days</p>`}
       <div class="row2">
-        <div class="f"><label for="iStyle">Style</label><select id="iStyle">${P.styles.map(s => `<option value="${esc(s.name)}" ${s.name === cur.style ? "selected" : ""}>${esc(s.notes || s.name)}</option>`).join("")}</select></div>
+        <div class="f"><label for="iStyle">Style</label><select id="iStyle">${P.styles.filter(s => s.behaviour !== "Curtain").map(s => `<option value="${esc(s.name)}" ${s.name === cur.style ? "selected" : ""}>${esc(s.notes || s.name)}</option>`).join("")}</select></div>
         <div class="f"><label for="iLane">Lane</label><select id="iLane">${P.lanes.map(l => `<option value="${l.id}" ${l.id === cur.lane ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
       </div>
       <div class="row2">
@@ -868,9 +949,12 @@ function renderSide() {
     <div class="types">${P.styles.filter(s => s.behaviour === "Move").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addMsType">+ Milestone type</button></div>
     <h2>Bar types</h2>
-    <div class="types">${P.styles.filter(s => s.behaviour !== "Move").map(typeRow).join("")}</div>
+    <div class="types">${P.styles.filter(s => s.behaviour === "Stretch").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addBarType">+ Bar type</button></div>
-    <p class="note">Click a type to rename it or change its shape and colour. Names appear in the sheet legend.</p>
+    <h2>Curtain types</h2>
+    <div class="types">${P.styles.filter(s => s.behaviour === "Curtain").map(typeRow).join("")}</div>
+    <div class="actions"><button class="btn" id="addCurtainType">+ Curtain type</button></div>
+    <p class="note">Click a type to rename it or change its shape, colour or shading. Names appear in the sheet legend.</p>
     ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${dupes.join(", ")}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
     <p class="note">${P.items.length} items in ${P.lanes.length} lanes. Select a bar or lane title to edit it.</p>`;
   const um = (k, f) => $(k).onchange = e => commit(p => f(p, e.target.value), true);
@@ -882,51 +966,112 @@ function renderSide() {
   $("mLogo").onclick = () => $("fLogo").click();
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => p.meta.clientLogo = "", true);
   side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
-  $("addMsType").onclick = () => addType(true);
-  $("addBarType").onclick = () => addType(false);
+  $("addMsType").onclick = () => addType("Move");
+  $("addBarType").onclick = () => addType("Stretch");
+  $("addCurtainType").onclick = () => addType("Curtain");
+}
+/* inspector for one curtain */
+function renderCurtainSide(side, cur) {
+  const { st, fill, stroke, opacity } = curtainColours(cur);
+  const types = P.styles.filter(s => s.behaviour === "Curtain"), pct = Math.round(opacity * 100);
+  side.innerHTML = `
+    <h2>Curtain <span class="idtag">${esc(cur.id)}</span></h2>
+    <div class="f"><label for="cName">Tag</label><input id="cName" value="${esc(cur.name)}"></div>
+    <div class="row2">
+      <div class="f"><label for="cStart">From</label><input id="cStart" type="date" value="${cur.start}"></div>
+      <div class="f"><label for="cEnd">To</label><input id="cEnd" type="date" value="${cur.end}"></div>
+    </div>
+    <p class="note">${curtainDays(cur)} calendar days · tag reads “${esc(curtainTag(cur, st))}”</p>
+    <div class="f"><label for="cType">Type</label><select id="cType">${types.map(s => `<option value="${esc(s.name)}" ${s.name === cur.style ? "selected" : ""}>${esc(s.notes || s.name)}</option>`).join("")}</select></div>
+    <div class="f"><label for="cOpacity">Shading: <span id="cPct">${pct}%</span>${cur.opacity != null ? " (this curtain)" : " (from type)"}</label>
+      <input id="cOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${fill}"></div>
+    <div class="row2">
+      <div class="f"><label for="cFill">Shade colour</label><input id="cFill" type="color" value="${fill}"></div>
+      <div class="f"><label for="cStroke">Tag &amp; edges</label><input id="cStroke" type="color" value="${stroke}"></div>
+    </div>
+    <p class="note">${cur.fill || cur.stroke || cur.opacity != null ? `Custom look for this curtain · <a href="#" id="cReset">use the type's</a>` : `Uses the “${esc(st.notes)}” type's colours and shading.`}</p>
+    <div class="f"><label for="cId">ShapeID</label><input id="cId" value="${esc(cur.id)}"></div>
+    <div class="actions"><button class="btn" id="cDup">Duplicate</button><button class="btn danger" id="cDel">Delete</button></div>
+    <p class="note">Curtains run through every lane. Drag the tag to move one; drag its left or right edge to change the dates.</p>`;
+  const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
+  $("cName").onchange = e => upd(x => x.name = e.target.value);
+  $("cStart").onchange = e => { if (!e.target.value) return; upd(x => { const d = toDays(e.target.value) - toDays(x.start); x.start = e.target.value; if (toDays(x.end) < toDays(x.start)) x.end = addDays(x.end, d); }); };
+  $("cEnd").onchange = e => { if (!e.target.value) return; upd(x => x.end = toDays(e.target.value) < toDays(x.start) ? x.start : e.target.value); };
+  $("cType").onchange = e => upd(x => { const was = styleOf(P, x.style); if (x.name === was.notes) x.name = styleOf(P, e.target.value).notes; x.style = e.target.value; });
+  // live preview while sliding, one undo step when released
+  $("cOpacity").oninput = e => { $("cPct").textContent = e.target.value + "%"; cur.opacity = +e.target.value / 100; render(); };
+  const origOpacity = cur.opacity;
+  $("cOpacity").onchange = e => {
+    const v = +e.target.value / 100;
+    if (origOpacity === undefined) delete cur.opacity; else cur.opacity = origOpacity;   // so undo returns to the value before sliding
+    upd(x => x.opacity = v);
+  };
+  $("cFill").onchange = e => upd(x => x.fill = e.target.value.toUpperCase());
+  $("cStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
+  if ($("cReset")) $("cReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; delete x.opacity; }); };
+  $("cId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; } upd(x => x.id = v); sel.id = v; renderSide(); };
+  $("cDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id), start: addDays(cur.end, 1), end: addDays(cur.end, curtainDays(cur)) }; commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
+  $("cDel").onclick = () => { commit(p => p.items = p.items.filter(i => i.id !== cur.id)); sel = null; renderSide(); };
 }
 function typeRow(s) {
   const n = P.items.filter(i => i.style === s.name).length;
   return `<button class="type" data-type="${esc(s.name)}"><svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">${legendIcon(s)}</svg>
     <span>${esc(s.notes || s.name)}</span><small>${n || ""}</small></button>`;
 }
-function addType(ms) {
-  const label = ms ? "New milestone type" : "New bar type";
-  const s = ms ? { name: styleCode(label, true, P), shape: "star", behaviour: "Move", fill: "#4F7CAC", stroke: "#163E6B", notes: label, autoCode: true }
-               : { name: styleCode(label, false, P), shape: "bar", behaviour: "Stretch", fill: "#B7C9A8", stroke: "#163E6B", notes: label, autoCode: true };
+const KIND = {
+  Move:    { word: "milestone", Title: "Milestone", prefix: "ML_",  shapes: () => MS_SHAPES },
+  Stretch: { word: "bar",       Title: "Bar",       prefix: "BAR_", shapes: () => BAR_SHAPES },
+  Curtain: { word: "curtain",   Title: "Curtain",   prefix: "CUR_", shapes: () => CURTAIN_SHAPES },
+};
+const CURTAIN_SHAPES = [["solid","Solid shading"],["edges","Shading with dashed edges"],["hatched","Hatched, dashed edges"]];
+const DAYS_OPTIONS = [["","Tag only"],["plain","Tag · 10d"],["+","Tag · +10d"],["−","Tag · −10d"]];
+function addType(kind) {
+  const label = `New ${KIND[kind].word} type`, base = { name: styleCode(label, kind, P), behaviour: kind, notes: label, autoCode: true };
+  const s = kind === "Move" ? { ...base, shape: "star", fill: "#4F7CAC", stroke: "#163E6B" }
+          : kind === "Curtain" ? { ...base, shape: "edges", fill: "#8E6CC0", stroke: "#5E3F94", opacity: 0.16, days: "plain" }
+          : { ...base, shape: "bar", fill: "#B7C9A8", stroke: "#163E6B" };
   commit(p => p.styles.push(s));
   sel = { type: "style", id: s.name }; render(); renderSide();
   setTimeout(() => { const f = $("sLabel"); if (f) { f.focus(); f.select(); } }, 0);
 }
 /* inspector for one milestone / bar type */
 function renderTypeSide(side, s) {
-  const ms = s.behaviour === "Move", used = P.items.filter(i => i.style === s.name).length;
+  const kind = KIND[s.behaviour] || KIND.Stretch, curtain = s.behaviour === "Curtain", bar = s.behaviour === "Stretch";
+  const used = P.items.filter(i => i.style === s.name).length;
   const sameKind = P.styles.filter(x => x.behaviour === s.behaviour);
-  const shapes = ms ? MS_SHAPES : BAR_SHAPES;
+  const pct = Math.round((s.opacity ?? .18) * 100);
   side.innerHTML = `
-    <h2>${ms ? "Milestone type" : "Bar type"}</h2>
-    <div class="f"><label for="sLabel">Name (shown in legend)</label><input id="sLabel" value="${esc(s.notes)}"></div>
-    <div class="f"><label for="sShape">Shape</label><select id="sShape">${shapes.map(([k, n]) => `<option value="${k}" ${k === s.shape ? "selected" : ""}>${n}</option>`).join("")}</select></div>
-    ${!ms ? `<label class="check"><input type="checkbox" id="sLane" ${s.fill ? "" : "checked"}> Use the lane colour</label>` : ""}
+    <h2>${kind.Title} type</h2>
+    <div class="f"><label for="sLabel">Name (shown in legend${curtain ? " and as the default tag" : ""})</label><input id="sLabel" value="${esc(s.notes)}"></div>
+    <div class="f"><label for="sShape">${curtain ? "Shading" : "Shape"}</label><select id="sShape">${kind.shapes().map(([k, n]) => `<option value="${k}" ${k === s.shape ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+    ${bar ? `<label class="check"><input type="checkbox" id="sLane" ${s.fill ? "" : "checked"}> Use the lane colour</label>` : ""}
+    ${curtain ? `<div class="f"><label for="sOpacity">Shading: <span id="sPct">${pct}%</span></label><input id="sOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${s.fill}"></div>
+      <div class="f"><label for="sDays">Duration in the tag</label><select id="sDays">${DAYS_OPTIONS.map(([k, n]) => `<option value="${k}" ${k === (s.days || "") ? "selected" : ""}>${n}</option>`).join("")}</select></div>` : ""}
     <div class="row2">
-      <div class="f"><label for="sFill">Fill</label><input id="sFill" type="color" value="${s.fill || laneBar(BRAND.orange)}" ${!ms && !s.fill ? "disabled" : ""}></div>
-      <div class="f"><label for="sStroke">Outline</label><input id="sStroke" type="color" value="${s.stroke || BRAND.navy}"></div>
+      <div class="f"><label for="sFill">${curtain ? "Shade colour" : "Fill"}</label><input id="sFill" type="color" value="${s.fill || laneBar(BRAND.orange)}" ${bar && !s.fill ? "disabled" : ""}></div>
+      <div class="f"><label for="sStroke">${curtain ? "Tag & edges" : "Outline"}</label><input id="sStroke" type="color" value="${s.stroke || BRAND.navy}"></div>
     </div>
-    <div class="type-preview"><svg width="120" height="30" viewBox="0 0 120 30" aria-hidden="true">${typePreview(s)}</svg></div>
+    <div class="type-preview"><svg width="120" height="${curtain ? 44 : 30}" viewBox="0 0 120 ${curtain ? 44 : 30}" aria-hidden="true">${typePreview(s)}</svg></div>
     <div class="f"><label for="sCode">Excel code</label><input id="sCode" value="${esc(s.name)}"></div>
     <p class="note">The code is what the Style column holds in Excel. ${used ? `Used by ${used} item${used > 1 ? "s" : ""}.` : "Not used yet."}</p>
     <div class="actions">
-      <button class="btn" id="sAdd">+ ${ms ? "Milestone" : "Bar"} of this type</button>
+      <button class="btn" id="sAdd">+ ${kind.Title} of this type</button>
       <button class="btn" id="sBack">All types</button>
     </div>
     ${sameKind.length > 1 ? `<div class="f"><label for="sDelTo">Delete this type${used ? " and move its items to" : ""}</label>
       <div class="actions">${used ? `<select id="sDelTo">${sameKind.filter(x => x !== s).map(x => `<option value="${esc(x.name)}">${esc(x.notes || x.name)}</option>`).join("")}</select>` : ""}
-      <button class="btn danger" id="sDel">Delete type</button></div></div>` : `<p class="note">This is the only ${ms ? "milestone" : "bar"} type, so it can't be deleted.</p>`}`;
+      <button class="btn danger" id="sDel">Delete type</button></div></div>` : `<p class="note">This is the only ${kind.word} type, so it can't be deleted.</p>`}`;
   const upd = f => commit(p => f(p.styles.find(x => x.name === s.name)), true);
+  if (curtain) {
+    const orig = s.opacity;
+    $("sOpacity").oninput = e => { $("sPct").textContent = e.target.value + "%"; s.opacity = +e.target.value / 100; render(); };
+    $("sOpacity").onchange = e => { const v = +e.target.value / 100; s.opacity = orig; upd(x => x.opacity = v); };
+    $("sDays").onchange = e => upd(x => x.days = e.target.value);
+  }
   $("sLabel").onchange = e => {
     const label = e.target.value.trim(); if (!label) { renderSide(); return; }
     // a type created here keeps its Excel code in step with its name until the code is set by hand
-    const code = s.autoCode ? styleCode(label, ms, { styles: P.styles.filter(x => x !== s) }) : s.name;
+    const code = s.autoCode ? styleCode(label, s.behaviour, { styles: P.styles.filter(x => x !== s) }) : s.name;
     commit(p => { p.items.forEach(i => { if (i.style === s.name) i.style = code; }); Object.assign(p.styles.find(x => x.name === s.name), { notes: label, name: code }); }, true);
     sel.id = code; renderSide();
   };
@@ -951,7 +1096,15 @@ function renderTypeSide(side, s) {
 function typePreview(s) {
   const g = document.createElementNS(NS, "g");
   if (s.behaviour === "Move") { drawMarker(g, s.shape, 14, 15, 14, s.fill, s.stroke); el("text", { x: 28, y: 18.5, "font-size": 10, fill: BRAND.navy, "font-family": "Montserrat, Arial" }, g, "12-Mar-27"); }
-  else {
+  else if (s.behaviour === "Curtain") {   // two sample bars with the curtain over them
+    el("rect", { x: 4, y: 22, width: 70, height: 7, fill: laneBar(BRAND.navy), stroke: BRAND.navy, "stroke-width": .6 }, g);
+    el("rect", { x: 50, y: 33, width: 64, height: 7, fill: laneBar(BRAND.orange), stroke: BRAND.navy, "stroke-width": .6 }, g);
+    el("rect", { x: 40, y: 2, width: 52, height: 41, fill: s.fill, "fill-opacity": s.opacity ?? .18 }, g);
+    if (s.shape !== "solid") for (const x of [40, 92]) el("line", { x1: x, x2: x, y1: 2, y2: 43, stroke: s.stroke, "stroke-dasharray": "4 2" }, g);
+    const tag = curtainTag({ name: s.notes, start: "2027-01-01", end: "2027-01-10" }, s);
+    el("rect", { x: 41, y: 4, width: textW(tag, 8, 700) + 10, height: 12, rx: 6, fill: s.stroke }, g);
+    el("text", { x: 46, y: 12.6, "font-size": 8, "font-weight": 700, fill: "#FFFFFF", "font-family": "Montserrat, Arial" }, g, tag);
+  } else {
     const fill = s.fill || laneBar(BRAND.orange);
     drawBarShape(g, s.shape, 2, 7, 116, 16, fill, s.stroke);
   }
@@ -960,6 +1113,7 @@ function typePreview(s) {
 function legendIcon(s) {
   const g = document.createElementNS(NS, "g");
   if (s.behaviour === "Move") drawMarker(g, s.shape, 11, 8, 11, s.fill, s.stroke);
+  else if (s.behaviour === "Curtain") el("rect", { x: 3, y: 1, width: 16, height: 14, fill: s.fill, "fill-opacity": Math.max(.3, s.opacity ?? .18), stroke: s.stroke, "stroke-dasharray": s.shape === "solid" ? null : "3 2" }, g);
   else drawBarShape(g, s.shape, 1, 3, 20, 10, s.fill || laneBar(BRAND.orange), s.stroke);
   return g.innerHTML;
 }
@@ -979,6 +1133,14 @@ $("fLogo").onchange = e => {
 $("bLane").onclick = () => { const l = { id: "L" + uid(), name: "New lane", colour: P.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 2 }; commit(p => p.lanes.push(l)); sel = { type: "lane", id: l.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
 $("bBar").onclick = () => addItem(defaultStyle("Stretch"));
 $("bMs").onclick = () => addItem(defaultStyle("Move"));
+$("bCurtain").onclick = () => {
+  const types = P.styles.filter(s => s.behaviour === "Curtain");
+  if (types.length < 2) return addItem(types[0]?.name || defaultStyle("Curtain"));
+  showModal(`<header><h3>Add a curtain</h3><p>A shaded date range across every lane, with a tag at the top. Drag the tag to move it and its edges to change the dates.</p></header>
+    <div class="body"><div class="types">${types.map(typeRow).join("")}</div></div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button></footer>`, {});
+  ROOT.querySelectorAll(".modal [data-type]").forEach(b => b.onclick = () => { b.closest(".modal").remove(); addItem(b.dataset.type); });
+};
 $("bUndo").onclick = undo; $("bRedo").onclick = redo;
 $("zoom").oninput = e => { P.view.zoom = +e.target.value; render(); };
 $("zoom").onchange = () => changed();
@@ -1064,7 +1226,7 @@ function buildExcelBlob() {
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
   XLSX.utils.book_append_sheet(wb, lanes, "Lanes");
-  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel"]].concat(P.styles.map(s => [s.name, s.behaviour, s.shape, s.fill || "LANE", s.stroke, s.notes])));
+  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration"]].concat(P.styles.map(s => [s.name, s.behaviour, s.shape, s.fill || "LANE", s.stroke, s.notes, s.behaviour === "Curtain" ? s.opacity ?? .18 : "", s.behaviour === "Curtain" ? s.days || "none" : ""])));
   styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
@@ -1125,9 +1287,17 @@ function parseWorkbook(buf) {
   if (ssh) {
     const sa = XLSX.utils.sheet_to_json(ssh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
     styles = sa.filter(x => x.stylename).map(x => {
-      const name = String(x.stylename).trim(), ms = /move/i.test(x.behaviour || "") || /^ml/i.test(name);
-      const okShape = (ms ? MS_SHAPES : BAR_SHAPES).some(([k]) => k === x.shape);
-      return { name, behaviour: ms ? "Move" : "Stretch", shape: okShape ? x.shape : guessShape(name, ms), fill: /^lane$/i.test(String(x.defaultfill || "")) ? "" : hex(x.defaultfill), stroke: hex(x.defaultstroke) || BRAND.navy, notes: String(x.legendlabel || x.notes || name).trim() };
+      const name = String(x.stylename).trim();
+      const behaviour = /curtain/i.test(x.behaviour || "") ? "Curtain" : /move/i.test(x.behaviour || "") || /^ml/i.test(name) ? "Move" : "Stretch";
+      const ms = behaviour === "Move", shapes = KIND[behaviour].shapes();
+      const shape = shapes.some(([k]) => k === x.shape) ? x.shape : behaviour === "Curtain" ? "edges" : guessShape(name, ms);
+      const s = { name, behaviour, shape, fill: /^lane$/i.test(String(x.defaultfill || "")) ? "" : hex(x.defaultfill), stroke: hex(x.defaultstroke) || BRAND.navy, notes: String(x.legendlabel || x.notes || name).trim() };
+      if (behaviour === "Curtain") {
+        const o = Number(x.opacity); s.opacity = Number.isFinite(o) && x.opacity !== null && x.opacity !== "" ? Math.min(.9, Math.max(0, o > 1 ? o / 100 : o)) : .18;
+        const d = String(x.tagduration ?? "").trim(); s.days = d === "none" || d === "" ? "" : ["plain", "+", "−"].includes(d) ? d : d === "-" ? "−" : "plain";
+        if (!s.fill) s.fill = BRAND.orange;
+      }
+      return s;
     });
   }
   return { rows, lanes, meta, timeline, problems, styles };
@@ -1139,6 +1309,7 @@ function newTypesFrom(parsed, existing) {
   const out = [];
   for (const s of parsed.styles || []) if (!have(s.name)) out.push(s);
   for (const r of parsed.rows) if (r.style && !have(r.style)) {
+    if (/^cur/i.test(r.style)) { out.push({ name: r.style, behaviour: "Curtain", shape: "edges", fill: "#8E6CC0", stroke: "#5E3F94", notes: r.style.replace(/^CUR_?/i, "").replace(/_/g, " "), opacity: .16, days: "plain" }); continue; }
     const ms = /^(ml|ms)/i.test(r.style) || r.start === r.end;
     out.push({ name: r.style, behaviour: ms ? "Move" : "Stretch", shape: guessShape(r.style, ms), fill: ms ? "#4F7CAC" : "", stroke: BRAND.navy, notes: r.style.replace(/^ML_/i, "").replace(/_/g, " ") });
   }
@@ -1209,8 +1380,9 @@ function previewImport(parsed, fname) {
         for (const r of [...adds, ...dupes]) {
           const st = styleOf(p, r.style).name;
           const id = r.id && !p.items.some(i => i.id === r.id) ? r.id : nextId(p, st, r.id || null, reserved);
-          const it = { id, name: r.name, style: st, lane: laneFor(r.lane || "Unassigned"), start: r.start, end: isMs(p, st) ? r.start : r.end, status: r.status, row: 0, fill: r.fill, stroke: r.stroke };
-          it.row = Number.isFinite(r.row) ? r.row : freeRow(p, it);
+          const curtain = isCurtain(p, st);
+          const it = { id, name: r.name, style: st, lane: curtain ? "" : laneFor(r.lane || "Unassigned"), start: r.start, end: isMs(p, st) ? r.start : r.end, status: r.status, row: 0, fill: r.fill, stroke: r.stroke };
+          it.row = curtain ? 0 : Number.isFinite(r.row) ? r.row : freeRow(p, it);
           p.items.push(it);
         }
         if (del) { const gone = new Set(missing.map(x => x.id)); p.items = p.items.filter(i => !gone.has(i.id)); }
@@ -1304,7 +1476,7 @@ function showStatus() {
   box.title = DOC ? `Saved to ${HOST ? DOC.path : DOC.kind === "file" ? DOC.name + " on this computer" : "your downloads as " + DOC.name}${DOC.kind === "download" ? "" : ". Changes save automatically."}` : "Save once and every change after that is saved automatically.";
 }
 function loadDoc(project, doc) {
-  P = project; DOC = doc; past = []; future = []; sel = null; touched = false;
+  P = upgradeProject(project); DOC = doc; past = []; future = []; sel = null; touched = false;
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   rememberFile();
   render(); renderSide(); showStatus();

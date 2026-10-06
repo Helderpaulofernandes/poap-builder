@@ -4,6 +4,7 @@ A browser tool for drawing a **Program of Activities and Possessions** (PoaP): a
 
 - Draw swimlanes, bars and milestones; drag to change dates, rows and lanes.
 - Create your own milestone and bar types (shape, colours, legend name).
+- Curtains: shaded date ranges across every lane for contingency, savings and allowances, with adjustable transparency and a tag showing the duration.
 - Export to Excel, edit dates there, and update the drawing from the workbook (matched by ShapeID, with a preview of every change).
 - Export a branded A3 landscape PDF.
 - Save to a `.poap.json` file once; after that every change saves to it automatically (Edge and Chrome).
