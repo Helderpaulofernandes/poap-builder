@@ -92,6 +92,15 @@ button, input, select { font: inherit; color: inherit; }
 main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 300px; }
 .stage { overflow: auto; padding: 16px; min-width: 0; }
 .sheet { background: var(--paper); box-shadow: 0 1px 4px rgba(10,20,40,.2); display: inline-block; }
+/* page view: the sheet sits on a sheet of paper at the printed size and margins */
+.paper { position: relative; background: #FFFFFF; box-shadow: 0 2px 12px rgba(10,20,40,.28); margin: 0 auto; flex: none; }
+.paper .sheet { position: absolute; box-shadow: none; display: block; }
+.paper .sheet svg { display: block; }
+.paper.free { position: static; background: none; box-shadow: none; margin: 0; }
+.paper.free .sheet { position: static; display: inline-block; box-shadow: 0 1px 4px rgba(10,20,40,.2); }
+.pageinfo { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 0 auto 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.pagewarn { color: var(--warn); }
+.pagewarn::before { content: "⚠ "; }
 #chart { display: block; user-select: none; touch-action: none; }
 .hint { margin: 10px 2px 0; color: var(--muted); font-size: 12px; max-width: 900px; }
 .hint kbd { font: 11px var(--font-mono); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; background: var(--panel); }
@@ -178,7 +187,17 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <button class="btn" id="bUndo" title="Undo (Ctrl+Z)">Undo</button>
     <button class="btn" id="bRedo" title="Redo (Ctrl+Y)">Redo</button>
   </div>
-  <div class="grp zoom"><label for="zoom">Zoom</label><input id="zoom" type="range" min="1" max="12" step="0.5"><button class="btn" id="bFit" title="Set the timeline to cover all items">Fit dates</button></div>
+  <div class="grp zoom">
+    <label for="viewMode">View</label>
+    <select id="viewMode" title="Page views show the sheet exactly as it prints">
+      <option value="page-width">Page · fit width</option>
+      <option value="page-fit">Page · whole page</option>
+      <option value="page-100">Page · 100%</option>
+      <option value="free">Free zoom</option>
+    </select>
+    <span id="zoomBox"><input id="zoom" type="range" min="1" max="12" step="0.5" aria-label="Zoom"></span>
+    <button class="btn" id="bFit" title="Set the timeline to cover all items">Fit dates</button>
+  </div>
   <div class="spacer"></div>
   <div class="grp">
     <button class="btn" id="bNew">New</button>
@@ -198,7 +217,8 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
 
 <main>
   <div class="stage" id="stage">
-    <div class="sheet"><svg id="chart" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg></div>
+    <div class="pageinfo" id="pageInfo"><span id="pageLabel"></span><span class="pagewarn" id="pageWarn" hidden></span></div>
+    <div class="paper" id="paper"><div class="sheet" id="sheet"><svg id="chart" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg></div></div>
     <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour. <kbd>Del</kbd> deletes, <kbd>Ctrl+D</kbd> duplicates, <kbd>←</kbd>/<kbd>→</kbd> nudge 1 day (<kbd>Shift</kbd> = 1 week).</p>
   </div>
   <aside id="side"></aside>
@@ -268,9 +288,11 @@ function curtainDefaults() {
     { name: "CUR_ALLOWANCE",   shape: "solid",   behaviour: "Curtain", fill: "#4F7CAC", stroke: "#2F5A87", notes: "Allowance",   opacity: 0.14, days: "plain" },
   ];
 }
-/* programmes saved before curtains existed get the default curtain types */
+/* programmes saved before curtains / page settings existed get the defaults */
 function upgradeProject(p) {
   if (!p.styles.some(s => s.behaviour === "Curtain")) p.styles.push(...curtainDefaults().filter(c => !p.styles.some(s => s.name === c.name)));
+  p.page = { size: "A3", orient: "landscape", margin: 7, ...(p.page || {}) };
+  p.view = { zoom: 3, ...(p.view || {}) }; if (!p.view.mode) p.view.mode = "page-width";
   return p;
 }
 const isCurtain = (p, name) => styleOf(p, name).behaviour === "Curtain";
@@ -289,7 +311,8 @@ function blankProject() {
     format: "poap/2",
     meta: { program: "PROGRAM NAME", number: "Pxx-xxxx", title: "Project Title", subtitle: "Summary program", client: "", author: "", revision: "A", status: "For Information", date: todayISO(), clientLogo: "" },
     timeline: { start: fromDays(Date.UTC(now.getFullYear(), now.getMonth(), 1) / DAY), end: fromDays(Date.UTC(now.getFullYear() + 1, now.getMonth(), 0) / DAY) },
-    view: { zoom: 3 },
+    view: { zoom: 3, mode: "page-width" },
+    page: { size: "A3", orient: "landscape", margin: 7 },
     styles: clone(DEFAULT_STYLES),
     lanes: [],
     items: [],
@@ -449,7 +472,7 @@ function layout(opts) {
         : t.pos === "bottom" ? bodyBottom - 4 - t.h - t.row * step
         : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
   }
-  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + G.ftrH, lanes, tags: tags.list, x };
+  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + G.ftrH, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare };
 }
 
 /* ---------- curtain tags: position, alignment, size, style and colours ---------- */
@@ -788,22 +811,75 @@ function guessShape(name, ms) {
   return "square";
 }
 
-let LAY;
+/* ---------- page layout: paper size, orientation, margins ---------- */
+const PAPER = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841], Letter: [279.4, 215.9], Tabloid: [431.8, 279.4] };
+const PX_PER_MM = 1500 / 406;   // sheet px per printed mm, so text prints the same size on any paper
+function paperMM() {
+  const pg = P.page, [w, h] = PAPER[pg.size] || PAPER.A3;
+  return pg.orient === "portrait" ? { pg, PW: h, PH: w } : { pg, PW: w, PH: h };
+}
+/* Draws the sheet as it prints on the chosen paper: the timeline fills the printable width and rows
+   spread (up to 2x) to fill the height. fit < 1 means the content is taller than the page and prints smaller. */
+function drawPage(svg, extra = {}) {
+  const { pg, PW, PH } = paperMM(), M = +pg.margin || 7, availW = PW - 2 * M, availH = PH - 2 * M;
+  const span = toDays(P.timeline.end) - toDays(P.timeline.start) + 1;
+  const opts = { ppd: (availW * PX_PER_MM - G.headW) / span, spare: false, ...extra };
+  let L = draw(svg, opts);
+  const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), slack = availH / (availW / L.W) - L.H, baseRow = G.rowH;
+  if (rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); try { L = draw(svg, opts); } finally { G.rowH = baseRow; } }
+  const k = Math.min(availW / L.W, availH / L.H);   // printed mm per sheet px
+  return { L, k, PW, PH, M, availW, availH, pg, fit: k / (availW / L.W) };
+}
+const pageName = () => `${P.page.size} ${P.page.orient}`;
+
+let LAY, PLAN = null;
 function render() {
+  const mode = P.view.mode || "page-width";
+  $("viewMode").value = mode; $("zoomBox").hidden = mode !== "free";
   $("zoom").value = P.view.zoom;
   $("docName").textContent = `${P.meta.number} · Rev ${P.meta.revision}`;
   if (MARTINUS_LOGO) $("brandLogo").src = MARTINUS_LOGO; else $("brandLogoBox").hidden = true;
-  LAY = draw($("chart"), { ppd: P.view.zoom, spare: true });
+  if (mode === "free") { PLAN = null; LAY = draw($("chart"), { ppd: P.view.zoom, spare: true }); }
+  else { PLAN = drawPage($("chart")); LAY = PLAN.L; }
+  placePaper(mode);
   $("bUndo").disabled = !past.length; $("bRedo").disabled = !future.length;
 }
+/* size the paper and the sheet on screen; page views scale the printed layout to the window */
+function placePaper(mode) {
+  const paper = $("paper"), sheet = $("sheet"), svg = $("chart"), st = $("stage");
+  const warn = $("pageWarn"), label = $("pageLabel");
+  if (!PLAN) {
+    paper.className = "paper free"; paper.style.width = paper.style.height = ""; sheet.style.left = sheet.style.top = ""; svg.style.width = svg.style.height = "";
+    label.textContent = `Free zoom · prints on ${pageName()}, switch to a Page view to see the printed layout`; warn.hidden = true; return;
+  }
+  const W = Math.max(200, st.clientWidth - 40), H = Math.max(200, st.clientHeight - 80);
+  const s = mode === "page-100" ? 96 / 25.4 : mode === "page-fit" ? Math.min(W / PLAN.PW, H / PLAN.PH) : W / PLAN.PW;   // screen px per mm
+  paper.className = "paper";
+  paper.style.width = PLAN.PW * s + "px"; paper.style.height = PLAN.PH * s + "px";
+  sheet.style.left = (PLAN.M + (PLAN.availW - PLAN.L.W * PLAN.k) / 2) * s + "px"; sheet.style.top = PLAN.M * s + "px";
+  svg.style.width = PLAN.L.W * PLAN.k * s + "px"; svg.style.height = PLAN.L.H * PLAN.k * s + "px";
+  $("pageInfo").style.width = paper.style.width;
+  label.textContent = `${pageName()} · ${P.page.margin} mm margins · what you see is what prints`;
+  warn.hidden = PLAN.fit > 0.98;
+  if (!warn.hidden) warn.textContent = `Content is taller than ${pageName()}: it prints at ${Math.round(PLAN.fit * 100)}%. Try a larger paper size, portrait, fewer rows or shorter lanes.`;
+}
+let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (PLAN) placePaper(P.view.mode); }, 120); });
 
 /* =====================================================================
    Interaction on the sheet
    ===================================================================== */
-const svgPt = e => { const r = $("chart").getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+/* pointer position in sheet coordinates (the sheet may be scaled on screen) */
+const svgPt = e => { const r = $("chart").getBoundingClientRect(), k = LAY.W / r.width; return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k }; };
 const dayAt = x => fromDays(LAY.t0 + Math.floor((x - G.headW) / LAY.ppd));
+/* the date at the middle of what's visible, for placing new items */
+function visibleCentreDay() {
+  const r = $("chart").getBoundingClientRect(), s = $("stage").getBoundingClientRect();
+  const x = (Math.max(r.left, Math.min(r.right, s.left + s.width / 2)) - r.left) * LAY.W / r.width;
+  return dayAt(Math.max(G.headW + 1, x));
+}
 function slotAt(y) {
-  for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: Math.max(0, Math.min(ln.rows - 1, Math.floor((y - ln.y - G.pad) / G.rowH))) };
+  // page views have no spare row, so allow one row past the last to start a new row
+  for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: Math.max(0, Math.min(ln.rows - (LAY.spare ? 1 : 0), Math.floor((y - ln.y - G.pad) / LAY.rowH))) };
   if (!LAY.lanes.length) return null;
   if (y >= LAY.bodyBottom) { const ln = LAY.lanes[LAY.lanes.length-1]; return { lane: ln.l.id, row: ln.rows - 1 }; }
   return { lane: LAY.lanes[0].l.id, row: 0 };
@@ -841,7 +917,7 @@ window.addEventListener("pointermove", e => {
   }
   render();
 });
-function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + o.row * G.rowH + G.rowH / 2 : 0; }
+function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + o.row * LAY.rowH + LAY.rowH / 2 : 0; }
 window.addEventListener("pointerup", () => {
   if (!drag) return;
   if (drag.moved) { past.push(drag.before); future = []; changed(); }
@@ -858,7 +934,7 @@ function addItem(styleName, laneId, start, row) {
   if (!P.lanes.length) { toast("Add a swimlane first."); return; }
   const ms = isMs(P, styleName), curtain = isCurtain(P, styleName);
   laneId = curtain ? "" : laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null) || P.lanes[0].id;
-  if (!start) { const st = $("stage"); start = dayAt(st.scrollLeft + st.clientWidth / 2); }
+  if (!start) start = visibleCentreDay();
   const name = ms ? "New milestone" : curtain ? styleOf(P, styleName).notes : "New activity";
   const it = { id: nextId(P, styleName), name, style: styleName, lane: laneId, start, end: ms ? start : addDays(start, curtain ? 9 : 13), status: "Active", row: 0, fill: "", stroke: "" };
   it.row = row != null ? row : curtain ? 0 : freeRow(P, it);
@@ -1001,6 +1077,13 @@ function renderSide() {
       <div class="logo-slot"><span class="thumb">${m.clientLogo ? `<img src="${m.clientLogo}" alt="Client logo">` : "None"}</span>
       <div class="actions"><button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoEdit">Adjust</button><button class="btn" id="mLogoX">Remove</button>` : ""}</div></div>
     </div>
+    <h2>Page</h2>
+    <div class="row2">
+      <div class="f"><label for="pgSize">Paper</label><select id="pgSize">${Object.entries(PAPER).map(([k, [w, h]]) => `<option value="${k}" ${k === P.page.size ? "selected" : ""}>${k} (${Math.round(w)} × ${Math.round(h)} mm)</option>`).join("")}</select></div>
+      <div class="f"><label for="pgMargin">Margins</label><select id="pgMargin">${[5, 7, 10, 15, 20].map(v => `<option value="${v}" ${v === +P.page.margin ? "selected" : ""}>${v} mm</option>`).join("")}</select></div>
+    </div>
+    <div class="f"><label>Orientation</label><div class="seg" role="group" aria-label="Orientation">${[["landscape", "Landscape"], ["portrait", "Portrait"]].map(([v, n]) => `<button type="button" data-orient="${v}" aria-pressed="${P.page.orient === v}">${n}</button>`).join("")}</div></div>
+    ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%.</p>` : ""}
     <h2>Timeline</h2>
     <div class="row2">
       <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
@@ -1024,6 +1107,9 @@ function renderSide() {
   um("mClient", (p,v) => p.meta.client = v); um("mAuthor", (p,v) => p.meta.author = v);
   um("tStart", (p,v) => { if (v && toDays(v) < toDays(p.timeline.end)) p.timeline.start = v; });
   um("tEnd", (p,v) => { if (v && toDays(v) > toDays(p.timeline.start)) p.timeline.end = v; });
+  um("pgSize", (p, v) => p.page.size = v);
+  um("pgMargin", (p, v) => p.page.margin = +v);
+  side.querySelectorAll("[data-orient]").forEach(b => b.onclick = () => commit(p => p.page.orient = b.dataset.orient, true));
   $("mLogo").onclick = () => $("fLogo").click();
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
   if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
@@ -1310,6 +1396,7 @@ $("bCurtain").onclick = () => {
   ROOT.querySelectorAll(".modal [data-type]").forEach(b => b.onclick = () => { b.closest(".modal").remove(); addItem(b.dataset.type); });
 };
 $("bUndo").onclick = undo; $("bRedo").onclick = redo;
+$("viewMode").onchange = e => { P.view.mode = e.target.value; changed(); $("stage").scrollTo(0, 0); };
 $("zoom").oninput = e => { P.view.zoom = +e.target.value; render(); };
 $("zoom").onchange = () => changed();
 $("bFit").onclick = () => {
@@ -1343,6 +1430,7 @@ async function openFromFile(f, handle) {
     base.styles.push(...newTypesFrom(parsed, base.styles));
     const p = projectFromRows(parsed.rows, parsed.lanes, base);
     if (parsed.timeline) p.timeline = parsed.timeline;
+    if (parsed.page) p.page = parsed.page;
     loadDoc(p, null); if (!parsed.timeline) $("bFit").click();
     toast(`Opened ${parsed.rows.length} rows from ${f.name}`);
     promptFirstSave("This programme was built from a workbook and hasn't been saved yet.");
@@ -1402,7 +1490,7 @@ function buildExcelBlob() {
   styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
-  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["Format","poap/2"]], { cellDates: true });
+  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["Format","poap/2"]], { cellDates: true });
   ["B9","B10"].forEach(a => { if (proj[a]) proj[a].z = "dd-mmm-yy"; });
   proj["!cols"] = [{ wch: 14 }, { wch: 44 }];
   XLSX.utils.book_append_sheet(wb, proj, "Project");
@@ -1446,13 +1534,15 @@ function parseWorkbook(buf) {
     const la = XLSX.utils.sheet_to_json(lsh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
     lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0 }));
   }
-  let meta = {}, timeline = null;
+  let meta = {}, timeline = null, page = null;
   const psh = wb.Sheets["Project"];
   if (psh) {
     const kv = Object.fromEntries(XLSX.utils.sheet_to_json(psh, { header: 1, raw: true }).slice(1).map(r => [String(r[0] ?? "").trim().toLowerCase(), r[1]]));
     meta = { program: kv.program, number: kv.number, title: kv.title, subtitle: kv.subtitle, client: kv.client, author: kv.author || kv.preparedby, revision: kv.revision };
     meta = Object.fromEntries(Object.entries(meta).filter(([,v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]));
     const a = toISO(kv.timelinestart), b = toISO(kv.timelineend); if (a && b) timeline = { start: a, end: b };
+    const size = Object.keys(PAPER).find(k => k.toLowerCase() === String(kv.pagesize ?? "").trim().toLowerCase());
+    if (size) page = { size, orient: /portrait/i.test(kv.orientation ?? "") ? "portrait" : "landscape", margin: [5, 7, 10, 15, 20].includes(+kv.marginmm) ? +kv.marginmm : 7 };
   }
   let styles = [];
   const ssh = wb.Sheets["StyleRegister"];
@@ -1478,7 +1568,7 @@ function parseWorkbook(buf) {
       return s;
     });
   }
-  return { rows, lanes, meta, timeline, problems, styles };
+  return { rows, lanes, meta, timeline, page, problems, styles };
 }
 /* Types the workbook uses that this project doesn't have yet: from its StyleRegister sheet,
    or guessed from the Style column. Existing types are never overwritten. */
@@ -1591,42 +1681,34 @@ async function loadPdfFonts() {
 async function exportPdf() {
   const btn = $("bPdf"); btn.disabled = true; btn.textContent = "Building PDF…";
   try {
-    const { blob, fonts } = await buildPdfBlob();
+    const { blob, fonts, fit } = await buildPdfBlob();
     download(blob, fileBase() + ".pdf");
-    toast("Exported " + fileBase() + ".pdf" + (fonts ? "" : " (Helvetica: brand font unavailable offline)"));
+    toast(`Exported ${fileBase()}.pdf (${pageName()}${fit < 0.98 ? `, content scaled to ${Math.round(fit * 100)}% to fit` : ""})` + (fonts ? "" : " · Helvetica: brand font unavailable offline"), 5000);
   } catch (err) { console.error(err); toast("PDF export failed: " + err.message, 5000); }
   finally { btn.disabled = false; btn.textContent = "Export PDF"; }
 }
+/* the PDF is the page view: same paper, margins, row spacing and scale */
 async function buildPdfBlob() {
-  {
-    const { jsPDF } = (HOST && HOST.jspdf) || window.jspdf;
-    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a3" });
-    const fonts = await loadPdfFonts();
-    let face = "helvetica";
-    if (fonts) {
-      doc.addFileToVFS("Montserrat-Medium.ttf", fonts.normal); doc.addFont("Montserrat-Medium.ttf", "Montserrat", "normal");
-      doc.addFileToVFS("Montserrat-Bold.ttf", fonts.bold); doc.addFont("Montserrat-Bold.ttf", "Montserrat", "bold");
-      face = "Montserrat";
-    }
-    const PW = 420, PH = 297, M = 7, availW = PW - 2*M, availH = PH - 2*M;
-    const span = toDays(P.timeline.end) - toDays(P.timeline.start) + 1;
-    const pxW = 1500, ppd = (pxW - G.headW) / span;
-    const holder = document.createElement("div"); holder.style.cssText = "position:fixed;left:-99999px;top:0";
-    const svg = document.createElementNS(NS, "svg"); holder.appendChild(svg); ROOT.appendChild(holder);
-    const opts = { ppd, print: true, spare: false, font: face };
-    let L = draw(svg, opts);
-    // spread rows to fill the sheet (up to 2x) so the page reads like the Visio A3
-    const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), baseRow = G.rowH;
-    const slack = availH / (availW / L.W) - L.H;
-    if (rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); L = draw(svg, opts); G.rowH = baseRow; }
-    const k = Math.min(availW / L.W, availH / L.H);
+  const { jsPDF } = (HOST && HOST.jspdf) || window.jspdf;
+  const { PW, PH } = paperMM();
+  const doc = new jsPDF({ orientation: PW >= PH ? "landscape" : "portrait", unit: "mm", format: [PW, PH] });
+  const fonts = await loadPdfFonts();
+  let face = "helvetica";
+  if (fonts) {
+    doc.addFileToVFS("Montserrat-Medium.ttf", fonts.normal); doc.addFont("Montserrat-Medium.ttf", "Montserrat", "normal");
+    doc.addFileToVFS("Montserrat-Bold.ttf", fonts.bold); doc.addFont("Montserrat-Bold.ttf", "Montserrat", "bold");
+    face = "Montserrat";
+  }
+  const holder = document.createElement("div"); holder.style.cssText = "position:fixed;left:-99999px;top:0";
+  const svg = document.createElementNS(NS, "svg"); holder.appendChild(svg); ROOT.appendChild(holder);
+  try {
+    const plan = drawPage(svg, { print: true, font: face }), { L, k, M, availW } = plan;
     const lib = (HOST && HOST.svg2pdf) || window.svg2pdf;
     const svgFn = lib?.svg2pdf || lib;
-    try { await svgFn(svg, doc, { x: M + (availW - L.W * k) / 2, y: M, width: L.W * k, height: L.H * k }); }
-    finally { holder.remove(); }
+    await svgFn(svg, doc, { x: M + (availW - L.W * k) / 2, y: M, width: L.W * k, height: L.H * k });
     doc.setProperties({ title: `${P.meta.number} ${P.meta.title} PoaP Rev ${P.meta.revision}`, author: P.meta.author || "", creator: "PoaP Builder" });
-    return { blob: doc.output("blob"), fonts };
-  }
+    return { blob: doc.output("blob"), fonts, fit: plan.fit };
+  } finally { holder.remove(); }
 }
 
 /* =====================================================================
