@@ -912,6 +912,14 @@ function drawContainer(g, it, ln, L, opts, F) {
   if (!opts.print) {   // grab the bracket row or title to move the group; edges change dates
     el("rect", { x: x1, y: top, width: w, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
     if (!box) el("rect", { x: tx + chev, y: top, width: tw + 4, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
+    if (open) {   // bottom edge: drag down to take in the rows below, up to release rows
+      el("rect", { x: x1, y: bottom - 5, width: w, height: 10, fill: "transparent", "data-id": it.id, "data-part": "b", style: "cursor:ns-resize" }, grp);
+      if (selected) {
+        const gx = x1 + w / 2;
+        el("rect", { x: gx - 14, y: bottom - 3, width: 28, height: 6, rx: 3, fill: "#FFFFFF", stroke: BRAND.orange, "stroke-width": 1.2, "pointer-events": "none" }, grp);
+        el("line", { x1: gx - 7, x2: gx + 7, y1: bottom, y2: bottom, stroke: BRAND.orange, "stroke-width": 1.2, "pointer-events": "none" }, grp);
+      }
+    }
     if (it.fitChildren === false || !kids.length) {
       el("rect", { x: x1 - 3, y: top, width: 7, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
       el("rect", { x: x2 - 4, y: top, width: 7, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
@@ -986,7 +994,20 @@ function isContainer(p, it) { return /^container/.test(styleOf(p, it.style).shap
 function spanOf(it) { return Math.max(1, +it.span || 2); }
 function containerChildren(p, c) { return p.items.filter(i => i !== c && i.parent === c.id); }
 function hiddenByCollapse(p, it) { if (!it.parent) return false; const c = p.items.find(x => x.id === it.parent); return !!(c && c.collapsed); }
-function syncContainers(p) {
+/* Set how far down a summary reaches: everything in its lane from the row under its bracket down to
+   bottomRow joins it (bars of another summary excepted); its own bars below bottomRow leave it. */
+function setSummaryBottom(p, c, bottomRow) {
+  bottomRow = Math.max(c.row, bottomRow);   // c.row itself = no rows, the summary is emptied
+  for (const i of p.items) {
+    if (i === c || i.lane !== c.lane || isContainer(p, i) || isCurtain(p, i.style)) continue;
+    const mine = i.parent === c.id, inRange = i.row > c.row && i.row <= bottomRow;
+    if (inRange && !i.parent) i.parent = c.id;
+    else if (mine && !inRange) delete i.parent;
+  }
+  syncContainers(p, { noPush: true });
+  if (!containerChildren(p, c).length) c.span = Math.max(2, bottomRow - c.row + 1);
+}
+function syncContainers(p, opts = {}) {
   const byId = new Map(p.items.map(i => [i.id, i]));
   // a parent must exist, be a summary in the same lane; summaries don't nest
   for (const i of p.items) if (i.parent) {
@@ -998,7 +1019,7 @@ function syncContainers(p) {
     kids.forEach(k => { if (k.row <= c.row) k.row = c.row + 1; });          // bars sit below the bracket
     c.span = kids.length ? Math.max(...kids.map(k => k.row)) - c.row + 1 : 2;   // an empty summary keeps one row to drop into
     // a summary that grows pushes whatever sat just below it down, so nothing ends up underneath it
-    if (before && c.span > before) {
+    if (before && c.span > before && !opts.noPush) {
       const grow = c.span - before, from = c.row + before, own = new Set(kids.map(k => k.id));
       p.items.forEach(i => { if (i !== c && !own.has(i.id) && i.lane === c.lane && !isCurtain(p, i.style) && i.row >= from) i.row += grow; });
     }
@@ -1144,6 +1165,7 @@ $("chart").addEventListener("pointerdown", e => {
     drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false };
     // a summary bar carries the bars inside it
     if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
+    if (drag.part === "b") drag.parents = new Map(P.items.map(i => [i.id, i.parent]));   // membership before this drag
   } else if (head) sel = { type: "lane", id: head };
   else if (t.getAttribute("data-lane")) sel = { type: "lane", id: t.getAttribute("data-lane") };
   else sel = null;
@@ -1156,6 +1178,17 @@ window.addEventListener("pointermove", e => {
   if (!drag.moved && Math.abs(p.x - drag.x0) < 3 && Math.abs(p.y - drag.y0) < 3) return;
   drag.moved = true;
   const ms = isMs(P, it.style);
+  if (drag.part === "b") {   // summary bottom edge: the row under the pointer becomes its last row
+    const s = slotAt(p.y - LAY.rowH / 2);   // the edge sits between rows; measure from the middle of the last one
+    const ln = LAY.lanes.find(x => x.l.id === it.lane);
+    // above the bracket (even into the lane above) empties it; beyond the lane's bottom keeps the lowest row
+    const bottomRow = s && s.lane === it.lane ? s.row : ln && p.y < ln.y + G.pad + ln.toView(it.row) * LAY.rowH ? it.row : null;
+    if (bottomRow != null) {
+      P.items.forEach(i => { const was = drag.parents.get(i.id); if (was) i.parent = was; else delete i.parent; });
+      setSummaryBottom(P, it, bottomRow);
+    }
+    render(); return;
+  }
   if (drag.part === "l") it.start = fromDays(Math.min(toDays(o.start) + dd, toDays(o.end)));
   else if (drag.part === "r") it.end = fromDays(Math.max(toDays(o.end) + dd, toDays(o.start)));
   else {
@@ -1451,6 +1484,8 @@ function itemExtras(cur) {
     return `<div class="tagfmt">
       <div class="actions"><button class="btn primary" id="cCollapse">${cur.collapsed ? "Expand" : "Collapse"}</button><span class="note">${kids.length} item${kids.length === 1 ? "" : "s"} inside${cur.collapsed ? ", hidden" : ""}</span></div>
       <div class="f"><label>Look</label><div class="seg" role="group" aria-label="Summary look"><button type="button" data-look="container" aria-pressed="${!box}">Bracket</button><button type="button" data-look="container-box" aria-pressed="${box}">Box</button></div></div>
+      <div class="f"><label>Activities in this summary</label><div class="actions"><button class="btn" id="cGrow" ${cur.collapsed ? "disabled" : ""}>+ Include the row below</button><button class="btn" id="cShrink" ${cur.collapsed || !kids.length ? "disabled" : ""}>− Release the bottom row</button></div></div>
+      <p class="note">Or drag the summary's bottom edge down over the activities to take them in, and up to let them go.</p>
       <label class="check"><input type="checkbox" id="cFit" ${cur.fitChildren !== false ? "checked" : ""}> Dates follow the bars inside</label>
       <p class="note">Drop bars into its rows (or use “In summary” on a bar) to add them; drag them out to remove them. Its height follows its bars. Collapsed, it prints as one row with its milestones on the bracket.</p>
     </div>`;
@@ -1469,6 +1504,14 @@ function bindItemExtras(cur) {
     x.row = 999; x.row = groupFreeRow(P, g, x);
   });
   if ($("cCollapse")) $("cCollapse").onclick = () => upd(x => { x.collapsed = !x.collapsed; });
+  const lastRow = x => { const k = containerChildren(P, x); return k.length ? Math.max(...k.map(i => i.row)) : x.row; };
+  // the next row below that has an activity not already in a summary (blank rows are skipped)
+  const nextRow = x => {
+    const rows = P.items.filter(i => i.lane === x.lane && !i.parent && !isContainer(P, i) && !isCurtain(P, i.style) && i.row > lastRow(x)).map(i => i.row);
+    return rows.length ? Math.min(...rows) : null;
+  };
+  if ($("cGrow")) $("cGrow").onclick = () => { const r = nextRow(cur); if (r == null) return toast("There are no activities below this summary in its lane."); upd(x => setSummaryBottom(P, x, r)); };
+  if ($("cShrink")) $("cShrink").onclick = () => upd(x => setSummaryBottom(P, x, lastRow(x) - 1));
   if ($("cFit")) $("cFit").onchange = e => upd(x => { x.fitChildren = e.target.checked; });
   $("side").querySelectorAll("[data-look]").forEach(b => b.onclick = () => upd(x => {
     const t = P.styles.find(s => s.shape === b.dataset.look); if (t) x.style = t.name;
