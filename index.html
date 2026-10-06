@@ -285,6 +285,7 @@ const DEFAULT_STYLES = [
   { name: "BAR",         shape: "bar",      behaviour: "Stretch", fill: "",        stroke: "#163E6B", notes: "Activity (lane colour)" },
   { name: "POSS",        shape: "poss",     behaviour: "Stretch", fill: "#FBB785", stroke: "#163E6B", notes: "Possession" },
   { name: "SUMMARY",     shape: "container", behaviour: "Stretch", fill: "",       stroke: "#163E6B", notes: "Summary bar" },
+  { name: "SUMMARY_BOX", shape: "container-box", behaviour: "Stretch", fill: "",   stroke: "#163E6B", notes: "Summary box" },
   { name: "ML_Diamond",  shape: "diamond",  behaviour: "Move",    fill: "#FF0000", stroke: "#9E0000", notes: "Contract Milestone" },
   { name: "ML_Triangle", shape: "triangle", behaviour: "Move",    fill: "#FFD965", stroke: "#8A6A00", notes: "Design Milestone" },
   { name: "ML_Square",   shape: "square",   behaviour: "Move",    fill: "#C4D6A0", stroke: "#5B7330", notes: "Construction Milestone" },
@@ -302,7 +303,12 @@ function curtainDefaults() {
 }
 /* programmes saved before curtains / page settings existed get the defaults */
 function upgradeProject(p) {
-  if (!p.styles.some(s => s.shape === "container")) { const i = p.styles.findIndex(s => s.behaviour !== "Move" && s.behaviour !== "Stretch"); p.styles.splice(i < 0 ? p.styles.length : i, 0, clone(DEFAULT_STYLES.find(s => s.shape === "container"))); }
+  for (const shape of ["container", "container-box"]) if (!p.styles.some(s => s.shape === shape)) {
+    const i = p.styles.findIndex(s => s.behaviour !== "Move" && s.behaviour !== "Stretch");
+    const def = clone(DEFAULT_STYLES.find(s => s.shape === shape)); if (p.styles.some(s => s.name === def.name)) def.name += "_2";
+    p.styles.splice(i < 0 ? p.styles.length : i, 0, def);
+  }
+  adoptGeometricChildren(p); syncContainers(p);
   if (!p.styles.some(s => s.behaviour === "Curtain")) p.styles.push(...curtainDefaults().filter(c => !p.styles.some(s => s.name === c.name)));
   p.page = { size: "A3", orient: "landscape", margin: 7, rowH: 26, fill: true, ...(p.page || {}) };
   p.view = { zoom: 3, ...(p.view || {}) }; if (!p.view.mode) p.view.mode = "page-width";
@@ -353,7 +359,8 @@ function projectFromRows(rows, laneRows, base) {
     if (seen.has(id)) id = nextId(p, r.style, id, reserved);
     seen.add(id);
     const it = { id, name: r.name || "", style: st.name, lane: lane.id, start: r.start, end: isMs(p, st.name) ? r.start : (r.end || r.start), status: r.status || "Active", row: curtain ? 0 : Number.isFinite(r.row) ? r.row : null, fill: r.fill || "", stroke: r.stroke || "" };
-    if (r.span) it.span = r.span;
+    if (r.parent) it.parent = r.parent;
+    if (r.collapsed) it.collapsed = true;
     if (r.labelMode && r.labelMode !== "auto") it.labelMode = r.labelMode;
     p.items.push(it);
     if (it.row == null && Number.isFinite(r.y)) { (yGroups.get(lane.id) || yGroups.set(lane.id, []).get(lane.id)).push([it, r.y]); }
@@ -364,6 +371,7 @@ function projectFromRows(rows, laneRows, base) {
     list.forEach(([it, y]) => it.row = Math.max(0, Math.round((top - y) / 7)));
   }
   p.items.filter(i => i.row == null).forEach(i => i.row = freeRow(p, i));
+  syncContainers(p);
   return p;
 }
 
@@ -460,9 +468,17 @@ function findSel() {
 /* =====================================================================
    Layout + drawing (one SVG = the whole issued sheet)
    ===================================================================== */
+/* rows a lane shows: stored rows minus those hidden by collapsed summaries */
 function laneRows(l, spare) {
   const max = P.items.filter(i => i.lane === l.id).reduce((m, i) => Math.max(m, i.row + (isContainer(P, i) ? spanOf(i) - 1 : 0)), -1);
-  return Math.max(l.minRows || 1, max + 1 + (spare ? 1 : 0));
+  return Math.max(l.minRows || 1, max + 1 - hiddenRows(P, l.id).size + (spare ? 1 : 0));
+}
+/* stored row -> displayed row for a lane, and back */
+function rowMaps(laneId) {
+  const hidden = [...hiddenRows(P, laneId)].sort((a, b) => a - b);
+  const toView = r => r - hidden.filter(h => h < r).length;
+  const toStored = v => { let r = v; for (const h of hidden) if (h <= r) r++; return r; };
+  return { toView, toStored };
 }
 function layout(opts) {
   const ppd = opts.ppd, t0 = toDays(P.timeline.start), t1 = toDays(P.timeline.end) + 1;
@@ -475,7 +491,7 @@ function layout(opts) {
   for (const l of P.lanes) {
     const rows = laneRows(l, opts.spare);
     const h = Math.max(rows * G.rowH + G.pad * 2, laneTitleLen(l.name) + 14);   // tall enough for the vertical title
-    lanes.push({ l, y, h, rows }); y += h;
+    lanes.push({ l, y, h, rows, ...rowMaps(l.id) }); y += h;
   }
   if (!lanes.length) y += 70;
   const bodyBottom = y, g = tags.groups;
@@ -488,7 +504,7 @@ function layout(opts) {
         : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
   }
   const ftrH = opts.ftrH || G.ftrH;   // the footer grows when the legend and key need more lines
-  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + ftrH, ftrH, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare };
+  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + ftrH, ftrH, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
 }
 
 /* ---------- curtain tags: position, alignment, size, style and colours ---------- */
@@ -587,7 +603,7 @@ function draw(svg, opts) {
   // summary bars first so the bars inside them draw on top
   const ordered = [...P.items].sort((a, b) => (isContainer(P, b) ? 1 : 0) - (isContainer(P, a) ? 1 : 0));
   for (const it of ordered) {
-    const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
+    const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln || hiddenByCollapse(P, it)) continue;
     drawItem(gi, it, ln, L, opts, F);
   }
   drawCurtainTags(svg, L, opts, F);
@@ -804,19 +820,28 @@ const ABOVE_FONT = 7.5;
    the row gap allows, else a numbered marker listed in the key in the page footer. */
 function planLabels(L) {
   const out = new Map(), keyList = [];   // numbered labels, one sequence for the whole sheet
-  const cyOf = (ln, row) => ln.y + G.pad + row * G.rowH + G.rowH / 2;
   for (const ln of L.lanes) {
-    const its = P.items.filter(i => i.lane === ln.l.id && !isCurtain(P, i.style));
+    const its = P.items.filter(i => i.lane === ln.l.id && !isCurtain(P, i.style) && !hiddenByCollapse(P, i));
     const containers = its.filter(i => isContainer(P, i));
     const parentOf = new Map(); containers.forEach(c => containerChildren(P, c).forEach(k => parentOf.set(k.id, c)));
     const occ = new Map(), aboveOcc = new Map(), msOcc = new Map();   // per row: [x1, x2] already taken
     const take = (m, r, a, b) => { (m.get(r) || m.set(r, []).get(r)).push([a, b]); };
     const free = (m, r, a, b) => !(m.get(r) || []).some(([c, d]) => a < d + 3 && c < b + 3);
     for (const i of its) {
-      if (isContainer(P, i)) { take(occ, i.row, L.x(i.start) + 4, L.x(i.start) + 10 + textW(i.name, 8.5, 700)); continue; }
+      if (isContainer(P, i)) continue;
       const x = L.x(i.start);
       if (isMs(P, i.style)) { const w = textW(i.name, 9, 500) + 30 + (inlineMsDate() ? textW("  00-Mmm-00", 8.5, 400) : 0); take(occ, i.row, x - G.ms, x + w); take(msOcc, i.row, x - G.ms, x + w); }
       else take(occ, i.row, x, L.x(i.end) + L.ppd);
+    }
+    // summary titles: to the left of the bracket when there's room, otherwise to its right
+    for (const c of containers) {
+      const x1 = L.x(c.start), x2 = L.x(c.end) + L.ppd, tw = textW(c.name, 8.5, 700) + (L.print ? 0 : 12);
+      if (styleOf(P, c.style).shape === "container-box") { take(occ, c.row, x1, x2); out.set(c.id, { titleSide: "inside" }); continue; }
+      const leftEdge = Math.max(G.headW + 4, ...(occ.get(c.row) || []).filter(([, b]) => b <= x1 + 1).map(([, b]) => b + 4));
+      const side = x1 - 7 - tw >= leftEdge && free(occ, c.row, x1 - 7 - tw, x1) ? "left" : "right";
+      take(occ, c.row, x1, x2);
+      if (side === "left") take(occ, c.row, x1 - 7 - tw, x1); else take(occ, c.row, x2, x2 + 7 + tw);
+      out.set(c.id, { titleSide: side });
     }
     const bars = its.filter(i => !isContainer(P, i) && !isMs(P, i.style)).sort((a, b) => toDays(a.start) - toDays(b.start) || a.row - b.row);
     for (const i of bars) {
@@ -850,24 +875,47 @@ function keyBadge(g, x, cy, n, F, stroke) {
   el("circle", { cx: x, cy, r: 5.6, fill: "#FFFFFF", stroke: stroke || BRAND.navy, "stroke-width": .9 }, g);
   el("text", { x, y: cy + 2.5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 7, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, g, n);
 }
-/* summary bar: rounded box over its rows, title and numbered key in the header row */
+/* Summary group. Bracket style (default): a thin bar with end ticks on its own row, the title beside it,
+   and a faint square shade behind its bars. Box style: a square outline round the title row and its bars.
+   Collapsed: just the bracket (or a one-row box), with the group's milestones drawn on it. */
 function drawContainer(g, it, ln, L, opts, F) {
-  const st = styleOf(P, it.style), stroke = it.stroke || st.stroke || BRAND.navy;
-  const fill = it.fill || st.fill || tint(ln.l.colour, .9);
+  const st = styleOf(P, it.style), stroke = it.stroke || st.stroke || BRAND.navy, box = st.shape === "container-box";
+  const shade = it.fill || st.fill || tint(ln.l.colour, box ? .94 : .9);
   const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(6, x2 - x1);
-  const y = ln.y + G.pad + it.row * G.rowH + 1, h = spanOf(it) * G.rowH - 2, hy = y + G.rowH / 2 + 2.2;
+  const vr = ln.toView(it.row), top = ln.y + G.pad + vr * G.rowH, cy = top + G.rowH / 2;
+  const kids = containerChildren(P, it), open = !it.collapsed;
+  const rowsShown = open ? spanOf(it) : 1, bottom = top + rowsShown * G.rowH;
   const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
   const grp = el("g", { "data-id": it.id }, g);
-  el("rect", { x: x1, y, width: w, height: h, rx: 4, fill, stroke, "stroke-width": 1.2, "pointer-events": "none" }, grp);
-  el("line", { x1: x1 + 1, x2: x2 - 1, y1: y + G.rowH - 1, y2: y + G.rowH - 1, stroke, "stroke-width": .6, "stroke-opacity": .35, "pointer-events": "none" }, grp);
-  // title in the header row (numbered labels are listed in the page footer's key)
-  el("text", { x: x1 + 6, y: hy, fill: BRAND.navy, "font-size": 8.5, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, it.name);
-  if (selected) el("rect", { x: x1 - 2, y: y - 2, width: w + 4, height: h + 4, rx: 5, fill: "none", stroke: BRAND.orange, "stroke-width": 1.8, "pointer-events": "none" }, grp);
-  if (!opts.print) {   // grab the header to move it with its bars; edges change dates; bottom edge changes height
-    el("rect", { x: x1, y, width: w, height: G.rowH - 1, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
-    el("rect", { x: x1 - 3, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
-    el("rect", { x: x2 - 4, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
-    el("rect", { x: x1 + 4, y: y + h - 4, width: w - 8, height: 8, fill: "transparent", "data-id": it.id, "data-part": "b", style: "cursor:ns-resize" }, grp);
+  const titleSide = L.labels?.get(it.id)?.titleSide || "right";
+  if (box) {
+    el("rect", { x: x1, y: top + 1, width: w, height: bottom - top - 2, fill: shade, stroke, "stroke-width": 1, "pointer-events": "none" }, grp);
+    if (open && kids.length) el("line", { x1, x2, y1: top + G.rowH, y2: top + G.rowH, stroke, "stroke-width": .6, "stroke-opacity": .5, "pointer-events": "none" }, grp);
+  } else {
+    if (open && kids.length) el("rect", { x: x1, y: top + G.rowH - 1, width: w, height: bottom - top - G.rowH, fill: shade, "pointer-events": "none" }, grp);
+    // bracket: thin bar with down-pointing end ticks
+    const bh = Math.max(4, Math.round(G.barH * .42)), by = cy - bh / 2 - 1, tick = Math.min(6, w / 3), drop = bh + 4;
+    el("polygon", { points: `${x1},${by} ${x2},${by} ${x2},${by + drop} ${x2 - tick},${by + bh} ${x1 + tick},${by + bh} ${x1},${by + drop}`, fill: stroke, stroke, "stroke-width": .5, "pointer-events": "none" }, grp);
+  }
+  // collapsed: the group's milestones roll up onto the bracket
+  if (!open) kids.filter(k => isMs(P, k.style)).forEach(k => { const ks = styleOf(P, k.style), c = itemColours(k, ln.l); drawMarker(grp, ks.shape, L.x(k.start) + L.ppd / 2, cy, G.ms * .8, c.fill, c.stroke); });
+  // title (with an open/closed arrow on screen); a box keeps its title inside, top-left
+  const chev = opts.print ? 0 : 12, tw = textW(it.name, 8.5, 700);
+  const tx = box ? x1 + 5 : titleSide === "left" ? x1 - 7 - tw - chev : x2 + 7;
+  if (!opts.print) {
+    const cx = tx + 4, cyc = cy;
+    el("polygon", { points: open ? `${cx - 3.5},${cyc - 2} ${cx + 3.5},${cyc - 2} ${cx},${cyc + 2.5}` : `${cx - 2},${cyc - 3.5} ${cx + 2.5},${cyc} ${cx - 2},${cyc + 3.5}`, fill: stroke, "pointer-events": "none" }, grp);
+    el("rect", { x: tx - 2, y: cy - 7, width: chev + 1, height: 14, fill: "transparent", "data-id": it.id, "data-part": "toggle", style: "cursor:pointer" }, grp);
+  }
+  el("text", { x: tx + chev, y: cy + 3.1, fill: BRAND.navy, "font-size": 8.5, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, it.name + (it.collapsed && !opts.print ? `  (${kids.length})` : ""));
+  if (selected) el("rect", { x: x1 - 2, y: top - 1, width: w + 4, height: bottom - top + 2, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6, "pointer-events": "none" }, grp);
+  if (!opts.print) {   // grab the bracket row or title to move the group; edges change dates
+    el("rect", { x: x1, y: top, width: w, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
+    if (!box) el("rect", { x: tx + chev, y: top, width: tw + 4, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
+    if (it.fitChildren === false || !kids.length) {
+      el("rect", { x: x1 - 3, y: top, width: 7, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
+      el("rect", { x: x2 - 4, y: top, width: 7, height: G.rowH, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
+    }
   }
 }
 
@@ -875,7 +923,7 @@ function drawItem(g, it, ln, L, opts, F) {
   if (isContainer(P, it)) return drawContainer(g, it, ln, L, opts, F);
   const st = styleOf(P, it.style);
   const { fill, stroke } = itemColours(it, ln.l);
-  const cy = ln.y + G.pad + it.row * G.rowH + G.rowH / 2;
+  const cy = ln.y + G.pad + ln.toView(it.row) * G.rowH + G.rowH / 2;
   const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
   const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
   if (st.behaviour === "Move") {
@@ -928,23 +976,55 @@ function polyPts(x, cy, n, r, rot) {
   return Array.from({ length: n }, (_, i) => { const t = rot + i * 2 * Math.PI / n; return `${(x + r(i) * Math.cos(t)).toFixed(2)},${(cy + r(i) * Math.sin(t)).toFixed(2)}`; }).join(" ");
 }
 const MS_SHAPES = [["diamond","Diamond"],["triangle","Triangle"],["invtriangle","Inverted triangle"],["square","Square"],["circle","Circle"],["star","Star"],["hexagon","Hexagon"]];
-const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["summary","Summary bracket"],["container","Summary bar (holds bars inside)"]];
+const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["summary","Summary bracket (single bar)"],["container","Summary group · bracket"],["container-box","Summary group · square box"]];
 
-/* ---------- summary bars: a tall bar spanning several rows that other bars sit inside ---------- */
-function isContainer(p, it) { return styleOf(p, it.style).shape === "container"; }
-function spanOf(it) { return Math.max(2, Math.min(20, +it.span || 3)); }
-/* bars and milestones inside a summary: same lane, in its rows below the title row, overlapping its dates */
-function containerChildren(p, c) {
-  const top = c.row + 1, bottom = c.row + spanOf(c) - 1, s = toDays(c.start), e = toDays(c.end);
-  return p.items.filter(i => i !== c && i.lane === c.lane && !isContainer(p, i) && !isCurtain(p, i.style)
-    && i.row >= top && i.row <= bottom && toDays(i.end) >= s && toDays(i.start) <= e);
-}
-/* summaries set to follow their bars take the earliest start and latest finish inside them */
+/* ---------- summary groups: a bracket (or box) on its own row, with its bars in the rows below ----------
+   Bars belong to a summary through it.parent. The summary's height follows its bars (c.span = rows from its
+   own row to its lowest bar), and its dates follow them unless "dates follow" is switched off. A collapsed
+   summary shows as one row: its bars are hidden and its milestones are drawn on the bracket. */
+function isContainer(p, it) { return /^container/.test(styleOf(p, it.style).shape); }
+function spanOf(it) { return Math.max(1, +it.span || 2); }
+function containerChildren(p, c) { return p.items.filter(i => i !== c && i.parent === c.id); }
+function hiddenByCollapse(p, it) { if (!it.parent) return false; const c = p.items.find(x => x.id === it.parent); return !!(c && c.collapsed); }
 function syncContainers(p) {
-  for (const c of p.items) if (isContainer(p, c) && c.fitChildren) {
-    const kids = containerChildren(p, c); if (!kids.length) continue;
-    c.start = fromDays(Math.min(...kids.map(i => toDays(i.start)))); c.end = fromDays(Math.max(...kids.map(i => toDays(i.end))));
+  const byId = new Map(p.items.map(i => [i.id, i]));
+  // a parent must exist, be a summary in the same lane; summaries don't nest
+  for (const i of p.items) if (i.parent) {
+    const c = byId.get(i.parent);
+    if (!c || !isContainer(p, c) || isContainer(p, i) || isCurtain(p, i.style) || c.lane !== i.lane) delete i.parent;
   }
+  for (const c of p.items) if (isContainer(p, c)) {
+    const kids = containerChildren(p, c), before = +c.span || 0;
+    kids.forEach(k => { if (k.row <= c.row) k.row = c.row + 1; });          // bars sit below the bracket
+    c.span = kids.length ? Math.max(...kids.map(k => k.row)) - c.row + 1 : 2;   // an empty summary keeps one row to drop into
+    // a summary that grows pushes whatever sat just below it down, so nothing ends up underneath it
+    if (before && c.span > before) {
+      const grow = c.span - before, from = c.row + before, own = new Set(kids.map(k => k.id));
+      p.items.forEach(i => { if (i !== c && !own.has(i.id) && i.lane === c.lane && !isCurtain(p, i.style) && i.row >= from) i.row += grow; });
+    }
+    if (c.fitChildren !== false && kids.length) {
+      c.start = fromDays(Math.min(...kids.map(i => toDays(i.start)))); c.end = fromDays(Math.max(...kids.map(i => toDays(i.end))));
+    }
+  }
+}
+/* summaries from before membership was stored: their bars were whatever sat in their rows and dates */
+function adoptGeometricChildren(p) {
+  for (const c of p.items) if (isContainer(p, c) && !p.items.some(i => i.parent === c.id)) {
+    const top = c.row + 1, bottom = c.row + Math.max(2, +c.span || 3) - 1, s = toDays(c.start), e = toDays(c.end);
+    p.items.forEach(i => { if (i !== c && !i.parent && i.lane === c.lane && !isContainer(p, i) && !isCurtain(p, i.style) && i.row >= top && i.row <= bottom && toDays(i.end) >= s && toDays(i.start) <= e) i.parent = c.id; });
+  }
+}
+/* the summary a dropped bar lands in: same lane, in its rows (or the row just below), overlapping its dates */
+function summaryAt(p, it) {
+  if (isContainer(p, it) || isCurtain(p, it.style)) return null;
+  return p.items.find(c => isContainer(p, c) && !c.collapsed && c.lane === it.lane && it.row > c.row && it.row <= c.row + spanOf(c)
+    && toDays(it.end) >= toDays(c.start) && toDays(it.start) <= toDays(c.end)) || null;
+}
+/* rows hidden by collapsed summaries, per lane: the display skips them, the stored rows don't change */
+function hiddenRows(p, laneId) {
+  const out = new Set();
+  p.items.forEach(c => { if (c.lane === laneId && c.collapsed && isContainer(p, c)) for (let r = c.row + 1; r < c.row + spanOf(c); r++) out.add(r); });
+  return out;
 }
 function drawBarShape(g, shape, x, y, w, h, fill, stroke) {
   if (shape === "summary") {   // thin bar with down-pointing ends, like a summary task
@@ -1042,7 +1122,7 @@ function visibleCentreDay() {
 }
 function slotAt(y) {
   // page views have no spare row, so allow one row past the last to start a new row
-  for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: Math.max(0, Math.min(ln.rows - (LAY.spare ? 1 : 0), Math.floor((y - ln.y - G.pad) / LAY.rowH))) };
+  for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: ln.toStored(Math.max(0, Math.min(ln.rows - (LAY.spare ? 1 : 0), Math.floor((y - ln.y - G.pad) / LAY.rowH)))) };
   if (!LAY.lanes.length) return null;
   if (y >= LAY.bodyBottom) { const ln = LAY.lanes[LAY.lanes.length-1]; return { lane: ln.l.id, row: ln.rows - 1 }; }
   return { lane: LAY.lanes[0].l.id, row: 0 };
@@ -1053,6 +1133,11 @@ $("chart").addEventListener("pointerdown", e => {
   const t = e.target, p = svgPt(e);
   const id = t.getAttribute("data-id") || t.closest("[data-id]")?.getAttribute("data-id");
   const head = t.getAttribute("data-lanehead") || t.closest("[data-lanehead]")?.getAttribute("data-lanehead");
+  if (id && t.getAttribute("data-part") === "toggle") {   // the arrow beside a summary's title
+    sel = { type: "item", id };
+    commit(p => { const c = p.items.find(i => i.id === id); c.collapsed = !c.collapsed; }, true);
+    return;
+  }
   if (id) {
     const it = P.items.find(i => i.id === id);
     sel = { type: "item", id };
@@ -1073,10 +1158,7 @@ window.addEventListener("pointermove", e => {
   const ms = isMs(P, it.style);
   if (drag.part === "l") it.start = fromDays(Math.min(toDays(o.start) + dd, toDays(o.end)));
   else if (drag.part === "r") it.end = fromDays(Math.max(toDays(o.end) + dd, toDays(o.start)));
-  else if (drag.part === "b") {   // summary bar height, in rows
-    const ln = LAY.lanes.find(x => x.l.id === o.lane);
-    if (ln) it.span = Math.max(2, Math.min(20, Math.round((p.y - (ln.y + G.pad + o.row * LAY.rowH)) / LAY.rowH)));
-  } else {
+  else {
     it.start = addDays(o.start, dd); it.end = ms ? it.start : addDays(o.end, dd);
     if (!isCurtain(P, it.style)) {   // curtains only move in time
       const s = slotAt(p.y - (drag.y0 - rowCenter(o)));
@@ -1088,12 +1170,21 @@ window.addEventListener("pointermove", e => {
       kid.lane = it.lane; kid.row = Math.max(0, k.orig.row + (it.row - o.row));
     }
   }
+  if (it.parent) syncContainers(P);   // the summary's bracket follows its bars while dragging
   render();
 });
-function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + o.row * LAY.rowH + LAY.rowH / 2 : 0; }
+function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + ln.toView(o.row) * LAY.rowH + LAY.rowH / 2 : 0; }
 window.addEventListener("pointerup", () => {
   if (!drag) return;
-  if (drag.moved) { past.push(drag.before); future = []; changed(); }
+  if (drag.moved) {
+    // dropping a bar in a summary's rows puts it in that summary; dragging it out takes it out
+    const it = P.items.find(i => i.id === drag.id);
+    if (it && drag.part === "body" && !isContainer(P, it) && !isCurtain(P, it.style)) {
+      const c = summaryAt(P, it);
+      if (c) it.parent = c.id; else delete it.parent;
+    }
+    past.push(drag.before); future = []; changed();
+  }
   drag = null;
 });
 $("chart").addEventListener("dblclick", e => {
@@ -1110,19 +1201,39 @@ function addItem(styleName, laneId, start, row) {
   if (!start) start = visibleCentreDay();
   const name = ms ? "New milestone" : curtain ? styleOf(P, styleName).notes : "New activity";
   const it = { id: nextId(P, styleName), name, style: styleName, lane: laneId, start, end: ms ? start : addDays(start, curtain ? 9 : 13), status: "Active", row: 0, fill: "", stroke: "" };
-  it.row = row != null ? row : curtain ? 0 : freeRow(P, it);
-  commit(p => p.items.push(it));
+  // with a summary (or one of its bars) selected, a new bar or milestone goes inside that summary
+  const selIt = sel && sel.type === "item" ? P.items.find(i => i.id === sel.id) : null;
+  const group = selIt && !curtain && !isContainer(P, it) ? (isContainer(P, selIt) ? selIt : selIt.parent ? P.items.find(i => i.id === selIt.parent) : null) : null;
+  if (group && row == null) {
+    Object.assign(it, { lane: group.lane, parent: group.id });
+    if (toDays(it.start) < toDays(group.start) || toDays(it.start) > toDays(group.end)) { it.start = group.start; it.end = ms ? it.start : addDays(it.start, 13); }
+    it.row = groupFreeRow(P, group, it);
+  } else it.row = row != null ? row : curtain ? 0 : freeRow(P, it);
+  commit(p => { if (group) group.collapsed = false; p.items.push(it); });
   sel = { type: "item", id: it.id }; render(); renderSide();
   setTimeout(() => { const f = $("iName"); if (f) { f.focus(); f.select(); } }, 0);
 }
 /* move a lane's items up into the fewest rows without overlaps, keeping their top-to-bottom order where possible */
 function packLane(p, laneId) {
-  // summary bars and the bars inside them keep their places; everything else packs around them
+  // bars inside each summary pack within it; summaries stay put and everything else packs around them
   const fixed = new Set();
-  p.items.filter(i => i.lane === laneId && isContainer(p, i)).forEach(c => { fixed.add(c.id); containerChildren(p, c).forEach(k => fixed.add(k.id)); });
+  p.items.filter(i => i.lane === laneId && isContainer(p, i)).forEach(c => {
+    fixed.add(c.id);
+    const kids = containerChildren(p, c).sort((a, b) => a.row - b.row || toDays(a.start) - toDays(b.start));
+    kids.forEach(k => { fixed.add(k.id); k.row = -1; });
+    kids.forEach(k => { k.row = groupFreeRow(p, c, k); });
+  });
+  syncContainers(p);
   const its = p.items.filter(i => i.lane === laneId && !fixed.has(i.id)).sort((a, b) => a.row - b.row || toDays(a.start) - toDays(b.start));
   its.forEach(i => i.row = 999);
   its.forEach(i => i.row = freeRow(p, i));
+}
+/* first row inside a summary (below its bracket) where a bar doesn't overlap the summary's other bars */
+function groupFreeRow(p, c, it) {
+  const s = toDays(it.start), e = toDays(it.end) + 1, kids = containerChildren(p, c).filter(k => k !== it && k.row > c.row);
+  for (let r = c.row + 1; r < c.row + 200; r++)
+    if (!kids.some(k => k.row === r && toDays(k.start) < e && s < toDays(k.end) + 1)) return r;
+  return c.row + 1;
 }
 /* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
 function freeRow(p, it) {
@@ -1332,30 +1443,36 @@ function renderSide() {
 }
 /* extra inspector controls: label position for bars; height and grouping for summary bars */
 function itemExtras(cur) {
-  if (isMs(P, cur.style)) return "";
+  const groups = P.items.filter(i => isContainer(P, i) && i.lane === cur.lane && i !== cur);
+  const groupPick = !isContainer(P, cur) && groups.length ? `<div class="f"><label for="iParent">In summary</label><select id="iParent"><option value="">(none)</option>${groups.map(g => `<option value="${esc(g.id)}" ${cur.parent === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>` : "";
+  if (isMs(P, cur.style)) return groupPick;
   if (isContainer(P, cur)) {
-    const kids = containerChildren(P, cur);
+    const kids = containerChildren(P, cur), box = styleOf(P, cur.style).shape === "container-box";
     return `<div class="tagfmt">
-      <div class="f"><label for="cSpan">Height (rows, including the title row)</label><input id="cSpan" type="number" min="2" max="20" value="${spanOf(cur)}"></div>
-      <label class="check"><input type="checkbox" id="cFit" ${cur.fitChildren ? "checked" : ""}> Dates follow the bars inside</label>
-      <div class="actions"><button class="btn" id="cFitNow" ${kids.length ? "" : "disabled"}>Fit to bars inside now</button></div>
-      <p class="note">${kids.length ? `${kids.length} bar${kids.length > 1 ? "s" : ""}/milestone${kids.length > 1 ? "s" : ""} inside. They move with it when you drag its title.` : "Drag bars into the rows below its title to put them inside."} Labels that don't fit become numbers, listed in the key at the bottom of the page.</p>
+      <div class="actions"><button class="btn primary" id="cCollapse">${cur.collapsed ? "Expand" : "Collapse"}</button><span class="note">${kids.length} item${kids.length === 1 ? "" : "s"} inside${cur.collapsed ? ", hidden" : ""}</span></div>
+      <div class="f"><label>Look</label><div class="seg" role="group" aria-label="Summary look"><button type="button" data-look="container" aria-pressed="${!box}">Bracket</button><button type="button" data-look="container-box" aria-pressed="${box}">Box</button></div></div>
+      <label class="check"><input type="checkbox" id="cFit" ${cur.fitChildren !== false ? "checked" : ""}> Dates follow the bars inside</label>
+      <p class="note">Drop bars into its rows (or use “In summary” on a bar) to add them; drag them out to remove them. Its height follows its bars. Collapsed, it prints as one row with its milestones on the bracket.</p>
     </div>`;
   }
   const plan = LAY?.labels?.get(cur.id), mode = cur.labelMode || "auto";
-  return `<div class="f"><label>Label</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-label="${v}" aria-pressed="${mode === v}">${n}</button>`).join("")}</div></div>
+  return `${groupPick}<div class="f"><label>Label</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-label="${v}" aria-pressed="${mode === v}">${n}</button>`).join("")}</div></div>
     ${mode === "auto" && plan ? `<p class="note">Auto puts it ${{ inside: "inside the bar", right: "to the right of the bar", left: "to the left of the bar", above: "above the bar", key: `as no. ${plan.n}, listed in the key at the bottom of the page` }[plan.mode] || "beside the bar"}.</p>` : ""}`;
 }
 function bindItemExtras(cur) {
   const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
   $("side").querySelectorAll("[data-label]").forEach(b => b.onclick = () => upd(x => { if (b.dataset.label === "auto") delete x.labelMode; else x.labelMode = b.dataset.label; }));
-  if ($("cSpan")) $("cSpan").onchange = e => upd(x => x.span = Math.max(2, Math.min(20, +e.target.value || 3)));
-  if ($("cFit")) $("cFit").onchange = e => upd(x => { x.fitChildren = e.target.checked; });
-  if ($("cFitNow")) $("cFitNow").onclick = () => upd(x => {
-    const kids = containerChildren(P, x); if (!kids.length) return;
-    x.start = fromDays(Math.min(...kids.map(i => toDays(i.start)))); x.end = fromDays(Math.max(...kids.map(i => toDays(i.end))));
-    x.span = Math.max(2, Math.max(...kids.map(i => i.row)) - x.row + 1);
+  if ($("iParent")) $("iParent").onchange = e => upd(x => {
+    const g = P.items.find(i => i.id === e.target.value);
+    if (!g) { delete x.parent; x.row = 999; x.row = freeRow(P, x); return; }
+    x.parent = g.id; g.collapsed = false;
+    x.row = 999; x.row = groupFreeRow(P, g, x);
   });
+  if ($("cCollapse")) $("cCollapse").onclick = () => upd(x => { x.collapsed = !x.collapsed; });
+  if ($("cFit")) $("cFit").onchange = e => upd(x => { x.fitChildren = e.target.checked; });
+  $("side").querySelectorAll("[data-look]").forEach(b => b.onclick = () => upd(x => {
+    const t = P.styles.find(s => s.shape === b.dataset.look); if (t) x.style = t.name;
+  }));
 }
 
 /* tag format controls; f is the effective format (tagFmt), set(key, value) stores it */
@@ -1758,13 +1875,13 @@ function buildExcelBlob() {
   const wb = XLSX.utils.book_new();
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
-  const prog = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Span","Label"]]
+  const prog = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed"]]
     .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke,
-      isContainer(P, i) ? spanOf(i) : "", i.labelMode || ""]));
+      i.labelMode || "", i.parent || "", isContainer(P, i) ? (i.collapsed ? "Yes" : "No") : ""]));
   const ws = XLSX.utils.aoa_to_sheet(prog, { cellDates: true });
   for (let r = 1; r < prog.length; r++) for (const c of [4,5]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
-  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,6,8].map(w => ({ wch: w }));
-  ws["!autofilter"] = { ref: `A1:M${prog.length}` };
+  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9].map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: `A1:N${prog.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
@@ -1806,7 +1923,7 @@ function parseWorkbook(buf) {
   if (hi < 0) throw new Error(`no "ShapeID" column found on sheet "${shName}"`);
   const H = aoa[hi].map(c => String(c ?? "").trim().toLowerCase().replace(/\s+/g, ""));
   const col = (...names) => H.findIndex(h => names.includes(h));
-  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), span: col("span"), label: col("label","labelmode") };
+  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), label: col("label","labelmode"), parent: col("parent","summary"), collapsed: col("collapsed") };
   const rows = [], problems = [];
   for (let r = hi + 1; r < aoa.length; r++) {
     const R = aoa[r], g = k => C[k] >= 0 ? R[C[k]] : null;
@@ -1814,7 +1931,8 @@ function parseWorkbook(buf) {
     const start = toISO(g("start")), end = toISO(g("end")) || start;
     if (!start) { problems.push(`Row ${r+1} (${g("id") || g("name")}): no valid start date, skipped`); continue; }
     rows.push({ xlRow: r + 1, id: String(g("id") ?? "").trim(), name: String(g("name") ?? "").trim(), style: String(g("style") ?? "BAR").trim() || "BAR", lane: String(g("lane") ?? "").trim(), start, end: toDays(end) < toDays(start) ? start : end, status: String(g("status") ?? "Active").trim() || "Active", row: g("row") === null || g("row") === "" ? NaN : Number(g("row")), y: Number(g("y")) || NaN, fill: hex(g("fill")), stroke: hex(g("stroke")),
-      span: +g("span") >= 2 ? Math.min(20, +g("span")) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined });
+      parent: C.parent >= 0 ? String(g("parent") ?? "").trim() : undefined,
+      collapsed: C.collapsed >= 0 && String(g("collapsed") ?? "").trim() !== "" ? /^(yes|y|true|1)$/i.test(String(g("collapsed")).trim()) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined });
   }
   let lanes = [];
   const lsh = wb.Sheets["Lanes"];
@@ -1893,6 +2011,8 @@ function previewImport(parsed, fname) {
     if (st !== cur.style) diffs.push(["Style", cur.style, st]);
     if (r.lane && r.lane.toLowerCase() !== laneName(cur.lane).toLowerCase()) diffs.push(["Lane", laneName(cur.lane), r.lane]);
     if (r.status && r.status !== cur.status) diffs.push(["Status", cur.status, r.status]);
+    if (r.parent !== undefined && (r.parent || "") !== (cur.parent || "")) diffs.push(["Summary", cur.parent || "(none)", r.parent || "(none)"]);
+    if (r.collapsed !== undefined && !!r.collapsed !== !!cur.collapsed) diffs.push(["Collapsed", cur.collapsed ? "Yes" : "No", r.collapsed ? "Yes" : "No"]);
     if (diffs.length) changes.push({ r, cur, diffs });
   }
   const missing = P.items.filter(i => !seen.has(i.id));
@@ -1956,7 +2076,8 @@ function previewImport(parsed, fname) {
           if (r.fill) it.fill = r.fill; if (r.stroke) it.stroke = r.stroke;
           if (r.lane) { it.lane = laneFor(r.lane); if (it.lane !== oldLane) it.row = freeRow(p, it); }
           if (Number.isFinite(r.row)) it.row = r.row;
-          if (r.span) it.span = r.span;
+          if (r.parent !== undefined) { if (r.parent) it.parent = r.parent; else delete it.parent; }
+          if (r.collapsed !== undefined) it.collapsed = r.collapsed;
           if (r.labelMode) { if (r.labelMode === "auto") delete it.labelMode; else it.labelMode = r.labelMode; }
         }
         const reserved = new Set(parsed.rows.map(r => r.id).filter(Boolean));
@@ -1965,6 +2086,8 @@ function previewImport(parsed, fname) {
           const id = r.id && !p.items.some(i => i.id === r.id) ? r.id : nextId(p, st, r.id || null, reserved);
           const curtain = isCurtain(p, st);
           const it = { id, name: r.name, style: st, lane: curtain ? "" : laneFor(r.lane || "Unassigned"), start: r.start, end: isMs(p, st) ? r.start : r.end, status: r.status, row: 0, fill: r.fill, stroke: r.stroke };
+          if (r.parent) it.parent = r.parent;
+          if (r.collapsed) it.collapsed = true;
           it.row = curtain ? 0 : Number.isFinite(r.row) ? r.row : freeRow(p, it);
           p.items.push(it);
         }
