@@ -284,6 +284,7 @@ const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 const DEFAULT_STYLES = [
   { name: "BAR",         shape: "bar",      behaviour: "Stretch", fill: "",        stroke: "#163E6B", notes: "Activity (lane colour)" },
   { name: "POSS",        shape: "poss",     behaviour: "Stretch", fill: "#FBB785", stroke: "#163E6B", notes: "Possession" },
+  { name: "SUMMARY",     shape: "container", behaviour: "Stretch", fill: "",       stroke: "#163E6B", notes: "Summary bar" },
   { name: "ML_Diamond",  shape: "diamond",  behaviour: "Move",    fill: "#FF0000", stroke: "#9E0000", notes: "Contract Milestone" },
   { name: "ML_Triangle", shape: "triangle", behaviour: "Move",    fill: "#FFD965", stroke: "#8A6A00", notes: "Design Milestone" },
   { name: "ML_Square",   shape: "square",   behaviour: "Move",    fill: "#C4D6A0", stroke: "#5B7330", notes: "Construction Milestone" },
@@ -301,6 +302,7 @@ function curtainDefaults() {
 }
 /* programmes saved before curtains / page settings existed get the defaults */
 function upgradeProject(p) {
+  if (!p.styles.some(s => s.shape === "container")) { const i = p.styles.findIndex(s => s.behaviour !== "Move" && s.behaviour !== "Stretch"); p.styles.splice(i < 0 ? p.styles.length : i, 0, clone(DEFAULT_STYLES.find(s => s.shape === "container"))); }
   if (!p.styles.some(s => s.behaviour === "Curtain")) p.styles.push(...curtainDefaults().filter(c => !p.styles.some(s => s.name === c.name)));
   p.page = { size: "A3", orient: "landscape", margin: 7, rowH: 26, fill: true, ...(p.page || {}) };
   p.view = { zoom: 3, ...(p.view || {}) }; if (!p.view.mode) p.view.mode = "page-width";
@@ -351,6 +353,8 @@ function projectFromRows(rows, laneRows, base) {
     if (seen.has(id)) id = nextId(p, r.style, id, reserved);
     seen.add(id);
     const it = { id, name: r.name || "", style: st.name, lane: lane.id, start: r.start, end: isMs(p, st.name) ? r.start : (r.end || r.start), status: r.status || "Active", row: curtain ? 0 : Number.isFinite(r.row) ? r.row : null, fill: r.fill || "", stroke: r.stroke || "" };
+    if (r.span) it.span = r.span;
+    if (r.labelMode && r.labelMode !== "auto") it.labelMode = r.labelMode;
     p.items.push(it);
     if (it.row == null && Number.isFinite(r.y)) { (yGroups.get(lane.id) || yGroups.set(lane.id, []).get(lane.id)).push([it, r.y]); }
   }
@@ -415,6 +419,7 @@ function commit(mutator, keepSel) {
 }
 function changed() {
   touched = true;
+  syncContainers(P);
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   showStatus();
   render(); renderSide();
@@ -457,7 +462,7 @@ function findSel() {
    Layout + drawing (one SVG = the whole issued sheet)
    ===================================================================== */
 function laneRows(l, spare) {
-  const max = P.items.filter(i => i.lane === l.id).reduce((m, i) => Math.max(m, i.row), -1);
+  const max = P.items.filter(i => i.lane === l.id).reduce((m, i) => Math.max(m, i.row + (isContainer(P, i) ? spanOf(i) - 1 : 0)), -1);
   return Math.max(l.minRows || 1, max + 1 + (spare ? 1 : 0));
 }
 function layout(opts) {
@@ -575,7 +580,10 @@ function draw(svg, opts) {
 
   // items
   const gi = el("g", {}, svg);
-  for (const it of P.items) {
+  L.labels = planLabels(L);
+  // summary bars first so the bars inside them draw on top
+  const ordered = [...P.items].sort((a, b) => (isContainer(P, b) ? 1 : 0) - (isContainer(P, a) ? 1 : 0));
+  for (const it of ordered) {
     const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
     drawItem(gi, it, ln, L, opts, F);
   }
@@ -750,7 +758,100 @@ function vText(parent, text, cx, cy, maxW, size, weight, fill, F, laneId) {
   lines.forEach((ln, i) => el("text", { x: cx, y: cy + size * .36 + (i - (lines.length - 1) / 2) * lh, "text-anchor": "middle", fill, "font-size": size, "font-weight": weight, "font-family": F.font, "letter-spacing": ".03em", "data-lanehead": laneId, style: "cursor:pointer" }, g, ln));
 }
 
+/* ---------- bar labels: inside, right, above, numbered key, or hidden ---------- */
+const LABEL_MODES = [["auto", "Auto"], ["inside", "Inside"], ["right", "Right"], ["above", "Above"], ["key", "Key no."], ["none", "Hidden"]];
+const ABOVE_FONT = 7.5;
+/* Decides where each bar's name goes. Auto: inside if it fits, else to the right if there's room before the
+   next thing on the row, else above the bar if the row gap allows, else a numbered key (inside a summary bar,
+   listed in its header) or, outside a summary, to the right anyway. */
+function planLabels(L) {
+  const out = new Map(), keys = new Map();
+  const cyOf = (ln, row) => ln.y + G.pad + row * G.rowH + G.rowH / 2;
+  for (const ln of L.lanes) {
+    const its = P.items.filter(i => i.lane === ln.l.id && !isCurtain(P, i.style));
+    const containers = its.filter(i => isContainer(P, i));
+    const parentOf = new Map(); containers.forEach(c => containerChildren(P, c).forEach(k => parentOf.set(k.id, c)));
+    const occ = new Map(), aboveOcc = new Map(), msOcc = new Map();   // per row: [x1, x2] already taken
+    const take = (m, r, a, b) => { (m.get(r) || m.set(r, []).get(r)).push([a, b]); };
+    const free = (m, r, a, b) => !(m.get(r) || []).some(([c, d]) => a < d + 3 && c < b + 3);
+    for (const i of its) {
+      if (isContainer(P, i)) { take(occ, i.row, L.x(i.start) + 4, L.x(i.start) + 10 + textW(i.name, 8.5, 700)); continue; }
+      const x = L.x(i.start);
+      if (isMs(P, i.style)) { const w = textW(i.name, 9, 500) + 30 + (inlineMsDate() ? textW("  00-Mmm-00", 8.5, 400) : 0); take(occ, i.row, x - G.ms, x + w); take(msOcc, i.row, x - G.ms, x + w); }
+      else take(occ, i.row, x, L.x(i.end) + L.ppd);
+    }
+    const bars = its.filter(i => !isContainer(P, i) && !isMs(P, i.style)).sort((a, b) => toDays(a.start) - toDays(b.start) || a.row - b.row);
+    for (const i of bars) {
+      const st = styleOf(P, i.style), x1 = L.x(i.start), x2 = L.x(i.end) + L.ppd, w = x2 - x1;
+      const tw = textW(i.name, 9, 500), parent = parentOf.get(i.id);
+      const limit = Math.min(parent ? L.x(parent.end) + L.ppd - 3 : L.W - 4,
+        ...(occ.get(i.row) || []).filter(([a]) => a >= x2 - 1 && a > x1).map(([a]) => a - 4));
+      const fitsInside = st.shape !== "summary" && tw + 10 < w;
+      const fitsRight = x2 + 5 + tw <= limit;
+      const aw = textW(i.name, ABOVE_FONT, 600);
+      const fitsAbove = G.rowH - G.barH >= 8.5 && x1 + aw <= (parent ? L.x(parent.end) + L.ppd - 3 : L.W - 4)
+        && free(aboveOcc, i.row, x1, x1 + aw) && free(msOcc, i.row - 1, x1, x1 + aw);
+      let mode = i.labelMode || "auto";
+      if (mode === "auto") mode = fitsInside ? "inside" : fitsRight ? "right" : fitsAbove ? "above" : parent ? "key" : "right";
+      if (mode === "key" && !parent) mode = "right";   // a key needs a summary bar header to list it in
+      if (mode === "right") take(occ, i.row, x2, x2 + 5 + tw);
+      if (mode === "above") take(aboveOcc, i.row, x1, x1 + aw);
+      const plan = { mode, auto: !i.labelMode || i.labelMode === "auto" };
+      if (mode === "key") { const list = keys.get(parent.id) || keys.set(parent.id, []).get(parent.id); plan.n = list.length + 1; list.push({ n: plan.n, name: i.name }); }
+      out.set(i.id, plan);
+    }
+  }
+  out.keys = keys;
+  return out;
+}
+function keyBadge(g, x, cy, n, F, stroke) {
+  el("circle", { cx: x, cy, r: 5.6, fill: "#FFFFFF", stroke: stroke || BRAND.navy, "stroke-width": .9 }, g);
+  el("text", { x, y: cy + 2.5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 7, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, g, n);
+}
+/* summary bar: rounded box over its rows, title and numbered key in the header row */
+function drawContainer(g, it, ln, L, opts, F) {
+  const st = styleOf(P, it.style), stroke = it.stroke || st.stroke || BRAND.navy;
+  const fill = it.fill || st.fill || tint(ln.l.colour, .9);
+  const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(6, x2 - x1);
+  const y = ln.y + G.pad + it.row * G.rowH + 1, h = spanOf(it) * G.rowH - 2, hy = y + G.rowH / 2 + 2.2;
+  const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+  const grp = el("g", { "data-id": it.id }, g);
+  el("rect", { x: x1, y, width: w, height: h, rx: 4, fill, stroke, "stroke-width": 1.2, "pointer-events": "none" }, grp);
+  el("line", { x1: x1 + 1, x2: x2 - 1, y1: y + G.rowH - 1, y2: y + G.rowH - 1, stroke, "stroke-width": .6, "stroke-opacity": .35, "pointer-events": "none" }, grp);
+  // header: name, then the numbered key; key text shrinks, then names are shortened, to fit the width
+  let tx = x1 + 6;
+  el("text", { x: tx, y: hy, fill: BRAND.navy, "font-size": 8.5, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, it.name);
+  tx += textW(it.name, 8.5, 700) + 10;
+  const keys = (L.labels?.keys?.get(it.id)) || [];
+  if (keys.length) {
+    const room = x2 - 6 - tx;
+    let size = 8, names = keys.map(k => k.name);
+    const need = s => keys.reduce((n, k, i) => n + 14 + textW(names[i], s, 500) + 8, 0);
+    while (size > 6.5 && need(size) > room) size -= .5;
+    if (need(size) > room) {   // shorten the longest names until it fits
+      for (let guard = 0; guard < 400 && need(size) > room; guard++) {
+        const i = names.reduce((b, n, j) => n.length > names[b].length ? j : b, 0);
+        if (names[i].length <= 4) break;
+        names[i] = names[i].replace(/…$/, "").slice(0, -1).trimEnd() + "…";
+      }
+    }
+    keys.forEach((k, i) => {
+      keyBadge(grp, tx + 5.6, hy - 2.6, k.n, F, stroke);
+      el("text", { x: tx + 14, y: hy, fill: BRAND.navy, "font-size": size, "font-weight": 500, "font-family": F.font, "pointer-events": "none" }, grp, names[i]);
+      tx += 14 + textW(names[i], size, 500) + 8;
+    });
+  }
+  if (selected) el("rect", { x: x1 - 2, y: y - 2, width: w + 4, height: h + 4, rx: 5, fill: "none", stroke: BRAND.orange, "stroke-width": 1.8, "pointer-events": "none" }, grp);
+  if (!opts.print) {   // grab the header to move it with its bars; edges change dates; bottom edge changes height
+    el("rect", { x: x1, y, width: w, height: G.rowH - 1, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
+    el("rect", { x: x1 - 3, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
+    el("rect", { x: x2 - 4, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
+    el("rect", { x: x1 + 4, y: y + h - 4, width: w - 8, height: 8, fill: "transparent", "data-id": it.id, "data-part": "b", style: "cursor:ns-resize" }, grp);
+  }
+}
+
 function drawItem(g, it, ln, L, opts, F) {
+  if (isContainer(P, it)) return drawContainer(g, it, ln, L, opts, F);
   const st = styleOf(P, it.style);
   const { fill, stroke } = itemColours(it, ln.l);
   const cy = ln.y + G.pad + it.row * G.rowH + G.rowH / 2;
@@ -774,14 +875,19 @@ function drawItem(g, it, ln, L, opts, F) {
   } else {
     const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(2, x2 - x1), h = G.barH, y = cy - h / 2;
     drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke);
-    const tw = textW(it.name, 9, 500), inside = st.shape !== "summary" && tw + 10 < w;
-    el("text", { x: inside ? x1 + w / 2 : x2 + 5, y: cy + 3.3, "text-anchor": inside ? "middle" : "start", fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font, "pointer-events": "none" }, grp, it.name);
+    const tw = textW(it.name, 9, 500), plan = L.labels?.get(it.id) || { mode: tw + 10 < w ? "inside" : "right" };
+    const text = { fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font, "pointer-events": "none" };
+    if (plan.mode === "inside") el("text", { x: x1 + w / 2, y: cy + 3.3, "text-anchor": "middle", ...text }, grp, it.name);
+    else if (plan.mode === "right") el("text", { x: x2 + 5, y: cy + 3.3, ...text }, grp, it.name);
+    else if (plan.mode === "above") el("text", { x: x1 + 1, y: y - 2.2, ...text, "font-size": ABOVE_FONT, "font-weight": 600 }, grp, it.name);
+    else if (plan.mode === "key") keyBadge(grp, x1 + Math.min(8, w / 2), cy, plan.n, F, stroke);
     if (selected) el("rect", { x: x1 - 2, y: y - 2, width: w + 4, height: h + 4, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6 }, grp);
     if (!opts.print) {
       el("rect", { x: x1, y, width: w, height: h, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
       el("rect", { x: x1 - 3, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
       el("rect", { x: x2 - 4, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
-      if (!inside) el("rect", { x: x2 + 2, y, width: tw + 6, height: h, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+      if (plan.mode === "right") el("rect", { x: x2 + 2, y, width: tw + 6, height: h, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+      if (plan.mode === "above") el("rect", { x: x1, y: y - 10, width: textW(it.name, ABOVE_FONT, 600) + 2, height: 9, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
     }
   }
 }
@@ -799,7 +905,24 @@ function polyPts(x, cy, n, r, rot) {
   return Array.from({ length: n }, (_, i) => { const t = rot + i * 2 * Math.PI / n; return `${(x + r(i) * Math.cos(t)).toFixed(2)},${(cy + r(i) * Math.sin(t)).toFixed(2)}`; }).join(" ");
 }
 const MS_SHAPES = [["diamond","Diamond"],["triangle","Triangle"],["invtriangle","Inverted triangle"],["square","Square"],["circle","Circle"],["star","Star"],["hexagon","Hexagon"]];
-const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["summary","Summary bracket"]];
+const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["summary","Summary bracket"],["container","Summary bar (holds bars inside)"]];
+
+/* ---------- summary bars: a tall bar spanning several rows that other bars sit inside ---------- */
+function isContainer(p, it) { return styleOf(p, it.style).shape === "container"; }
+function spanOf(it) { return Math.max(2, Math.min(20, +it.span || 3)); }
+/* bars and milestones inside a summary: same lane, in its rows below the title row, overlapping its dates */
+function containerChildren(p, c) {
+  const top = c.row + 1, bottom = c.row + spanOf(c) - 1, s = toDays(c.start), e = toDays(c.end);
+  return p.items.filter(i => i !== c && i.lane === c.lane && !isContainer(p, i) && !isCurtain(p, i.style)
+    && i.row >= top && i.row <= bottom && toDays(i.end) >= s && toDays(i.start) <= e);
+}
+/* summaries set to follow their bars take the earliest start and latest finish inside them */
+function syncContainers(p) {
+  for (const c of p.items) if (isContainer(p, c) && c.fitChildren) {
+    const kids = containerChildren(p, c); if (!kids.length) continue;
+    c.start = fromDays(Math.min(...kids.map(i => toDays(i.start)))); c.end = fromDays(Math.max(...kids.map(i => toDays(i.end))));
+  }
+}
 function drawBarShape(g, shape, x, y, w, h, fill, stroke) {
   if (shape === "summary") {   // thin bar with down-pointing ends, like a summary task
     const t = h * .38;
@@ -911,6 +1034,8 @@ $("chart").addEventListener("pointerdown", e => {
     const it = P.items.find(i => i.id === id);
     sel = { type: "item", id };
     drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false };
+    // a summary bar carries the bars inside it
+    if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
   } else if (head) sel = { type: "lane", id: head };
   else if (t.getAttribute("data-lane")) sel = { type: "lane", id: t.getAttribute("data-lane") };
   else sel = null;
@@ -925,11 +1050,19 @@ window.addEventListener("pointermove", e => {
   const ms = isMs(P, it.style);
   if (drag.part === "l") it.start = fromDays(Math.min(toDays(o.start) + dd, toDays(o.end)));
   else if (drag.part === "r") it.end = fromDays(Math.max(toDays(o.end) + dd, toDays(o.start)));
-  else {
+  else if (drag.part === "b") {   // summary bar height, in rows
+    const ln = LAY.lanes.find(x => x.l.id === o.lane);
+    if (ln) it.span = Math.max(2, Math.min(20, Math.round((p.y - (ln.y + G.pad + o.row * LAY.rowH)) / LAY.rowH)));
+  } else {
     it.start = addDays(o.start, dd); it.end = ms ? it.start : addDays(o.end, dd);
     if (!isCurtain(P, it.style)) {   // curtains only move in time
       const s = slotAt(p.y - (drag.y0 - rowCenter(o)));
       if (s) { it.lane = s.lane; it.row = s.row; }
+    }
+    for (const k of drag.kids || []) {   // bars inside a summary move with it
+      const kid = P.items.find(i => i.id === k.id); if (!kid) continue;
+      kid.start = addDays(k.orig.start, dd); kid.end = addDays(k.orig.end, dd);
+      kid.lane = it.lane; kid.row = Math.max(0, k.orig.row + (it.row - o.row));
     }
   }
   render();
@@ -961,7 +1094,10 @@ function addItem(styleName, laneId, start, row) {
 }
 /* move a lane's items up into the fewest rows without overlaps, keeping their top-to-bottom order where possible */
 function packLane(p, laneId) {
-  const its = p.items.filter(i => i.lane === laneId).sort((a, b) => a.row - b.row || toDays(a.start) - toDays(b.start));
+  // summary bars and the bars inside them keep their places; everything else packs around them
+  const fixed = new Set();
+  p.items.filter(i => i.lane === laneId && isContainer(p, i)).forEach(c => { fixed.add(c.id); containerChildren(p, c).forEach(k => fixed.add(k.id)); });
+  const its = p.items.filter(i => i.lane === laneId && !fixed.has(i.id)).sort((a, b) => a.row - b.row || toDays(a.start) - toDays(b.start));
   its.forEach(i => i.row = 999);
   its.forEach(i => i.row = freeRow(p, i));
 }
@@ -976,9 +1112,14 @@ function freeRow(p, it) {
     const tw = textW(x.name, 9, 500) + 10;
     return [s, tw < (e - s) * ppd ? e : e + Math.ceil((tw + 4) / ppd)];   // name doesn't fit inside: it sits to the right
   };
+  // a new summary bar goes below everything in its lane
+  if (isContainer(p, it)) return p.items.filter(o => o !== it && o.lane === it.lane).reduce((m, o) => Math.max(m, o.row + (isContainer(p, o) ? spanOf(o) : 1)), 0);
   const [a, b] = span(it);
+  // summary bars block all their rows over their dates, so nothing is auto-placed inside one
+  const onRow = (o, r) => isContainer(p, o) ? r >= o.row && r < o.row + spanOf(o) : o.row === r;
+  const sp = o => isContainer(p, o) ? [toDays(o.start), toDays(o.end) + 1] : span(o);
   for (let r = 0; r < 200; r++) {
-    const clash = p.items.some(o => o !== it && o.lane === it.lane && o.row === r && (([c, d]) => c < b && a < d)(span(o)));
+    const clash = p.items.some(o => o !== it && o.lane === it.lane && onRow(o, r) && (([c, d]) => c < b && a < d)(sp(o)));
     if (!clash) return r;
   }
   return 0;
@@ -1014,7 +1155,7 @@ function renderSide() {
     const dur = toDays(cur.end) - toDays(cur.start) + 1;
     const colourNote = cur.fill ? "Custom colour" : ms ? `${st.notes} colour` : "Follows the lane colour";
     side.innerHTML = `
-      <h2>${ms ? "Milestone" : "Bar"} <span class="idtag">${esc(cur.id)}</span></h2>
+      <h2>${ms ? "Milestone" : isContainer(P, cur) ? "Summary bar" : "Bar"} <span class="idtag">${esc(cur.id)}</span></h2>
       <div class="f"><label for="iName">Name</label><input id="iName" value="${esc(cur.name)}"></div>
       <div class="row2">
         <div class="f"><label for="iStart">${ms ? "Date" : "Start"}</label><input id="iStart" type="date" value="${cur.start}"></div>
@@ -1034,10 +1175,12 @@ function renderSide() {
         <div class="f"><label for="iStatus">Status</label><select id="iStatus">${["Active","Complete","On hold"].map(s => `<option ${s === cur.status ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         <div class="f"><label for="iId">ShapeID</label><input id="iId" value="${esc(cur.id)}"></div>
       </div>
+      ${itemExtras(cur)}
       <div class="actions">
         <button class="btn" id="iDup">Duplicate</button>
         <button class="btn danger" id="iDel">Delete</button>
       </div>`;
+    bindItemExtras(cur);
     const upd = (f) => commit(p => f(p.items.find(i => i.id === cur.id)), true);
     $("iName").onchange = e => upd(x => x.name = e.target.value);
     $("iStart").onchange = e => { if (!e.target.value) return; upd(x => { const d = toDays(e.target.value) - toDays(x.start); x.start = e.target.value; x.end = isMs(P, x.style) ? x.start : (toDays(x.end) < toDays(x.start) ? addDays(x.end, d) : x.end); }); };
@@ -1164,6 +1307,34 @@ function renderSide() {
   $("addBarType").onclick = () => addType("Stretch");
   $("addCurtainType").onclick = () => addType("Curtain");
 }
+/* extra inspector controls: label position for bars; height and grouping for summary bars */
+function itemExtras(cur) {
+  if (isMs(P, cur.style)) return "";
+  if (isContainer(P, cur)) {
+    const kids = containerChildren(P, cur);
+    return `<div class="tagfmt">
+      <div class="f"><label for="cSpan">Height (rows, including the title row)</label><input id="cSpan" type="number" min="2" max="20" value="${spanOf(cur)}"></div>
+      <label class="check"><input type="checkbox" id="cFit" ${cur.fitChildren ? "checked" : ""}> Dates follow the bars inside</label>
+      <div class="actions"><button class="btn" id="cFitNow" ${kids.length ? "" : "disabled"}>Fit to bars inside now</button></div>
+      <p class="note">${kids.length ? `${kids.length} bar${kids.length > 1 ? "s" : ""}/milestone${kids.length > 1 ? "s" : ""} inside. They move with it when you drag its title.` : "Drag bars into the rows below its title to put them inside."} Labels that don't fit become numbers listed in the title row.</p>
+    </div>`;
+  }
+  const plan = LAY?.labels?.get(cur.id), mode = cur.labelMode || "auto";
+  return `<div class="f"><label>Label</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-label="${v}" aria-pressed="${mode === v}">${n}</button>`).join("")}</div></div>
+    ${mode === "auto" && plan ? `<p class="note">Auto puts it ${{ inside: "inside the bar", right: "to the right", above: "above the bar", key: `in the summary's key as no. ${plan.n}` }[plan.mode] || "beside the bar"}.</p>` : ""}`;
+}
+function bindItemExtras(cur) {
+  const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
+  $("side").querySelectorAll("[data-label]").forEach(b => b.onclick = () => upd(x => { if (b.dataset.label === "auto") delete x.labelMode; else x.labelMode = b.dataset.label; }));
+  if ($("cSpan")) $("cSpan").onchange = e => upd(x => x.span = Math.max(2, Math.min(20, +e.target.value || 3)));
+  if ($("cFit")) $("cFit").onchange = e => upd(x => { x.fitChildren = e.target.checked; });
+  if ($("cFitNow")) $("cFitNow").onclick = () => upd(x => {
+    const kids = containerChildren(P, x); if (!kids.length) return;
+    x.start = fromDays(Math.min(...kids.map(i => toDays(i.start)))); x.end = fromDays(Math.max(...kids.map(i => toDays(i.end))));
+    x.span = Math.max(2, Math.max(...kids.map(i => i.row)) - x.row + 1);
+  });
+}
+
 /* tag format controls; f is the effective format (tagFmt), set(key, value) stores it */
 const TAG_CHOICES = {
   tagPos: [["strip", "Strip"], ["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]],
@@ -1564,12 +1735,13 @@ function buildExcelBlob() {
   const wb = XLSX.utils.book_new();
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
-  const prog = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke"]]
-    .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke]));
+  const prog = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Span","Label"]]
+    .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke,
+      isContainer(P, i) ? spanOf(i) : "", i.labelMode || ""]));
   const ws = XLSX.utils.aoa_to_sheet(prog, { cellDates: true });
   for (let r = 1; r < prog.length; r++) for (const c of [4,5]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
-  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9].map(w => ({ wch: w }));
-  ws["!autofilter"] = { ref: `A1:K${prog.length}` };
+  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,6,8].map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: `A1:M${prog.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
@@ -1611,14 +1783,15 @@ function parseWorkbook(buf) {
   if (hi < 0) throw new Error(`no "ShapeID" column found on sheet "${shName}"`);
   const H = aoa[hi].map(c => String(c ?? "").trim().toLowerCase().replace(/\s+/g, ""));
   const col = (...names) => H.findIndex(h => names.includes(h));
-  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke") };
+  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), span: col("span"), label: col("label","labelmode") };
   const rows = [], problems = [];
   for (let r = hi + 1; r < aoa.length; r++) {
     const R = aoa[r], g = k => C[k] >= 0 ? R[C[k]] : null;
     if (!g("id") && !g("name")) continue;
     const start = toISO(g("start")), end = toISO(g("end")) || start;
     if (!start) { problems.push(`Row ${r+1} (${g("id") || g("name")}): no valid start date, skipped`); continue; }
-    rows.push({ xlRow: r + 1, id: String(g("id") ?? "").trim(), name: String(g("name") ?? "").trim(), style: String(g("style") ?? "BAR").trim() || "BAR", lane: String(g("lane") ?? "").trim(), start, end: toDays(end) < toDays(start) ? start : end, status: String(g("status") ?? "Active").trim() || "Active", row: g("row") === null || g("row") === "" ? NaN : Number(g("row")), y: Number(g("y")) || NaN, fill: hex(g("fill")), stroke: hex(g("stroke")) });
+    rows.push({ xlRow: r + 1, id: String(g("id") ?? "").trim(), name: String(g("name") ?? "").trim(), style: String(g("style") ?? "BAR").trim() || "BAR", lane: String(g("lane") ?? "").trim(), start, end: toDays(end) < toDays(start) ? start : end, status: String(g("status") ?? "Active").trim() || "Active", row: g("row") === null || g("row") === "" ? NaN : Number(g("row")), y: Number(g("y")) || NaN, fill: hex(g("fill")), stroke: hex(g("stroke")),
+      span: +g("span") >= 2 ? Math.min(20, +g("span")) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined });
   }
   let lanes = [];
   const lsh = wb.Sheets["Lanes"];
@@ -1760,6 +1933,8 @@ function previewImport(parsed, fname) {
           if (r.fill) it.fill = r.fill; if (r.stroke) it.stroke = r.stroke;
           if (r.lane) { it.lane = laneFor(r.lane); if (it.lane !== oldLane) it.row = freeRow(p, it); }
           if (Number.isFinite(r.row)) it.row = r.row;
+          if (r.span) it.span = r.span;
+          if (r.labelMode) { if (r.labelMode === "auto") delete it.labelMode; else it.labelMode = r.labelMode; }
         }
         const reserved = new Set(parsed.rows.map(r => r.id).filter(Boolean));
         for (const r of [...adds, ...dupes]) {
