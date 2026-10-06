@@ -123,7 +123,10 @@ aside h2:first-child { margin-top: 0; }
 .type small { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
 .type-preview { background: #FFFFFF; border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
 .check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
-.logo-slot { display: flex; gap: 8px; align-items: center; }
+.logo-slot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.logo-editor { display: grid; gap: 12px; }
+.logo-editor canvas { width: 100%; max-width: 498px; aspect-ratio: 166 / 54; border: 1px dashed #8794A6; background: #FFFFFF; cursor: grab; touch-action: none; justify-self: center; }
+.logo-editor canvas:active { cursor: grabbing; }
 .logo-slot .thumb { width: 92px; height: 34px; border: 1px dashed var(--line); border-radius: 3px; background: #FFFFFF; display: grid; place-items: center; overflow: hidden; color: #8794A6; font-size: 10px; }
 .logo-slot .thumb img { max-width: 100%; max-height: 100%; }
 .note { font-size: 11.5px; color: var(--muted); margin: 0; }
@@ -183,7 +186,7 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
   </div>
   <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls" hidden>
   <input type="file" id="fImport" accept=".xlsx,.xlsm,.xls" hidden>
-  <input type="file" id="fLogo" accept="image/png,image/jpeg" hidden>
+  <input type="file" id="fLogo" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
 </div>
 
 <main>
@@ -206,6 +209,7 @@ const ROOT = (HOST && HOST.root) || document.body;
 const MARTINUS_LOGO = (HOST && HOST.logo) || window.POAP_BRAND_LOGO || "";   // from brand-logo.js
 const LOGO_RATIO = 260 / 35;
 const BRAND = { navy: "#163E6B", orange: "#F47920", ink: "#14263D", grid: "#C9D2DD" };
+const LOGO_BOX = { x: 12, y: 10, w: 166, h: 54 };   // client logo area in the sheet header (px)
 const G = { headW: 46, hdrH: 74, topH: 40, botH: 40, ftrH: 48, rowH: 26, pad: 6, barH: 16, ms: 12 };
 const LANE_PRESETS = [
   ["Martinus orange", "#F47920"], ["Martinus navy", "#163E6B"], ["Steel blue", "#4F7CAC"], ["Teal", "#128A84"],
@@ -437,7 +441,7 @@ function el(name, attrs, parent, text) {
   return e;
 }
 function img(parent, href, x, y, w, h, align) {
-  const i = el("image", { x, y, width: w, height: h, preserveAspectRatio: `${align || "xMidYMid"} meet` }, parent);
+  const i = el("image", { x, y, width: w, height: h, preserveAspectRatio: align === "none" ? "none" : `${align || "xMidYMid"} meet` }, parent);
   i.setAttribute("href", href); i.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", href);
   return i;
 }
@@ -554,7 +558,8 @@ function drawCurtainTags(svg, curtains, L, opts, F) {
 function drawHeader(svg, L, F, opts) {
   const g = el("g", { "pointer-events": "none" }, svg), m = P.meta, H = G.hdrH;
   const clientW = 190;
-  if (m.clientLogo) img(g, m.clientLogo, 12, 10, clientW - 24, H - 20, "xMinYMid");
+  // logos from the logo editor are already cropped to this box's shape, so they're placed exactly
+  if (m.clientLogo) img(g, m.clientLogo, LOGO_BOX.x, LOGO_BOX.y, LOGO_BOX.w, LOGO_BOX.h, m.clientLogoSrc ? "none" : "xMinYMid");
   else if (!opts.print) {
     el("rect", { x: 12, y: 12, width: clientW - 24, height: H - 24, fill: "none", stroke: "#B5C0CE", "stroke-dasharray": "4 3" }, g);
     el("text", { x: clientW / 2, y: H / 2 + 4, "text-anchor": "middle", fill: "#8794A6", "font-size": 10, "font-weight": 600, "font-family": F.font }, g, "CLIENT LOGO");
@@ -938,7 +943,7 @@ function renderSide() {
     </div>
     <div class="f"><label>Client logo</label>
       <div class="logo-slot"><span class="thumb">${m.clientLogo ? `<img src="${m.clientLogo}" alt="Client logo">` : "None"}</span>
-      <button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoX">Remove</button>` : ""}</div>
+      <div class="actions"><button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoEdit">Adjust</button><button class="btn" id="mLogoX">Remove</button>` : ""}</div></div>
     </div>
     <h2>Timeline</h2>
     <div class="row2">
@@ -964,7 +969,8 @@ function renderSide() {
   um("tStart", (p,v) => { if (v && toDays(v) < toDays(p.timeline.end)) p.timeline.start = v; });
   um("tEnd", (p,v) => { if (v && toDays(v) > toDays(p.timeline.start)) p.timeline.end = v; });
   $("mLogo").onclick = () => $("fLogo").click();
-  if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => p.meta.clientLogo = "", true);
+  if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
+  if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
   side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
   $("addMsType").onclick = () => addType("Move");
   $("addBarType").onclick = () => addType("Stretch");
@@ -1121,11 +1127,83 @@ function dupCheck() { const c = {}; P.items.forEach(i => c[i.id] = (c[i.id] || 0
 
 $("fLogo").onchange = e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  if (f.size > 1.5e6) { toast("That image is over 1.5 MB. Use a smaller PNG or JPG."); return; }
+  if (f.size > 8e6) { toast("That image is over 8 MB. Use a smaller PNG, JPG or SVG."); return; }
   const r = new FileReader();
-  r.onload = () => commit(p => p.meta.clientLogo = r.result, true);
+  r.onload = () => openLogoEditor(r.result, null);
   r.readAsDataURL(f);
 };
+
+/* ---------- client logo editor: fit, fill, trim white edges, zoom and drag, cropped to the header box ---------- */
+const loadImage = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("that file isn't an image this browser can read")); i.src = src; });
+/* bounding box of the visible (not white, not transparent) pixels */
+function inkBox(img) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height, k = Math.min(1, 800 / Math.max(w, h));
+  const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+  const x = c.getContext("2d", { willReadFrequently: true }); x.drawImage(img, 0, 0, c.width, c.height);
+  const d = x.getImageData(0, 0, c.width, c.height).data;
+  let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < c.height; y++) for (let xx = 0; xx < c.width; xx++) {
+    const i = (y * c.width + xx) * 4;
+    if (d[i + 3] > 16 && !(d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240)) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return { x: 0, y: 0, w, h };
+  return { x: x0 / k, y: y0 / k, w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k };
+}
+async function openLogoEditor(src, crop) {
+  let img;
+  try {
+    img = await loadImage(src);
+    // keep the stored original reasonable: very large images are scaled down to 1600 px
+    const big = Math.max(img.naturalWidth, img.naturalHeight);
+    if (big > 1600) { const c = document.createElement("canvas"), k = 1600 / big; c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); src = c.toDataURL("image/png"); img = await loadImage(src); }
+  } catch (err) { return toast("Couldn't use that image: " + err.message, 5000); }
+  const OUT = 4, W = LOGO_BOX.w * OUT, H = LOGO_BOX.h * OUT, iw = img.naturalWidth || 600, ih = img.naturalHeight || 200;
+  const fitScale = box => Math.min(W / box.w, H / box.h) * 0.94;
+  const fillScale = Math.max(W / iw, H / ih);
+  const whole = { x: 0, y: 0, w: iw, h: ih };
+  let v = crop ? { ...crop } : { s: fitScale(whole), cx: iw / 2, cy: ih / 2 };
+  const m = showModal(`<header><h3>Client logo</h3><p>The box is the logo area on the sheet. Drag the logo to position it; zoom to crop.</p></header>
+    <div class="body logo-editor">
+      <canvas id="lgCanvas" width="${W}" height="${H}" aria-label="Logo preview in the header box"></canvas>
+      <div class="actions"><button class="btn" data-lg="fit">Fit whole logo</button><button class="btn" data-lg="fill">Fill the box</button><button class="btn" data-lg="trim">Trim white edges</button></div>
+      <div class="f"><label for="lgZoom">Zoom</label><input id="lgZoom" type="range" min="0" max="1000" step="1"></div>
+    </div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="apply">Use this logo</button></footer>`, {
+    apply: () => {
+      const out = paint(true);
+      commit(p => { p.meta.clientLogo = out; p.meta.clientLogoSrc = src; p.meta.clientLogoCrop = { ...v }; }, true);
+      toast("Logo updated.");
+    },
+  });
+  const cv = m.querySelector("#lgCanvas"), ctx = cv.getContext("2d"), zoom = m.querySelector("#lgZoom");
+  // zoom slider is logarithmic between a quarter of "fit" and four times "fill"
+  const zMin = Math.log(fitScale(whole) * 0.25), zMax = Math.log(fillScale * 4);
+  const toSlider = s => Math.round((Math.log(s) - zMin) / (zMax - zMin) * 1000), fromSlider = n => Math.exp(zMin + (n / 1000) * (zMax - zMin));
+  function paint(final) {
+    ctx.clearRect(0, 0, W, H);
+    if (!final) { ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H); }
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(v.s, v.s); ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, -v.cx, -v.cy); ctx.restore();
+    if (final) return cv.toDataURL("image/png");
+    zoom.value = toSlider(v.s);
+  }
+  const setFit = box => { v = { s: fitScale(box), cx: box.x + box.w / 2, cy: box.y + box.h / 2 }; paint(); };
+  m.querySelector('[data-lg="fit"]').onclick = () => setFit(whole);
+  m.querySelector('[data-lg="fill"]').onclick = () => { v = { s: fillScale, cx: iw / 2, cy: ih / 2 }; paint(); };
+  m.querySelector('[data-lg="trim"]').onclick = () => setFit(inkBox(img));
+  zoom.oninput = () => { v.s = fromSlider(+zoom.value); paint(); };
+  let dragAt = null;
+  cv.onpointerdown = e => { dragAt = { x: e.clientX, y: e.clientY, cx: v.cx, cy: v.cy }; cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove = e => {
+    if (!dragAt) return;
+    const k = W / cv.getBoundingClientRect().width;   // screen px -> canvas px
+    v.cx = dragAt.cx - (e.clientX - dragAt.x) * k / v.s; v.cy = dragAt.cy - (e.clientY - dragAt.y) * k / v.s; paint();
+  };
+  cv.onpointerup = () => { dragAt = null; };
+  cv.onwheel = e => { e.preventDefault(); v.s *= e.deltaY < 0 ? 1.08 : 1 / 1.08; paint(); };
+  if (!crop) setFit(inkBox(img));   // a new logo starts trimmed and fitted
+  else paint();
+}
 
 /* =====================================================================
    Toolbar actions
