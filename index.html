@@ -238,6 +238,16 @@ const LOGO_RATIO = 260 / 35;
 const BRAND = { navy: "#163E6B", orange: "#F47920", ink: "#14263D", grid: "#C9D2DD" };
 const LOGO_BOX = { x: 12, y: 10, w: 166, h: 54 };   // client logo area in the sheet header (px)
 const G = { headW: 46, hdrH: 74, topH: 40, botH: 40, ftrH: 48, rowH: 26, pad: 6, barH: 16, ms: 12 };
+/* row spacing: bars, markers and lane padding scale with the row height the user picks */
+const SPACING = [["compact", "Compact", 18], ["normal", "Normal", 26], ["roomy", "Roomy", 34]];
+function applySpacing() {
+  const r = Math.max(14, Math.min(40, +P.page.rowH || 26));
+  G.rowH = r;
+  G.barH = Math.round(Math.max(10, Math.min(18, r * .62)));
+  G.ms = Math.round(Math.max(8, Math.min(13, r * .46)));
+  G.pad = Math.round(Math.max(2, Math.min(8, r * .22)));
+}
+const inlineMsDate = () => G.rowH < 22;   // tight rows: milestone date goes on the name's line
 const LANE_PRESETS = [
   ["Martinus orange", "#F47920"], ["Martinus navy", "#163E6B"], ["Steel blue", "#4F7CAC"], ["Teal", "#128A84"],
   ["Green", "#5E9A35"], ["Purple", "#6E4E9E"], ["Red", "#C8102E"], ["Grey", "#6F7C8C"],
@@ -291,7 +301,7 @@ function curtainDefaults() {
 /* programmes saved before curtains / page settings existed get the defaults */
 function upgradeProject(p) {
   if (!p.styles.some(s => s.behaviour === "Curtain")) p.styles.push(...curtainDefaults().filter(c => !p.styles.some(s => s.name === c.name)));
-  p.page = { size: "A3", orient: "landscape", margin: 7, ...(p.page || {}) };
+  p.page = { size: "A3", orient: "landscape", margin: 7, rowH: 26, fill: true, ...(p.page || {}) };
   p.view = { zoom: 3, ...(p.view || {}) }; if (!p.view.mode) p.view.mode = "page-width";
   return p;
 }
@@ -312,7 +322,7 @@ function blankProject() {
     meta: { program: "PROGRAM NAME", number: "Pxx-xxxx", title: "Project Title", subtitle: "Summary program", client: "", author: "", revision: "A", status: "For Information", date: todayISO(), clientLogo: "" },
     timeline: { start: fromDays(Date.UTC(now.getFullYear(), now.getMonth(), 1) / DAY), end: fromDays(Date.UTC(now.getFullYear() + 1, now.getMonth(), 0) / DAY) },
     view: { zoom: 3, mode: "page-width" },
-    page: { size: "A3", orient: "landscape", margin: 7 },
+    page: { size: "A3", orient: "landscape", margin: 7, rowH: 26, fill: true },
     styles: clone(DEFAULT_STYLES),
     lanes: [],
     items: [],
@@ -748,11 +758,16 @@ function drawItem(g, it, ln, L, opts, F) {
   if (st.behaviour === "Move") {
     const x = L.x(it.start) + L.ppd / 2, s = G.ms;
     drawMarker(grp, st.shape, x, cy, s, fill, stroke);
-    const tw = textW(it.name, 9, 500);
+    const tw = textW(it.name, 9, 500) + (inlineMsDate() ? textW("  " + fmt(it.start), 8.5, 400) : 0);
     const left = x + s * .8 + 4 + tw > L.W - 6;          // near the right edge: label goes left of the marker
     const lx = left ? x - s * .8 - 4 : x + s * .8 + 4, anchor = left ? "end" : "start";
-    el("text", { x: lx, y: cy - 1.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font }, grp, it.name);
-    el("text", { x: lx, y: cy + 8.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 8.5, "font-weight": 400, "font-family": F.font }, grp, fmt(it.start));
+    if (inlineMsDate()) {   // one line: "Name  03-Nov-26"
+      const t = el("text", { x: lx, y: cy + 3.2, "text-anchor": anchor, fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font }, grp, it.name + "  ");
+      el("tspan", { "font-size": 8.5, "font-weight": 400 }, t, fmt(it.start));
+    } else {
+      el("text", { x: lx, y: cy - 1.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font }, grp, it.name);
+      el("text", { x: lx, y: cy + 8.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 8.5, "font-weight": 400, "font-family": F.font }, grp, fmt(it.start));
+    }
     if (selected) el("rect", { x: x - s, y: cy - s, width: s * 2, height: s * 2, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6, rx: 2 }, grp);
     el("rect", { x: left ? x - s - tw - 10 : x - s, y: cy - s, width: s * 2 + tw + 10, height: s * 2, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
   } else {
@@ -821,12 +836,13 @@ function paperMM() {
 /* Draws the sheet as it prints on the chosen paper: the timeline fills the printable width and rows
    spread (up to 2x) to fill the height. fit < 1 means the content is taller than the page and prints smaller. */
 function drawPage(svg, extra = {}) {
+  applySpacing();
   const { pg, PW, PH } = paperMM(), M = +pg.margin || 7, availW = PW - 2 * M, availH = PH - 2 * M;
   const span = toDays(P.timeline.end) - toDays(P.timeline.start) + 1;
   const opts = { ppd: (availW * PX_PER_MM - G.headW) / span, spare: false, ...extra };
   let L = draw(svg, opts);
   const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), slack = availH / (availW / L.W) - L.H, baseRow = G.rowH;
-  if (rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); try { L = draw(svg, opts); } finally { G.rowH = baseRow; } }
+  if (P.page.fill !== false && rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); try { L = draw(svg, opts); } finally { G.rowH = baseRow; } }
   const k = Math.min(availW / L.W, availH / L.H);   // printed mm per sheet px
   return { L, k, PW, PH, M, availW, availH, pg, fit: k / (availW / L.W) };
 }
@@ -839,7 +855,7 @@ function render() {
   $("zoom").value = P.view.zoom;
   $("docName").textContent = `${P.meta.number} · Rev ${P.meta.revision}`;
   if (MARTINUS_LOGO) $("brandLogo").src = MARTINUS_LOGO; else $("brandLogoBox").hidden = true;
-  if (mode === "free") { PLAN = null; LAY = draw($("chart"), { ppd: P.view.zoom, spare: true }); }
+  if (mode === "free") { PLAN = null; applySpacing(); LAY = draw($("chart"), { ppd: P.view.zoom, spare: true }); }
   else { PLAN = drawPage($("chart")); LAY = PLAN.L; }
   placePaper(mode);
   $("bUndo").disabled = !past.length; $("bRedo").disabled = !future.length;
@@ -942,9 +958,23 @@ function addItem(styleName, laneId, start, row) {
   sel = { type: "item", id: it.id }; render(); renderSide();
   setTimeout(() => { const f = $("iName"); if (f) { f.focus(); f.select(); } }, 0);
 }
+/* move a lane's items up into the fewest rows without overlaps, keeping their top-to-bottom order where possible */
+function packLane(p, laneId) {
+  const its = p.items.filter(i => i.lane === laneId).sort((a, b) => a.row - b.row || toDays(a.start) - toDays(b.start));
+  its.forEach(i => i.row = 999);
+  its.forEach(i => i.row = freeRow(p, i));
+}
 /* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
 function freeRow(p, it) {
-  const span = x => { const s = toDays(x.start); const ms = isMs(p, x.style); return [s, ms ? s + Math.ceil((textW(x.name, 9, 500) + 30) / Math.max(1, p.view.zoom)) : toDays(x.end) + 1]; };
+  // days an item occupies on its row, including a label drawn beside it
+  let laid = null; try { laid = LAY; } catch (e) {}   // not laid out yet while the page is starting up
+  const ppd = Math.max(0.5, (laid && laid.ppd) || p.view.zoom);
+  const span = x => {
+    const s = toDays(x.start), e = toDays(x.end) + 1;
+    if (isMs(p, x.style)) return [s, s + Math.ceil((textW(x.name, 9, 500) + (inlineMsDate() ? textW("  00-Mmm-00", 8.5, 400) : 0) + 30) / ppd)];
+    const tw = textW(x.name, 9, 500) + 10;
+    return [s, tw < (e - s) * ppd ? e : e + Math.ceil((tw + 4) / ppd)];   // name doesn't fit inside: it sits to the right
+  };
   const [a, b] = span(it);
   for (let r = 0; r < 200; r++) {
     const clash = p.items.some(o => o !== it && o.lane === it.lane && o.row === r && (([c, d]) => c < b && a < d)(span(o)));
@@ -1053,7 +1083,7 @@ function renderSide() {
     $("lRows").onchange = e => upd(l => l.minRows = Math.max(1, Math.min(30, +e.target.value || 1)));
     const move = d => commit(p => { const a = p.lanes, i = a.findIndex(l => l.id === cur.id); [a[i], a[i+d]] = [a[i+d], a[i]]; }, true);
     $("lUp").onclick = () => move(-1); $("lDown").onclick = () => move(1);
-    $("lPack").onclick = () => commit(p => { const its = p.items.filter(i => i.lane === cur.id).sort((a,b) => a.row - b.row || toDays(a.start) - toDays(b.start)); its.forEach(i => i.row = 999); its.forEach(i => i.row = freeRow(p, i)); }, true);
+    $("lPack").onclick = () => commit(p => packLane(p, cur.id), true);
     $("lBar").onclick = () => addItem(defaultStyle("Stretch"), cur.id);
     $("lMs").onclick = () => addItem(defaultStyle("Move"), cur.id);
     $("lDel").onclick = () => { commit(p => { p.lanes = p.lanes.filter(l => l.id !== cur.id); p.items = p.items.filter(i => i.lane !== cur.id); }); sel = null; renderSide(); };
@@ -1083,7 +1113,11 @@ function renderSide() {
       <div class="f"><label for="pgMargin">Margins</label><select id="pgMargin">${[5, 7, 10, 15, 20].map(v => `<option value="${v}" ${v === +P.page.margin ? "selected" : ""}>${v} mm</option>`).join("")}</select></div>
     </div>
     <div class="f"><label>Orientation</label><div class="seg" role="group" aria-label="Orientation">${[["landscape", "Landscape"], ["portrait", "Portrait"]].map(([v, n]) => `<button type="button" data-orient="${v}" aria-pressed="${P.page.orient === v}">${n}</button>`).join("")}</div></div>
-    ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%.</p>` : ""}
+    <div class="f"><label>Row spacing</label><div class="seg" role="group" aria-label="Row spacing">${SPACING.map(([k, n, v]) => `<button type="button" data-space="${v}" aria-pressed="${+P.page.rowH === v}">${n}</button>`).join("")}</div></div>
+    <div class="f"><label for="pgRow">Row height: <span id="pgRowVal">${P.page.rowH}</span> px</label><input id="pgRow" type="range" min="14" max="40" step="1" value="${P.page.rowH}" style="accent-color:var(--accent-2)"></div>
+    <label class="check"><input type="checkbox" id="pgFill" ${P.page.fill !== false ? "checked" : ""}> Spread rows to fill the page</label>
+    <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
+    ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%. Try Compact spacing or Tidy all lanes.</p>` : ""}
     <h2>Timeline</h2>
     <div class="row2">
       <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
@@ -1110,6 +1144,17 @@ function renderSide() {
   um("pgSize", (p, v) => p.page.size = v);
   um("pgMargin", (p, v) => p.page.margin = +v);
   side.querySelectorAll("[data-orient]").forEach(b => b.onclick = () => commit(p => p.page.orient = b.dataset.orient, true));
+  side.querySelectorAll("[data-space]").forEach(b => b.onclick = () => commit(p => p.page.rowH = +b.dataset.space, true));
+  const origRow = P.page.rowH;   // slider previews live, one undo step on release
+  $("pgRow").oninput = e => { $("pgRowVal").textContent = e.target.value; P.page.rowH = +e.target.value; render(); };
+  $("pgRow").onchange = e => { const v = +e.target.value; P.page.rowH = origRow; commit(p => p.page.rowH = v, true); };
+  $("pgFill").onchange = e => commit(p => p.page.fill = e.target.checked, true);
+  $("pgTidy").onclick = () => {
+    const before = P.lanes.reduce((n, l) => n + laneRows(l, false), 0);
+    commit(p => p.lanes.forEach(l => packLane(p, l.id)), true);
+    const after = P.lanes.reduce((n, l) => n + laneRows(l, false), 0);
+    toast(after < before ? `Packed ${before} rows into ${after}.` : "Already as tight as it goes without overlaps.");
+  };
   $("mLogo").onclick = () => $("fLogo").click();
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
   if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
@@ -1490,7 +1535,7 @@ function buildExcelBlob() {
   styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
-  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["Format","poap/2"]], { cellDates: true });
+  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["RowHeightPx",P.page.rowH],["FillPage",P.page.fill !== false ? "Yes" : "No"],["Format","poap/2"]], { cellDates: true });
   ["B9","B10"].forEach(a => { if (proj[a]) proj[a].z = "dd-mmm-yy"; });
   proj["!cols"] = [{ wch: 14 }, { wch: 44 }];
   XLSX.utils.book_append_sheet(wb, proj, "Project");
@@ -1542,7 +1587,8 @@ function parseWorkbook(buf) {
     meta = Object.fromEntries(Object.entries(meta).filter(([,v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]));
     const a = toISO(kv.timelinestart), b = toISO(kv.timelineend); if (a && b) timeline = { start: a, end: b };
     const size = Object.keys(PAPER).find(k => k.toLowerCase() === String(kv.pagesize ?? "").trim().toLowerCase());
-    if (size) page = { size, orient: /portrait/i.test(kv.orientation ?? "") ? "portrait" : "landscape", margin: [5, 7, 10, 15, 20].includes(+kv.marginmm) ? +kv.marginmm : 7 };
+    if (size) page = { size, orient: /portrait/i.test(kv.orientation ?? "") ? "portrait" : "landscape", margin: [5, 7, 10, 15, 20].includes(+kv.marginmm) ? +kv.marginmm : 7,
+      rowH: +kv.rowheightpx >= 14 && +kv.rowheightpx <= 40 ? +kv.rowheightpx : 26, fill: !/^no$/i.test(String(kv.fillpage ?? "").trim()) };
   }
   let styles = [];
   const ssh = wb.Sheets["StyleRegister"];
