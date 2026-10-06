@@ -1,0 +1,1394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PoaP Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://unpkg.com/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
+<script src="brand-logo.js"></script>
+<style>
+/* Layout: app shell. Branded toolbar on top, the A3 sheet in the middle, inspector on the right.
+   Brand: Martinus navy + orange. The sheet stays paper-white in both themes because it is what gets issued. */
+:root {
+  --navy: #163E6B;
+  --orange: #F47920;
+  --bg: #EDF0F4;
+  --panel: #FFFFFF;
+  --fg: #14263D;
+  --muted: #5A6A7E;
+  --line: #D3DAE4;
+  --accent: #163E6B;
+  --accent-fg: #FFFFFF;
+  --accent-2: #F47920;
+  --hover: #E4EAF2;
+  --danger: #B42318;
+  --ok: #1F7A4D;
+  --warn: #9A5B00;
+  --paper: #FFFFFF;
+  --font-ui: "Montserrat", "Segoe UI", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1621; --panel: #16212F; --fg: #E3E9F1; --muted: #93A2B5; --line: #293A4E;
+    --accent: #7FA8DA; --accent-fg: #0A1420; --accent-2: #F7944A; --hover: #1F2E40;
+    --danger: #F07167; --ok: #5CC28F; --warn: #E2B04A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1621; --panel: #16212F; --fg: #E3E9F1; --muted: #93A2B5; --line: #293A4E;
+  --accent: #7FA8DA; --accent-fg: #0A1420; --accent-2: #F7944A; --hover: #1F2E40;
+  --danger: #F07167; --ok: #5CC28F; --warn: #E2B04A;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 500 12.5px/1.4 var(--font-ui); display: flex; flex-direction: column; }
+button, input, select { font: inherit; color: inherit; }
+
+/* ---------- toolbar ---------- */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 16px; background: var(--panel); border-bottom: 3px solid var(--accent-2); }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: 4px; }
+.brand .logo { background: #FFFFFF; border-radius: 3px; padding: 3px 5px; display: flex; }
+.brand .logo img { height: 15px; display: block; }
+.brand b { font-weight: 700; font-size: 14px; letter-spacing: .01em; color: var(--accent); }
+.brand span { font: 11px var(--font-mono); color: var(--muted); }
+.grp { display: flex; gap: 4px; align-items: center; }
+.grp + .grp { padding-left: 12px; border-left: 1px solid var(--line); }
+.btn { border: 1px solid var(--line); background: var(--panel); padding: 5px 10px; border-radius: 3px; cursor: pointer; white-space: nowrap; font-weight: 500; }
+.btn:hover { background: var(--hover); }
+.btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.12); }
+.btn.danger { color: var(--danger); }
+.btn:disabled { opacity: .45; cursor: default; }
+.zoom { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.zoom input { width: 110px; accent-color: var(--accent-2); }
+.spacer { flex: 1; }
+.saved { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+/* ---------- main ---------- */
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 300px; }
+.stage { overflow: auto; padding: 16px; min-width: 0; }
+.sheet { background: var(--paper); box-shadow: 0 1px 4px rgba(10,20,40,.2); display: inline-block; }
+#chart { display: block; user-select: none; touch-action: none; }
+.hint { margin: 10px 2px 0; color: var(--muted); font-size: 12px; max-width: 900px; }
+.hint kbd { font: 11px var(--font-mono); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; background: var(--panel); }
+
+aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+aside h2 { margin: 6px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+aside h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+aside h2:first-child { margin-top: 0; }
+.f { display: grid; gap: 3px; }
+.f label { font-size: 10.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.f input, .f select { width: 100%; padding: 5px 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); font-weight: 500; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.f input[type=color] { padding: 1px 2px; height: 30px; }
+.idtag { font: 500 12px var(--font-mono); background: var(--hover); padding: 2px 6px; border-radius: 3px; letter-spacing: 0; text-transform: none; color: var(--fg); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sw { width: 26px; height: 26px; border-radius: 3px; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.sw[aria-pressed="true"] { border-color: var(--fg); }
+.swatches input[type=color] { width: 30px; height: 26px; border: 1px solid var(--line); padding: 0; background: none; }
+.preview { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--muted); }
+.preview i { display: inline-block; width: 44px; height: 14px; border: 1px solid #163E6B; }
+.legend { display: grid; gap: 6px; }
+.legend div { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; }
+.legend input[type=text] { padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); width: 100%; font-size: 12px; }
+.legend input[type=color] { width: 30px; height: 22px; border: 1px solid var(--line); padding: 0; background: none; }
+.types { display: grid; gap: 2px; }
+.type { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; text-align: left; padding: 5px 6px; border: 1px solid transparent; border-radius: 3px; background: none; cursor: pointer; }
+.type:hover { background: var(--hover); border-color: var(--line); }
+.type small { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.type-preview { background: #FFFFFF; border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
+.check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.logo-slot { display: flex; gap: 8px; align-items: center; }
+.logo-slot .thumb { width: 92px; height: 34px; border: 1px dashed var(--line); border-radius: 3px; background: #FFFFFF; display: grid; place-items: center; overflow: hidden; color: #8794A6; font-size: 10px; }
+.logo-slot .thumb img { max-width: 100%; max-height: 100%; }
+.note { font-size: 11.5px; color: var(--muted); margin: 0; }
+
+/* ---------- modal ---------- */
+.modal { position: fixed; inset: 0; background: rgba(8,14,24,.45); display: grid; place-items: center; padding: 16px; z-index: 10; }
+.dlg { background: var(--panel); border-radius: 4px; width: min(720px, 100%); max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,.3); border-top: 3px solid var(--accent-2); }
+.dlg header { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.dlg header h3 { margin: 0; font-size: 15px; font-weight: 700; color: var(--accent); }
+.dlg header p { margin: 4px 0 0; color: var(--muted); }
+.dlg .body { padding: 12px 18px; overflow: auto; }
+.dlg footer { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.chip { padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+.chip.chg { color: var(--accent); } .chip.new { color: var(--ok); } .chip.miss { color: var(--warn); } .chip.err { color: var(--danger); }
+table.diff { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.diff td, table.diff th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.diff th { font-weight: 700; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; }
+.old { color: var(--muted); text-decoration: line-through; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 3px; font-size: 12px; z-index: 20; }
+
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) auto; }
+  aside { border-left: 0; border-top: 1px solid var(--line); max-height: 45vh; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="brand"><span class="logo" id="brandLogoBox"><img id="brandLogo" alt="Martinus"></span><b>PoaP Builder</b><span id="docName"></span></div>
+  <div class="grp">
+    <button class="btn" id="bLane" title="Add a swimlane">+ Lane</button>
+    <button class="btn" id="bBar" title="Add a bar to the selected lane">+ Bar</button>
+    <button class="btn" id="bMs" title="Add a milestone to the selected lane">+ Milestone</button>
+  </div>
+  <div class="grp">
+    <button class="btn" id="bUndo" title="Undo (Ctrl+Z)">Undo</button>
+    <button class="btn" id="bRedo" title="Redo (Ctrl+Y)">Redo</button>
+  </div>
+  <div class="grp zoom"><label for="zoom">Zoom</label><input id="zoom" type="range" min="1" max="12" step="0.5"><button class="btn" id="bFit" title="Set the timeline to cover all items">Fit dates</button></div>
+  <div class="spacer"></div>
+  <div class="grp">
+    <button class="btn" id="bNew">New</button>
+    <button class="btn" id="bOpen" title="Open a saved project (.json) or a programme workbook (.xlsx)">Open…</button>
+    <button class="btn" id="bSave" title="Save the project file (.json)">Save</button>
+  </div>
+  <div class="grp">
+    <button class="btn" id="bImport" title="Update dates from an edited Excel workbook">Update from Excel…</button>
+    <button class="btn" id="bExport">Export Excel</button>
+    <button class="btn primary" id="bPdf">Export PDF</button>
+    <button class="btn" id="bIssue" title="Save this revision's PDF and Excel to the Issued folder in the library" hidden>Issue</button>
+  </div>
+  <span class="saved" id="saved"></span>
+  <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls" hidden>
+  <input type="file" id="fImport" accept=".xlsx,.xlsm,.xls" hidden>
+  <input type="file" id="fLogo" accept="image/png,image/jpeg" hidden>
+</div>
+
+<main>
+  <div class="stage" id="stage">
+    <div class="sheet"><svg id="chart" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg></div>
+    <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour. <kbd>Del</kbd> deletes, <kbd>Ctrl+D</kbd> duplicates, <kbd>←</kbd>/<kbd>→</kbd> nudge 1 day (<kbd>Shift</kbd> = 1 week).</p>
+  </div>
+  <aside id="side"></aside>
+</main>
+
+<script>
+"use strict";
+/* Optional host. Opened as a plain file there is none; inside SharePoint the web part supplies
+   storage (list/read/write files in a library), bundled libraries, fonts and the logo. */
+const HOST = window.POAP_HOST || null;
+const ROOT = (HOST && HOST.root) || document.body;
+/* ---------------------------------------------------------------------
+   Brand assets + sheet geometry (px at screen scale; the PDF scales the whole sheet to A3)
+   --------------------------------------------------------------------- */
+const MARTINUS_LOGO = (HOST && HOST.logo) || window.POAP_BRAND_LOGO || "";   // from brand-logo.js
+const LOGO_RATIO = 260 / 35;
+const BRAND = { navy: "#163E6B", orange: "#F47920", ink: "#14263D", grid: "#C9D2DD" };
+const G = { headW: 46, hdrH: 74, topH: 40, botH: 40, ftrH: 36, rowH: 26, pad: 6, barH: 16, ms: 12 };
+const LANE_PRESETS = [
+  ["Martinus orange", "#F47920"], ["Martinus navy", "#163E6B"], ["Steel blue", "#4F7CAC"], ["Teal", "#128A84"],
+  ["Green", "#5E9A35"], ["Purple", "#6E4E9E"], ["Red", "#C8102E"], ["Grey", "#6F7C8C"],
+];
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const measureCtx = document.createElement("canvas").getContext("2d");
+function textW(t, size, weight) { measureCtx.font = `${weight||400} ${size}px Montserrat, Arial, sans-serif`; return measureCtx.measureText(t).width; }
+
+/* mix a colour with white: t=0 original, t=1 white */
+function tint(hexIn, t) {
+  const h = String(hexIn || "#163E6B").replace("#", "");
+  const c = [0,2,4].map(i => parseInt(h.substr(i,2),16));
+  return "#" + c.map(v => Math.round(v + (255 - v) * t).toString(16).padStart(2,"0")).join("").toUpperCase();
+}
+const laneHeader = c => tint(c, .72);   // swimlane colour as shown on the sheet
+const laneBar = c => tint(c, .82);      // bars: same hue, lighter
+
+/* =====================================================================
+   Model
+   ===================================================================== */
+const DAY = 864e5;
+const toDays = s => { const [y,m,d] = s.split("-").map(Number); return Date.UTC(y, m-1, d) / DAY; };
+const fromDays = n => new Date(n * DAY).toISOString().slice(0,10);
+const addDays = (s, n) => fromDays(toDays(s) + n);
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmt = s => { const d = new Date(toDays(s)*DAY); return d.getUTCDate().toString().padStart(2,"0") + "-" + MON[d.getUTCMonth()] + "-" + String(d.getUTCFullYear()).slice(2); };
+const fmtLong = s => { const d = new Date(toDays(s)*DAY); return `${String(d.getUTCDate()).padStart(2,"0")}/${String(d.getUTCMonth()+1).padStart(2,"0")}/${d.getUTCFullYear()}`; };
+const uid = () => Math.random().toString(36).slice(2,9);
+const clone = o => JSON.parse(JSON.stringify(o));
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+
+const DEFAULT_STYLES = [
+  { name: "BAR",         shape: "bar",      behaviour: "Stretch", fill: "",        stroke: "#163E6B", notes: "Activity (lane colour)" },
+  { name: "POSS",        shape: "poss",     behaviour: "Stretch", fill: "#FBB785", stroke: "#163E6B", notes: "Possession" },
+  { name: "ML_Diamond",  shape: "diamond",  behaviour: "Move",    fill: "#FF0000", stroke: "#9E0000", notes: "Contract Milestone" },
+  { name: "ML_Triangle", shape: "triangle", behaviour: "Move",    fill: "#FFD965", stroke: "#8A6A00", notes: "Design Milestone" },
+  { name: "ML_Square",   shape: "square",   behaviour: "Move",    fill: "#C4D6A0", stroke: "#5B7330", notes: "Construction Milestone" },
+  { name: "ML_Circle",   shape: "circle",   behaviour: "Move",    fill: "#FFD200", stroke: "#163E6B", notes: "Circuit Book" },
+];
+
+// Seed: rows from "Pxx-xxxx ProjectTitle PoaP_Shape_Data.xlsx" (ShapeID, Name, Style, Lane, Start, End, Status, Y_mm)
+const SEED_ROWS = [["MS0001","Date for Contract Award (Indicative)","ML_Diamond","Milestones","2026-11-03","2026-11-03","Active",542],["MS0002","Site Investigation Complete","ML_Square","Milestones","2026-01-22","2026-01-22","Active",null],["MS0003","Design IFC Issued","ML_Triangle","Milestones","2026-12-22","2026-12-22","Active",535],["MS0003","Site Establishment Complete","ML_Square","Milestones","2027-03-05","2027-03-05","Active",null],["MS0004","Retaining Wall Works Complete","ML_Square","Milestones","2027-04-13","2027-04-13","Active",540],["MS0005","Subgrade Complete","ML_Square","Milestones","2027-05-10","2027-05-10","Active",null],["MS0006","Underground Services Complete","ML_Square","Milestones","2027-06-03","2027-06-03","Active",null],["MS0007","Pavement Complete","ML_Square","Milestones","2027-06-25","2027-06-25","Active",null],["MS0008","Carpark Extension Complete","ML_Square","Milestones","2027-08-21","2027-08-21","Active",535],["MS0009","All Testing & Commissioning Complete","ML_Square","Milestones","2027-07-26","2027-07-26","Active",null],["MS0010","Deterministic Date of Construction Completion","ML_Circle","Milestones","2027-07-27","2027-07-27","Active",null],["MS0011","Forecast Date of Construction Completion","ML_Circle","Milestones","2027-07-30","2027-07-30","Active",null],["MS0012","Date for Construction Completion","ML_Diamond","Milestones","2027-07-30","2027-07-30","Active",542],["PRE001","Site Access Preconditions","BAR","Preconstruction","2026-11-04","2027-03-30","Active",437.3],["PRE002","Construction Preconditions","BAR","Preconstruction","2027-01-13","2027-03-05","Active",430.3],["PRE003","Management Plans","BAR","Preconstruction","2026-11-04","2027-02-11","Active",423.3],["DES001","Design Development 30%","BAR","Design","2026-11-11","2026-12-09","Active",411.3],["DES002","Design Development 60%","BAR","Design","2026-12-09","2027-01-06","Active",404.3],["DES003","Design Development 90%","BAR","Design","2027-01-06","2027-01-25","Active",397.3],["DES004","Design Development IFC","BAR","Design","2027-01-25","2027-02-15","Active",390.3],["PRO001","Key Package 21 Combined Civils, Structural & Finishes","BAR","Procurement","2027-01-06","2027-03-01","Active",378.3],["PRO002","Key Package 23 Electrical, Lighting and CCTV","BAR","Procurement","2027-01-04","2027-05-28","Active",371.3],["CON001","SI","BAR","Construction","2026-12-17","2026-12-22","Active",359.3],["CON002","Demolition & Retaining Wall Works","BAR","Construction","2027-03-01","2027-04-13","Active",352.3],["CON003","Bulk Earthworks & Drainage","BAR","Construction","2027-04-14","2027-05-10","Active",345.3],["CON004","Services & Foundations","BAR","Construction","2027-05-11","2027-06-03","Active",338.3],["CON005","Pavement Construction","BAR","Construction","2027-06-07","2027-06-25","Active",331.3],["CON006","Fit-Out & Finishing Works","BAR","Construction","2027-06-28","2027-07-21","Active",324.3],["CON007","Testing & Commissioning","BAR","Testing & Commissioning","2027-07-22","2027-07-26","Active",312.3],["CON008","Handover & Demobilisation","BAR","Handover & Demobilisation","2027-07-14","2027-07-27","Active",300.3]];
+
+function blankProject() {
+  const now = new Date();
+  return {
+    format: "poap/2",
+    meta: { program: "PROGRAM NAME", number: "Pxx-xxxx", title: "Project Title", subtitle: "Summary program", client: "", author: "", revision: "A", status: "For Information", date: todayISO(), clientLogo: "" },
+    timeline: { start: fromDays(Date.UTC(now.getFullYear(), now.getMonth(), 1) / DAY), end: fromDays(Date.UTC(now.getFullYear() + 1, now.getMonth(), 0) / DAY) },
+    view: { zoom: 3 },
+    styles: clone(DEFAULT_STYLES),
+    lanes: [],
+    items: [],
+  };
+}
+
+/* Build a project from spreadsheet-style rows. Shared by the sample and Excel import. */
+function projectFromRows(rows, laneRows, base) {
+  const p = base || blankProject();
+  const laneByName = new Map(p.lanes.map(l => [l.name.toLowerCase(), l]));
+  const ensureLane = name => {
+    name = (name || "Unassigned").trim();
+    let l = laneByName.get(name.toLowerCase());
+    if (!l) { l = newLane(p, name); laneByName.set(name.toLowerCase(), l); }
+    return l;
+  };
+  (laneRows || []).forEach(lr => { const l = ensureLane(lr.name); if (lr.colour) l.colour = lr.colour; if (lr.minRows) l.minRows = lr.minRows; });
+  const seen = new Set(p.items.map(i => i.id));
+  const reserved = new Set(rows.map(r => (r.id || "").trim()).filter(Boolean));
+  const yGroups = new Map();
+  for (const r of rows) {
+    const lane = ensureLane(r.lane);
+    let id = (r.id || "").trim() || nextId(p, r.style, null, reserved);
+    if (seen.has(id)) id = nextId(p, r.style, id, reserved);
+    seen.add(id);
+    const st = styleOf(p, r.style);
+    const it = { id, name: r.name || "", style: st.name, lane: lane.id, start: r.start, end: isMs(p, st.name) ? r.start : (r.end || r.start), status: r.status || "Active", row: Number.isFinite(r.row) ? r.row : null, fill: r.fill || "", stroke: r.stroke || "" };
+    p.items.push(it);
+    if (it.row == null && Number.isFinite(r.y)) { (yGroups.get(lane.id) || yGroups.set(lane.id, []).get(lane.id)).push([it, r.y]); }
+  }
+  // Visio Y_mm -> row index: 7 mm stack step, highest Y is the top row
+  for (const list of yGroups.values()) {
+    const top = Math.max(...list.map(x => x[1]));
+    list.forEach(([it, y]) => it.row = Math.max(0, Math.round((top - y) / 7)));
+  }
+  p.items.filter(i => i.row == null).forEach(i => i.row = freeRow(p, i));
+  return p;
+}
+
+function seedProject() {
+  const rows = SEED_ROWS.map(r => ({ id: r[0], name: r[1], style: r[2], lane: r[3], start: r[4], end: r[5], status: r[6], y: r[7] ?? NaN }));
+  const base = blankProject();
+  Object.assign(base.meta, { program: "SAMPLE STATION UPGRADE PROGRAM", number: "P00-0000", title: "Example Commuter Car Park Extension", subtitle: "Summary program (example data)", client: "", author: "" });
+  base.timeline = { start: "2026-11-01", end: "2027-08-31" };
+  return projectFromRows(rows, null, base);
+}
+
+function newLane(p, name) {
+  const l = { id: "L" + uid(), name, colour: p.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 1 };
+  p.lanes.push(l);
+  return l;
+}
+const styleOf = (p, name) => p.styles.find(s => s.name.toLowerCase() === String(name||"").toLowerCase()) || p.styles[0];
+const isMs = (p, name) => styleOf(p, name).behaviour === "Move";
+function nextId(p, styleName, hint, reserved) {
+  let prefix = isMs(p, styleName) ? "MS" : "ACT";
+  if (hint) prefix = hint.replace(/\d+$/, "") || prefix;
+  const used = new Set([...p.items.map(i => i.id), ...(reserved || [])]);
+  const width = prefix === "MS" ? 4 : 3;
+  for (let n = 1; ; n++) { const id = prefix + String(n).padStart(width, "0"); if (!used.has(id)) return id; }
+}
+/* effective colours for an item: explicit override > lane colour (bars) > style default */
+function itemColours(it, lane) {
+  const st = styleOf(P, it.style);
+  const fill = it.fill || (!st.fill ? laneBar(lane ? lane.colour : BRAND.navy) : st.fill);
+  return { fill, stroke: it.stroke || st.stroke || BRAND.navy };
+}
+
+/* =====================================================================
+   State, history, autosave
+   ===================================================================== */
+const STORE = (HOST && HOST.storeKey) || "poap-builder-draft-v2";
+let DOC = null;   // with a host: the library file this programme was opened from { path, name, etag, base }
+let P, sel = null, past = [], future = [];
+try { const s = localStorage.getItem(STORE); if (s) P = JSON.parse(s); } catch (e) {}
+if (!P || P.format !== "poap/2") P = seedProject();
+
+function commit(mutator, keepSel) {
+  past.push(JSON.stringify(P)); if (past.length > 200) past.shift(); future = [];
+  mutator(P);
+  if (!keepSel && sel && !findSel()) sel = null;
+  changed();
+}
+function changed() {
+  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+  showStatus();
+  render(); renderSide();
+  scheduleAutoSave();
+}
+/* With a library host, a programme that has been saved once is saved again a few seconds
+   after the last change. A new file name (title block change) still needs a manual Save. */
+let autoTimer = null, saving = false;
+function scheduleAutoSave() {
+  if (!HOST || !DOC) return;
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(async () => {
+    if (!DOC || JSON.stringify(P) === DOC.base || ROOT.querySelector(".modal")) return;
+    if (DOC.name !== fileBase() + ".poap.json") return showStatus();   // waits for a manual Save
+    if (saving) return scheduleAutoSave();
+    saving = true;
+    try { await librarySave({ auto: true }); } finally { saving = false; }
+    if (DOC && JSON.stringify(P) !== DOC.base) scheduleAutoSave();       // edited while saving
+  }, 4000);
+}
+function undo() { if (!past.length) return; future.push(JSON.stringify(P)); P = JSON.parse(past.pop()); changed(); }
+function redo() { if (!future.length) return; past.push(JSON.stringify(P)); P = JSON.parse(future.pop()); changed(); }
+function findSel() {
+  if (!sel) return null;
+  if (sel.type === "item") return P.items.find(i => i.id === sel.id);
+  if (sel.type === "style") return P.styles.find(s => s.name === sel.id);
+  return P.lanes.find(l => l.id === sel.id);
+}
+
+/* =====================================================================
+   Layout + drawing (one SVG = the whole issued sheet)
+   ===================================================================== */
+function laneRows(l, spare) {
+  const max = P.items.filter(i => i.lane === l.id).reduce((m, i) => Math.max(m, i.row), -1);
+  return Math.max(l.minRows || 1, max + 1 + (spare ? 1 : 0));
+}
+function layout(opts) {
+  const ppd = opts.ppd, t0 = toDays(P.timeline.start), t1 = toDays(P.timeline.end) + 1;
+  const W = G.headW + (t1 - t0) * ppd;
+  const bandTop = G.hdrH, bodyTop = bandTop + G.topH;
+  let y = bodyTop; const lanes = [];
+  for (const l of P.lanes) {
+    const rows = laneRows(l, opts.spare);
+    const h = Math.max(rows * G.rowH + G.pad * 2, laneTitleLen(l.name) + 14);   // tall enough for the vertical title
+    lanes.push({ l, y, h, rows }); y += h;
+  }
+  if (!lanes.length) y += 70;
+  return { ppd, t0, t1, W, bandTop, bodyTop, bodyBottom: y, H: y + G.botH + G.ftrH, lanes, x: d => G.headW + (toDays(d) - t0) * ppd };
+}
+
+function el(name, attrs, parent, text) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function img(parent, href, x, y, w, h, align) {
+  const i = el("image", { x, y, width: w, height: h, preserveAspectRatio: `${align || "xMidYMid"} meet` }, parent);
+  i.setAttribute("href", href); i.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", href);
+  return i;
+}
+
+/* Draws the whole sheet into svg. opts.print strips interaction affordances; opts.font overrides the face. */
+function draw(svg, opts) {
+  const L = layout(opts);
+  svg.innerHTML = "";
+  svg.setAttribute("width", L.W); svg.setAttribute("height", L.H);
+  svg.setAttribute("viewBox", `0 0 ${L.W} ${L.H}`);
+  const F = { font: opts.font || "Montserrat, Arial, sans-serif" };
+  el("rect", { x: 0, y: 0, width: L.W, height: L.H, fill: "#FFFFFF" }, svg);
+
+  drawHeader(svg, L, F, opts);
+
+  // lane bodies (white, like the Visio sheet) are the hit targets for selection / double-click
+  const gl = el("g", {}, svg);
+  L.lanes.forEach(ln => el("rect", { x: G.headW, y: ln.y, width: L.W - G.headW, height: ln.h, fill: "#FFFFFF", "data-lane": ln.l.id }, gl));
+
+  // grid
+  const gg = el("g", { "pointer-events": "none" }, svg);
+  if (L.ppd >= 4) {
+    for (let d = L.t0; d < L.t1; d++) if (new Date(d*DAY).getUTCDay() === 1) {
+      const x = G.headW + (d - L.t0) * L.ppd;
+      el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: "#EDF0F4", "stroke-width": .6 }, gg);
+    }
+  }
+  eachMonth(L, (x) => el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: BRAND.grid, "stroke-width": .7, "stroke-dasharray": "3 3" }, gg));
+  L.lanes.forEach(ln => el("line", { x1: 0, x2: L.W, y1: ln.y + ln.h, y2: ln.y + ln.h, stroke: BRAND.navy, "stroke-width": .9 }, gg));
+
+  const today = todayISO();
+  if (toDays(today) >= L.t0 && toDays(today) < L.t1) {
+    const x = L.x(today);
+    el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: "#C8102E", "stroke-width": 1, "stroke-dasharray": "5 3" }, gg);
+  }
+
+  // items
+  const gi = el("g", {}, svg);
+  for (const it of P.items) {
+    const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
+    drawItem(gi, it, ln, L, opts, F);
+  }
+
+  // lane titles (vertical, in the swimlane colour)
+  const gh = el("g", {}, svg);
+  L.lanes.forEach(ln => {
+    el("rect", { x: 0, y: ln.y, width: G.headW, height: ln.h, fill: laneHeader(ln.l.colour), stroke: BRAND.navy, "stroke-width": .9, "data-lanehead": ln.l.id, style: opts.print ? null : "cursor:pointer" }, gh);
+    vText(gh, ln.l.name.toUpperCase(), G.headW / 2, ln.y + ln.h / 2, ln.h - 10, 9.5, 700, BRAND.navy, F, ln.l.id);
+    if (!opts.print && sel && sel.type === "lane" && sel.id === ln.l.id)
+      el("rect", { x: 1.5, y: ln.y + 1.5, width: L.W - 3, height: ln.h - 3, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, gh);
+  });
+  if (!L.lanes.length) el("text", { x: G.headW + 16, y: L.bodyTop + 40, fill: "#5A6A7E", "font-size": 13, "font-family": F.font }, svg, "Start by adding a swimlane with “+ Lane”.");
+
+  drawBand(svg, L, L.bandTop, F);
+  drawBand(svg, L, L.bodyBottom, F);
+  el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+  el("line", { x1: 0, x2: L.W, y1: L.bodyBottom, y2: L.bodyBottom, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+  drawFooter(svg, L, F);
+  el("rect", { x: .9, y: .9, width: L.W - 1.8, height: L.H - 1.8, fill: "none", stroke: BRAND.navy, "stroke-width": 1.8, "pointer-events": "none" }, svg);
+
+  // the PDF engine's fonts only have normal/bold
+  if (opts.print) svg.querySelectorAll("[font-weight]").forEach(t => t.setAttribute("font-weight", +t.getAttribute("font-weight") >= 600 ? "bold" : "normal"));
+  return L;
+}
+
+function drawHeader(svg, L, F, opts) {
+  const g = el("g", { "pointer-events": "none" }, svg), m = P.meta, H = G.hdrH;
+  const clientW = 190;
+  if (m.clientLogo) img(g, m.clientLogo, 12, 10, clientW - 24, H - 20, "xMinYMid");
+  else if (!opts.print) {
+    el("rect", { x: 12, y: 12, width: clientW - 24, height: H - 24, fill: "none", stroke: "#B5C0CE", "stroke-dasharray": "4 3" }, g);
+    el("text", { x: clientW / 2, y: H / 2 + 4, "text-anchor": "middle", fill: "#8794A6", "font-size": 10, "font-weight": 600, "font-family": F.font }, g, "CLIENT LOGO");
+  }
+  el("line", { x1: clientW, x2: clientW, y1: 8, y2: H - 8, stroke: "#C9D2DD", "stroke-width": 1 }, g);
+  if (MARTINUS_LOGO) {
+    const logoW = Math.max(150, Math.min(330, L.W - clientW - 560)), logoH = logoW / LOGO_RATIO;
+    img(g, MARTINUS_LOGO, L.W - logoW - 14, (H - logoH) / 2, logoW, logoH, "xMaxYMid");
+  }
+  const tx = clientW + 14;
+  el("text", { x: tx, y: 32, fill: BRAND.navy, "font-size": 15, "font-weight": 700, "font-family": F.font, "letter-spacing": ".02em" }, g, (m.program || "").toUpperCase());
+  const t2 = el("text", { x: tx, y: 55, fill: BRAND.orange, "font-size": 14, "font-weight": 700, "font-family": F.font }, g, `${m.number || ""} ${m.title || ""}`.trim());
+  if (m.subtitle) el("tspan", { "font-size": 11, "font-weight": 600 }, t2, `  –  ${m.subtitle}`);
+  el("line", { x1: 0, x2: L.W, y1: H, y2: H, stroke: BRAND.navy, "stroke-width": 1.8 }, g);
+}
+
+function drawFooter(svg, L, F) {
+  const g = el("g", { "pointer-events": "none" }, svg), y0 = L.H - G.ftrH, m = P.meta;
+  el("line", { x1: 0, x2: L.W, y1: y0, y2: y0, stroke: BRAND.navy, "stroke-width": 1.8 }, g);
+  const boxW = 250, bx = L.W - boxW, cy = y0 + G.ftrH / 2;
+  el("text", { x: 14, y: cy + 4, fill: BRAND.ink, "font-size": 11, "font-weight": 700, "font-family": F.font }, g, "Legend:");
+  let x = 14 + textW("Legend:", 11, 700) + 14;
+  // milestone types, plus bar types that have their own colour (lane-coloured bars need no key)
+  const used = P.styles.filter(s => (s.behaviour === "Move" || s.fill) && P.items.some(i => i.style === s.name));
+  for (const s of used) {
+    if (x > bx - 120) break;
+    if (s.behaviour === "Move") drawMarker(g, s.shape, x + 6, cy, 13, s.fill, s.stroke);
+    else drawBarShape(g, s.shape, x, cy - 6, 22, 12, s.fill || laneBar(BRAND.navy), s.stroke);
+    const tx = x + (s.behaviour === "Move" ? 18 : 28);
+    el("text", { x: tx, y: cy + 3.5, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, s.notes || s.name);
+    x = tx + textW(s.notes || s.name, 9.5, 500) + 22;
+  }
+  el("line", { x1: bx, x2: bx, y1: y0, y2: L.H, stroke: BRAND.navy, "stroke-width": 1.2 }, g);
+  el("line", { x1: bx, x2: L.W, y1: cy, y2: cy, stroke: BRAND.navy, "stroke-width": .8 }, g);
+  const row = (i, a, b) => {
+    const yy = y0 + G.ftrH / 4 * (i * 2 + 1) + 3.5;
+    el("text", { x: bx + 6, y: yy, fill: BRAND.ink, "font-size": 9.5, "font-weight": 700, "font-family": F.font }, g, a);
+    el("text", { x: bx + 96, y: yy, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, b);
+  };
+  row(0, "Author:", m.author || "");
+  row(1, "Date Printed:", fmtLong(todayISO()) + (m.revision ? `   Rev ${m.revision}` : ""));
+}
+
+function eachMonth(L, fn) {
+  const s = new Date(L.t0 * DAY);
+  let d = Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1) / DAY, i = 0;
+  while (d < L.t1) {
+    const dt = new Date(d*DAY), nx = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth()+1, 1) / DAY;
+    const a = Math.max(d, L.t0), b = Math.min(nx, L.t1);
+    fn(G.headW + (a - L.t0) * L.ppd, G.headW + (b - L.t0) * L.ppd, dt, i++);
+    d = nx;
+  }
+}
+/* Timeline band: years alternate steel/peach, months alternate peach/white (the Martinus PoaP look) */
+function drawBand(svg, L, y0, F) {
+  const g = el("g", { "pointer-events": "none" }, svg);
+  const yh = 22, mh = G.topH - yh;
+  el("rect", { x: 0, y: y0, width: L.W, height: G.topH, fill: "#FFFFFF" }, g);
+  const years = [];
+  eachMonth(L, (xa, xb, dt, i) => {
+    const y = dt.getUTCFullYear(), last = years[years.length - 1];
+    if (!last || last.y !== y) years.push({ y, a: xa, b: xb }); else last.b = xb;
+    el("rect", { x: xa, y: y0 + yh, width: xb - xa, height: mh, fill: i % 2 ? "#FFFFFF" : tint(BRAND.orange, .5) }, g);
+    const w = xb - xa, lab = w > 30 ? MON[dt.getUTCMonth()] : w > 11 ? MON[dt.getUTCMonth()][0] : "";
+    if (lab) el("text", { x: (xa + xb) / 2, y: y0 + yh + mh / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": 10, "font-weight": 500, "font-family": F.font }, g, lab);
+  });
+  years.forEach((yr, i) => {
+    el("rect", { x: yr.a, y: y0, width: yr.b - yr.a, height: yh, fill: i % 2 ? tint(BRAND.orange, .7) : tint(BRAND.navy, .6), stroke: "#FFFFFF", "stroke-width": .8 }, g);
+    if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: y0 + yh / 2 + 5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 13.5, "font-weight": 700, "font-family": F.font }, g, yr.y);
+  });
+  eachMonth(L, (xa) => el("line", { x1: xa, x2: xa, y1: y0 + yh, y2: y0 + G.topH, stroke: "#FFFFFF", "stroke-width": .8 }, g));
+}
+
+/* lane titles: one line if it fits the lane, else split into two balanced lines */
+const TITLE = { size: 9.5, weight: 700 };
+function titleLines(name, maxW) {
+  const t = name.toUpperCase(), words = t.split(/\s+/);
+  if (words.length < 2 || textW(t, TITLE.size, TITLE.weight) <= maxW) return [t];
+  let best = null;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(" "), b = words.slice(i).join(" ");
+    const w = Math.max(textW(a, TITLE.size, TITLE.weight), textW(b, TITLE.size, TITLE.weight));
+    if (!best || w < best.w) best = { w, lines: [a, b] };
+  }
+  return best.lines;
+}
+/* the shortest lane height that still fits the title on two lines */
+function laneTitleLen(name) {
+  const lines = titleLines(name, 0);
+  return Math.max(...lines.map(s => textW(s, TITLE.size, TITLE.weight)));
+}
+function vText(parent, text, cx, cy, maxW, size, weight, fill, F, laneId) {
+  const lines = titleLines(text, maxW);
+  const lh = size * 1.2;
+  const g = el("g", { transform: `rotate(-90 ${cx} ${cy})` }, parent);
+  lines.forEach((ln, i) => el("text", { x: cx, y: cy + size * .36 + (i - (lines.length - 1) / 2) * lh, "text-anchor": "middle", fill, "font-size": size, "font-weight": weight, "font-family": F.font, "letter-spacing": ".03em", "data-lanehead": laneId, style: "cursor:pointer" }, g, ln));
+}
+
+function drawItem(g, it, ln, L, opts, F) {
+  const st = styleOf(P, it.style);
+  const { fill, stroke } = itemColours(it, ln.l);
+  const cy = ln.y + G.pad + it.row * G.rowH + G.rowH / 2;
+  const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+  const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
+  if (st.behaviour === "Move") {
+    const x = L.x(it.start) + L.ppd / 2, s = G.ms;
+    drawMarker(grp, st.shape, x, cy, s, fill, stroke);
+    const tw = textW(it.name, 9, 500);
+    const left = x + s * .8 + 4 + tw > L.W - 6;          // near the right edge: label goes left of the marker
+    const lx = left ? x - s * .8 - 4 : x + s * .8 + 4, anchor = left ? "end" : "start";
+    el("text", { x: lx, y: cy - 1.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font }, grp, it.name);
+    el("text", { x: lx, y: cy + 8.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 8.5, "font-weight": 400, "font-family": F.font }, grp, fmt(it.start));
+    if (selected) el("rect", { x: x - s, y: cy - s, width: s * 2, height: s * 2, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6, rx: 2 }, grp);
+    el("rect", { x: left ? x - s - tw - 10 : x - s, y: cy - s, width: s * 2 + tw + 10, height: s * 2, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+  } else {
+    const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(2, x2 - x1), h = G.barH, y = cy - h / 2;
+    drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke);
+    const tw = textW(it.name, 9, 500), inside = st.shape !== "summary" && tw + 10 < w;
+    el("text", { x: inside ? x1 + w / 2 : x2 + 5, y: cy + 3.3, "text-anchor": inside ? "middle" : "start", fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font, "pointer-events": "none" }, grp, it.name);
+    if (selected) el("rect", { x: x1 - 2, y: y - 2, width: w + 4, height: h + 4, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6 }, grp);
+    if (!opts.print) {
+      el("rect", { x: x1, y, width: w, height: h, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+      el("rect", { x: x1 - 3, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
+      el("rect", { x: x2 - 4, y, width: 7, height: h, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
+      if (!inside) el("rect", { x: x2 + 2, y, width: tw + 6, height: h, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+    }
+  }
+}
+function drawMarker(g, shape, x, cy, s, fill, stroke) {
+  const a = { fill, stroke, "stroke-width": .9 };
+  if (shape === "diamond") el("polygon", { points: `${x},${cy-s*.75} ${x+s*.75},${cy} ${x},${cy+s*.75} ${x-s*.75},${cy}`, ...a }, g);
+  else if (shape === "triangle") el("polygon", { points: `${x},${cy-s*.72} ${x+s*.75},${cy+s*.58} ${x-s*.75},${cy+s*.58}`, ...a }, g);
+  else if (shape === "invtriangle") el("polygon", { points: `${x},${cy+s*.72} ${x+s*.75},${cy-s*.58} ${x-s*.75},${cy-s*.58}`, ...a }, g);
+  else if (shape === "circle") el("circle", { cx: x, cy, r: s * .58, ...a }, g);
+  else if (shape === "star") el("polygon", { points: polyPts(x, cy, 10, i => (i % 2 ? s * .36 : s * .8), -Math.PI / 2), ...a }, g);
+  else if (shape === "hexagon") el("polygon", { points: polyPts(x, cy, 6, () => s * .66, 0), ...a }, g);
+  else el("rect", { x: x - s*.55, y: cy - s*.55, width: s * 1.1, height: s * 1.1, ...a }, g);
+}
+function polyPts(x, cy, n, r, rot) {
+  return Array.from({ length: n }, (_, i) => { const t = rot + i * 2 * Math.PI / n; return `${(x + r(i) * Math.cos(t)).toFixed(2)},${(cy + r(i) * Math.sin(t)).toFixed(2)}`; }).join(" ");
+}
+const MS_SHAPES = [["diamond","Diamond"],["triangle","Triangle"],["invtriangle","Inverted triangle"],["square","Square"],["circle","Circle"],["star","Star"],["hexagon","Hexagon"]];
+const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["summary","Summary bracket"]];
+function drawBarShape(g, shape, x, y, w, h, fill, stroke) {
+  if (shape === "summary") {   // thin bar with down-pointing ends, like a summary task
+    const t = h * .38;
+    el("polygon", { points: `${x},${y} ${x+w},${y} ${x+w},${y+h*.85} ${x+w-Math.min(6,w/3)},${y+t} ${x+Math.min(6,w/3)},${y+t} ${x},${y+h*.85}`, fill: stroke, stroke, "stroke-width": .6 }, g);
+    return;
+  }
+  const a = { x, y, width: w, height: h, fill, stroke, "stroke-width": .9 };
+  if (shape === "rounded") Object.assign(a, { rx: Math.min(h / 2, w / 2), ry: Math.min(h / 2, w / 2) });
+  if (shape === "dashed") Object.assign(a, { "stroke-dasharray": "4 2.5", "stroke-width": 1.1 });
+  el("rect", a, g);
+  if (shape === "poss") for (let hx = x + 4; hx < x + w; hx += 6) el("line", { x1: hx, y1: y + h, x2: Math.min(hx + h * .6, x + w), y2: y, stroke, "stroke-width": .4, opacity: .5 }, g);
+}
+const defaultStyle = behaviour => (P.styles.find(s => s.behaviour === behaviour && (s.name === "BAR" || s.name === "ML_Square")) || P.styles.find(s => s.behaviour === behaviour) || P.styles[0]).name;
+/* Excel code for a new type, from its label: "Utility Shutdown" -> ML_UTILITY_SHUTDOWN */
+function styleCode(label, ms, p) {
+  const base = (ms ? "ML_" : "BAR_") + (label || "TYPE").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 24);
+  let code = base, n = 2;
+  while (p.styles.some(s => s.name.toLowerCase() === code.toLowerCase())) code = base + "_" + n++;
+  return code;
+}
+/* shape for a style read from an older workbook that only has its name */
+function guessShape(name, ms) {
+  if (!ms) return /poss/i.test(name) ? "poss" : "bar";
+  for (const [re, shape] of [[/inv/i, "invtriangle"], [/diamond/i, "diamond"], [/triangle/i, "triangle"], [/circle/i, "circle"], [/star/i, "star"], [/hex/i, "hexagon"]]) if (re.test(name)) return shape;
+  return "square";
+}
+
+let LAY;
+function render() {
+  $("zoom").value = P.view.zoom;
+  $("docName").textContent = `${P.meta.number} · Rev ${P.meta.revision}`;
+  if (MARTINUS_LOGO) $("brandLogo").src = MARTINUS_LOGO; else $("brandLogoBox").hidden = true;
+  LAY = draw($("chart"), { ppd: P.view.zoom, spare: true });
+  $("bUndo").disabled = !past.length; $("bRedo").disabled = !future.length;
+}
+
+/* =====================================================================
+   Interaction on the sheet
+   ===================================================================== */
+const svgPt = e => { const r = $("chart").getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+const dayAt = x => fromDays(LAY.t0 + Math.floor((x - G.headW) / LAY.ppd));
+function slotAt(y) {
+  for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: Math.max(0, Math.min(ln.rows - 1, Math.floor((y - ln.y - G.pad) / G.rowH))) };
+  if (!LAY.lanes.length) return null;
+  if (y >= LAY.bodyBottom) { const ln = LAY.lanes[LAY.lanes.length-1]; return { lane: ln.l.id, row: ln.rows - 1 }; }
+  return { lane: LAY.lanes[0].l.id, row: 0 };
+}
+
+let drag = null;
+$("chart").addEventListener("pointerdown", e => {
+  const t = e.target, p = svgPt(e);
+  const id = t.getAttribute("data-id") || t.closest("[data-id]")?.getAttribute("data-id");
+  const head = t.getAttribute("data-lanehead") || t.closest("[data-lanehead]")?.getAttribute("data-lanehead");
+  if (id) {
+    const it = P.items.find(i => i.id === id);
+    sel = { type: "item", id };
+    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false };
+  } else if (head) sel = { type: "lane", id: head };
+  else if (t.getAttribute("data-lane")) sel = { type: "lane", id: t.getAttribute("data-lane") };
+  else sel = null;
+  render(); renderSide();
+});
+window.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const p = svgPt(e), it = P.items.find(i => i.id === drag.id), o = drag.orig;
+  const dd = Math.round((p.x - drag.x0) / LAY.ppd);
+  if (!drag.moved && Math.abs(p.x - drag.x0) < 3 && Math.abs(p.y - drag.y0) < 3) return;
+  drag.moved = true;
+  const ms = isMs(P, it.style);
+  if (drag.part === "l") it.start = fromDays(Math.min(toDays(o.start) + dd, toDays(o.end)));
+  else if (drag.part === "r") it.end = fromDays(Math.max(toDays(o.end) + dd, toDays(o.start)));
+  else {
+    it.start = addDays(o.start, dd); it.end = ms ? it.start : addDays(o.end, dd);
+    const s = slotAt(p.y - (drag.y0 - rowCenter(o)));
+    if (s) { it.lane = s.lane; it.row = s.row; }
+  }
+  render();
+});
+function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + o.row * G.rowH + G.rowH / 2 : 0; }
+window.addEventListener("pointerup", () => {
+  if (!drag) return;
+  if (drag.moved) { past.push(drag.before); future = []; changed(); }
+  drag = null;
+});
+$("chart").addEventListener("dblclick", e => {
+  const p = svgPt(e); if (p.x < G.headW || e.target.closest("[data-id]")) return;
+  if (p.y < LAY.bodyTop || p.y > LAY.bodyBottom) return;
+  const s = slotAt(p.y); if (!s) return;
+  addItem(defaultStyle("Stretch"), s.lane, dayAt(p.x), s.row);
+});
+
+function addItem(styleName, laneId, start, row) {
+  if (!P.lanes.length) { toast("Add a swimlane first."); return; }
+  laneId = laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null) || P.lanes[0].id;
+  const ms = isMs(P, styleName);
+  if (!start) { const st = $("stage"); start = dayAt(st.scrollLeft + st.clientWidth / 2); }
+  const it = { id: nextId(P, styleName), name: ms ? "New milestone" : "New activity", style: styleName, lane: laneId, start, end: ms ? start : addDays(start, 13), status: "Active", row: 0, fill: "", stroke: "" };
+  it.row = row != null ? row : freeRow(P, it);
+  commit(p => p.items.push(it));
+  sel = { type: "item", id: it.id }; render(); renderSide();
+  setTimeout(() => { const f = $("iName"); if (f) { f.focus(); f.select(); } }, 0);
+}
+/* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
+function freeRow(p, it) {
+  const span = x => { const s = toDays(x.start); const ms = isMs(p, x.style); return [s, ms ? s + Math.ceil((textW(x.name, 9, 500) + 30) / Math.max(1, p.view.zoom)) : toDays(x.end) + 1]; };
+  const [a, b] = span(it);
+  for (let r = 0; r < 200; r++) {
+    const clash = p.items.some(o => o !== it && o.lane === it.lane && o.row === r && (([c, d]) => c < b && a < d)(span(o)));
+    if (!clash) return r;
+  }
+  return 0;
+}
+
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input,select,textarea")) return;
+  const k = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "s" && HOST) { e.preventDefault(); librarySave(); return; }
+  if (e.key === "Escape") { sel = null; render(); renderSide(); return; }
+  if (!sel || sel.type !== "item") return;
+  const it = P.items.find(i => i.id === sel.id); if (!it) return;
+  if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); commit(p => p.items = p.items.filter(i => i.id !== it.id)); sel = null; renderSide(); }
+  if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); const c = { ...clone(it), id: nextId(P, it.style, it.id) }; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); }
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    e.preventDefault(); const n = (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 7 : 1);
+    commit(p => { const x = p.items.find(i => i.id === it.id); x.start = addDays(x.start, n); x.end = addDays(x.end, n); }, true);
+  }
+});
+
+/* =====================================================================
+   Inspector
+   ===================================================================== */
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+function renderSide() {
+  const side = $("side"), cur = findSel();
+  if (sel && sel.type === "item" && cur) {
+    const st = styleOf(P, cur.style), ms = st.behaviour === "Move";
+    const lane = P.lanes.find(l => l.id === cur.lane), eff = itemColours(cur, lane);
+    const dur = toDays(cur.end) - toDays(cur.start) + 1;
+    const colourNote = cur.fill ? "Custom colour" : ms ? `${st.notes} colour` : "Follows the lane colour";
+    side.innerHTML = `
+      <h2>${ms ? "Milestone" : "Bar"} <span class="idtag">${esc(cur.id)}</span></h2>
+      <div class="f"><label for="iName">Name</label><input id="iName" value="${esc(cur.name)}"></div>
+      <div class="row2">
+        <div class="f"><label for="iStart">${ms ? "Date" : "Start"}</label><input id="iStart" type="date" value="${cur.start}"></div>
+        ${ms ? "" : `<div class="f"><label for="iEnd">Finish</label><input id="iEnd" type="date" value="${cur.end}"></div>`}
+      </div>
+      ${ms ? "" : `<p class="note">${dur} calendar days</p>`}
+      <div class="row2">
+        <div class="f"><label for="iStyle">Style</label><select id="iStyle">${P.styles.map(s => `<option value="${esc(s.name)}" ${s.name === cur.style ? "selected" : ""}>${esc(s.notes || s.name)}</option>`).join("")}</select></div>
+        <div class="f"><label for="iLane">Lane</label><select id="iLane">${P.lanes.map(l => `<option value="${l.id}" ${l.id === cur.lane ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
+      </div>
+      <div class="row2">
+        <div class="f"><label for="iFill">Fill</label><input id="iFill" type="color" value="${eff.fill}"></div>
+        <div class="f"><label for="iStroke">Outline</label><input id="iStroke" type="color" value="${eff.stroke}"></div>
+      </div>
+      <p class="note">${colourNote}${cur.fill || cur.stroke ? ` · <a href="#" id="iReset">reset</a>` : ""}</p>
+      <div class="row2">
+        <div class="f"><label for="iStatus">Status</label><select id="iStatus">${["Active","Complete","On hold"].map(s => `<option ${s === cur.status ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+        <div class="f"><label for="iId">ShapeID</label><input id="iId" value="${esc(cur.id)}"></div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="iDup">Duplicate</button>
+        <button class="btn danger" id="iDel">Delete</button>
+      </div>`;
+    const upd = (f) => commit(p => f(p.items.find(i => i.id === cur.id)), true);
+    $("iName").onchange = e => upd(x => x.name = e.target.value);
+    $("iStart").onchange = e => { if (!e.target.value) return; upd(x => { const d = toDays(e.target.value) - toDays(x.start); x.start = e.target.value; x.end = isMs(P, x.style) ? x.start : (toDays(x.end) < toDays(x.start) ? addDays(x.end, d) : x.end); }); };
+    if ($("iEnd")) $("iEnd").onchange = e => { if (!e.target.value) return; upd(x => x.end = toDays(e.target.value) < toDays(x.start) ? x.start : e.target.value); };
+    $("iStyle").onchange = e => upd(x => { x.style = e.target.value; if (isMs(P, x.style)) x.end = x.start; else if (x.end === x.start) x.end = addDays(x.start, 13); });
+    $("iLane").onchange = e => upd(x => { x.lane = e.target.value; x.row = freeRow(P, x); });
+    $("iFill").onchange = e => upd(x => x.fill = e.target.value.toUpperCase());
+    $("iStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
+    $("iStatus").onchange = e => upd(x => x.status = e.target.value);
+    $("iId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; } upd(x => x.id = v); sel.id = v; renderSide(); };
+    if ($("iReset")) $("iReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; }); };
+    $("iDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id) }; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
+    $("iDel").onclick = () => { commit(p => p.items = p.items.filter(i => i.id !== cur.id)); sel = null; renderSide(); };
+    return;
+  }
+  if (sel && sel.type === "style" && cur) { renderTypeSide(side, cur); return; }
+  if (sel && sel.type === "lane" && cur) {
+    const idx = P.lanes.indexOf(cur), n = P.items.filter(i => i.lane === cur.id).length;
+    const custom = !LANE_PRESETS.some(([, c]) => c.toUpperCase() === cur.colour.toUpperCase());
+    side.innerHTML = `
+      <h2>Swimlane</h2>
+      <div class="f"><label for="lName">Name</label><input id="lName" value="${esc(cur.name)}"></div>
+      <div class="f"><label>Lane colour</label>
+        <div class="swatches">${LANE_PRESETS.map(([n, c]) => `<button class="sw" data-c="${c}" title="${n}" aria-label="${n}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${laneHeader(c)}"></button>`).join("")}
+          <input id="lColour" type="color" value="${cur.colour}" title="Custom colour" aria-label="Custom lane colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
+      </div>
+      <div class="preview">Title <i style="background:${laneHeader(cur.colour)}"></i> Bars <i style="background:${laneBar(cur.colour)}"></i></div>
+      <div class="f"><label for="lRows">Minimum rows</label><input id="lRows" type="number" min="1" max="30" value="${cur.minRows || 1}"></div>
+      <div class="actions">
+        <button class="btn" id="lUp" ${idx === 0 ? "disabled" : ""}>Move up</button>
+        <button class="btn" id="lDown" ${idx === P.lanes.length - 1 ? "disabled" : ""}>Move down</button>
+        <button class="btn" id="lPack">Tidy rows</button>
+      </div>
+      <div class="actions">
+        <button class="btn" id="lBar">+ Bar here</button>
+        <button class="btn" id="lMs">+ Milestone here</button>
+      </div>
+      <div class="actions"><button class="btn danger" id="lDel">Delete lane${n ? ` and ${n} item${n>1?"s":""}` : ""}</button></div>
+      <p class="note">Bars without a custom colour use a lighter shade of the lane colour. Tidy rows packs items upward without overlaps.</p>`;
+    const upd = f => commit(p => f(p.lanes.find(l => l.id === cur.id)), true);
+    $("lName").onchange = e => upd(l => l.name = e.target.value || "Lane");
+    side.querySelectorAll(".sw").forEach(b => b.onclick = () => upd(l => l.colour = b.dataset.c));
+    $("lColour").onchange = e => upd(l => l.colour = e.target.value.toUpperCase());
+    $("lRows").onchange = e => upd(l => l.minRows = Math.max(1, Math.min(30, +e.target.value || 1)));
+    const move = d => commit(p => { const a = p.lanes, i = a.findIndex(l => l.id === cur.id); [a[i], a[i+d]] = [a[i+d], a[i]]; }, true);
+    $("lUp").onclick = () => move(-1); $("lDown").onclick = () => move(1);
+    $("lPack").onclick = () => commit(p => { const its = p.items.filter(i => i.lane === cur.id).sort((a,b) => a.row - b.row || toDays(a.start) - toDays(b.start)); its.forEach(i => i.row = 999); its.forEach(i => i.row = freeRow(p, i)); }, true);
+    $("lBar").onclick = () => addItem(defaultStyle("Stretch"), cur.id);
+    $("lMs").onclick = () => addItem(defaultStyle("Move"), cur.id);
+    $("lDel").onclick = () => { commit(p => { p.lanes = p.lanes.filter(l => l.id !== cur.id); p.items = p.items.filter(i => i.lane !== cur.id); }); sel = null; renderSide(); };
+    return;
+  }
+  const m = P.meta, dupes = dupCheck();
+  side.innerHTML = `
+    <h2>Title block</h2>
+    <div class="f"><label for="mProg">Program</label><input id="mProg" value="${esc(m.program)}"></div>
+    <div class="row2">
+      <div class="f"><label for="mNum">Project no.</label><input id="mNum" value="${esc(m.number)}"></div>
+      <div class="f"><label for="mRev">Revision</label><input id="mRev" value="${esc(m.revision)}"></div>
+    </div>
+    <div class="f"><label for="mTitle">Project title</label><input id="mTitle" value="${esc(m.title)}"></div>
+    <div class="f"><label for="mSub">Subtitle</label><input id="mSub" value="${esc(m.subtitle)}"></div>
+    <div class="row2">
+      <div class="f"><label for="mAuthor">Author</label><input id="mAuthor" value="${esc(m.author)}"></div>
+      <div class="f"><label for="mClient">Client</label><input id="mClient" value="${esc(m.client)}"></div>
+    </div>
+    <div class="f"><label>Client logo</label>
+      <div class="logo-slot"><span class="thumb">${m.clientLogo ? `<img src="${m.clientLogo}" alt="Client logo">` : "None"}</span>
+      <button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoX">Remove</button>` : ""}</div>
+    </div>
+    <h2>Timeline</h2>
+    <div class="row2">
+      <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
+      <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${P.timeline.end}"></div>
+    </div>
+    <h2>Milestone types</h2>
+    <div class="types">${P.styles.filter(s => s.behaviour === "Move").map(typeRow).join("")}</div>
+    <div class="actions"><button class="btn" id="addMsType">+ Milestone type</button></div>
+    <h2>Bar types</h2>
+    <div class="types">${P.styles.filter(s => s.behaviour !== "Move").map(typeRow).join("")}</div>
+    <div class="actions"><button class="btn" id="addBarType">+ Bar type</button></div>
+    <p class="note">Click a type to rename it or change its shape and colour. Names appear in the sheet legend.</p>
+    ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${dupes.join(", ")}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
+    <p class="note">${P.items.length} items in ${P.lanes.length} lanes. Select a bar or lane title to edit it.</p>`;
+  const um = (k, f) => $(k).onchange = e => commit(p => f(p, e.target.value), true);
+  um("mProg", (p,v) => p.meta.program = v); um("mNum", (p,v) => p.meta.number = v); um("mRev", (p,v) => p.meta.revision = v);
+  um("mTitle", (p,v) => p.meta.title = v); um("mSub", (p,v) => p.meta.subtitle = v);
+  um("mClient", (p,v) => p.meta.client = v); um("mAuthor", (p,v) => p.meta.author = v);
+  um("tStart", (p,v) => { if (v && toDays(v) < toDays(p.timeline.end)) p.timeline.start = v; });
+  um("tEnd", (p,v) => { if (v && toDays(v) > toDays(p.timeline.start)) p.timeline.end = v; });
+  $("mLogo").onclick = () => $("fLogo").click();
+  if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => p.meta.clientLogo = "", true);
+  side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
+  $("addMsType").onclick = () => addType(true);
+  $("addBarType").onclick = () => addType(false);
+}
+function typeRow(s) {
+  const n = P.items.filter(i => i.style === s.name).length;
+  return `<button class="type" data-type="${esc(s.name)}"><svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">${legendIcon(s)}</svg>
+    <span>${esc(s.notes || s.name)}</span><small>${n || ""}</small></button>`;
+}
+function addType(ms) {
+  const label = ms ? "New milestone type" : "New bar type";
+  const s = ms ? { name: styleCode(label, true, P), shape: "star", behaviour: "Move", fill: "#4F7CAC", stroke: "#163E6B", notes: label, autoCode: true }
+               : { name: styleCode(label, false, P), shape: "bar", behaviour: "Stretch", fill: "#B7C9A8", stroke: "#163E6B", notes: label, autoCode: true };
+  commit(p => p.styles.push(s));
+  sel = { type: "style", id: s.name }; render(); renderSide();
+  setTimeout(() => { const f = $("sLabel"); if (f) { f.focus(); f.select(); } }, 0);
+}
+/* inspector for one milestone / bar type */
+function renderTypeSide(side, s) {
+  const ms = s.behaviour === "Move", used = P.items.filter(i => i.style === s.name).length;
+  const sameKind = P.styles.filter(x => x.behaviour === s.behaviour);
+  const shapes = ms ? MS_SHAPES : BAR_SHAPES;
+  side.innerHTML = `
+    <h2>${ms ? "Milestone type" : "Bar type"}</h2>
+    <div class="f"><label for="sLabel">Name (shown in legend)</label><input id="sLabel" value="${esc(s.notes)}"></div>
+    <div class="f"><label for="sShape">Shape</label><select id="sShape">${shapes.map(([k, n]) => `<option value="${k}" ${k === s.shape ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+    ${!ms ? `<label class="check"><input type="checkbox" id="sLane" ${s.fill ? "" : "checked"}> Use the lane colour</label>` : ""}
+    <div class="row2">
+      <div class="f"><label for="sFill">Fill</label><input id="sFill" type="color" value="${s.fill || laneBar(BRAND.orange)}" ${!ms && !s.fill ? "disabled" : ""}></div>
+      <div class="f"><label for="sStroke">Outline</label><input id="sStroke" type="color" value="${s.stroke || BRAND.navy}"></div>
+    </div>
+    <div class="type-preview"><svg width="120" height="30" viewBox="0 0 120 30" aria-hidden="true">${typePreview(s)}</svg></div>
+    <div class="f"><label for="sCode">Excel code</label><input id="sCode" value="${esc(s.name)}"></div>
+    <p class="note">The code is what the Style column holds in Excel. ${used ? `Used by ${used} item${used > 1 ? "s" : ""}.` : "Not used yet."}</p>
+    <div class="actions">
+      <button class="btn" id="sAdd">+ ${ms ? "Milestone" : "Bar"} of this type</button>
+      <button class="btn" id="sBack">All types</button>
+    </div>
+    ${sameKind.length > 1 ? `<div class="f"><label for="sDelTo">Delete this type${used ? " and move its items to" : ""}</label>
+      <div class="actions">${used ? `<select id="sDelTo">${sameKind.filter(x => x !== s).map(x => `<option value="${esc(x.name)}">${esc(x.notes || x.name)}</option>`).join("")}</select>` : ""}
+      <button class="btn danger" id="sDel">Delete type</button></div></div>` : `<p class="note">This is the only ${ms ? "milestone" : "bar"} type, so it can't be deleted.</p>`}`;
+  const upd = f => commit(p => f(p.styles.find(x => x.name === s.name)), true);
+  $("sLabel").onchange = e => {
+    const label = e.target.value.trim(); if (!label) { renderSide(); return; }
+    // a type created here keeps its Excel code in step with its name until the code is set by hand
+    const code = s.autoCode ? styleCode(label, ms, { styles: P.styles.filter(x => x !== s) }) : s.name;
+    commit(p => { p.items.forEach(i => { if (i.style === s.name) i.style = code; }); Object.assign(p.styles.find(x => x.name === s.name), { notes: label, name: code }); }, true);
+    sel.id = code; renderSide();
+  };
+  $("sShape").onchange = e => upd(x => x.shape = e.target.value);
+  $("sFill").onchange = e => upd(x => x.fill = e.target.value.toUpperCase());
+  $("sStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
+  if ($("sLane")) $("sLane").onchange = e => upd(x => x.fill = e.target.checked ? "" : (x.fill || "#B7C9A8"));
+  $("sCode").onchange = e => {
+    const v = e.target.value.trim().replace(/\s+/g, "_");
+    if (!v || P.styles.some(x => x !== s && x.name.toLowerCase() === v.toLowerCase())) { toast(v ? `${v} is already used by another type.` : "The code can't be empty."); renderSide(); return; }
+    commit(p => { p.items.forEach(i => { if (i.style === s.name) i.style = v; }); Object.assign(p.styles.find(x => x.name === s.name), { name: v, autoCode: false }); }, true);
+    sel.id = v; renderSide();
+  };
+  $("sAdd").onclick = () => addItem(s.name);
+  $("sBack").onclick = () => { sel = null; render(); renderSide(); };
+  if ($("sDel")) $("sDel").onclick = () => {
+    const to = $("sDelTo")?.value;
+    commit(p => { if (to) p.items.forEach(i => { if (i.style === s.name) i.style = to; }); p.styles = p.styles.filter(x => x.name !== s.name); });
+    sel = null; render(); renderSide(); toast(`Deleted type “${s.notes}”${used ? `; ${used} item${used > 1 ? "s" : ""} moved` : ""}.`);
+  };
+}
+function typePreview(s) {
+  const g = document.createElementNS(NS, "g");
+  if (s.behaviour === "Move") { drawMarker(g, s.shape, 14, 15, 14, s.fill, s.stroke); el("text", { x: 28, y: 18.5, "font-size": 10, fill: BRAND.navy, "font-family": "Montserrat, Arial" }, g, "12-Mar-27"); }
+  else {
+    const fill = s.fill || laneBar(BRAND.orange);
+    drawBarShape(g, s.shape, 2, 7, 116, 16, fill, s.stroke);
+  }
+  return g.innerHTML;
+}
+function legendIcon(s) {
+  const g = document.createElementNS(NS, "g");
+  if (s.behaviour === "Move") drawMarker(g, s.shape, 11, 8, 11, s.fill, s.stroke);
+  else drawBarShape(g, s.shape, 1, 3, 20, 10, s.fill || laneBar(BRAND.orange), s.stroke);
+  return g.innerHTML;
+}
+function dupCheck() { const c = {}; P.items.forEach(i => c[i.id] = (c[i.id] || 0) + 1); return Object.keys(c).filter(k => c[k] > 1); }
+
+$("fLogo").onchange = e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  if (f.size > 1.5e6) { toast("That image is over 1.5 MB. Use a smaller PNG or JPG."); return; }
+  const r = new FileReader();
+  r.onload = () => commit(p => p.meta.clientLogo = r.result, true);
+  r.readAsDataURL(f);
+};
+
+/* =====================================================================
+   Toolbar actions
+   ===================================================================== */
+$("bLane").onclick = () => { const l = { id: "L" + uid(), name: "New lane", colour: P.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 2 }; commit(p => p.lanes.push(l)); sel = { type: "lane", id: l.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+$("bBar").onclick = () => addItem(defaultStyle("Stretch"));
+$("bMs").onclick = () => addItem(defaultStyle("Move"));
+$("bUndo").onclick = undo; $("bRedo").onclick = redo;
+$("zoom").oninput = e => { P.view.zoom = +e.target.value; render(); };
+$("zoom").onchange = () => changed();
+$("bFit").onclick = () => {
+  if (!P.items.length) return;
+  const a = Math.min(...P.items.map(i => toDays(i.start))), b = Math.max(...P.items.map(i => toDays(i.end)));
+  const s = new Date(a*DAY), e = new Date(b*DAY);
+  commit(p => { p.timeline.start = fromDays(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1)/DAY); p.timeline.end = fromDays(Date.UTC(e.getUTCFullYear(), e.getUTCMonth()+2, 0)/DAY); }, true);
+};
+$("bNew").onclick = () => showModal(`<header><h3>Start a new programme?</h3><p>The current programme stays in its saved file. Unsaved changes in this browser will be replaced.</p></header>
+  <footer><button class="btn primary" data-act="blank">Blank programme</button><button class="btn" data-act="sample">Load the example</button><span class="spacer"></span><button class="btn" data-act="close">Cancel</button></footer>`,
+  { blank: () => { DOC = null; commit(p => Object.assign(p, blankProject())); sel = null; renderSide(); }, sample: () => { DOC = null; commit(p => Object.assign(p, seedProject())); sel = null; renderSide(); } });
+const fileBase = () => `${P.meta.number} ${P.meta.title} PoaP Rev${P.meta.revision}`.replace(/[\\/:*?"<>|]+/g, "-").trim();
+$("bSave").onclick = () => {
+  if (HOST) return librarySave();
+  download(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" }), fileBase() + ".poap.json"); toast("Saved " + fileBase() + ".poap.json");
+};
+$("bOpen").onclick = () => HOST ? libraryOpen() : $("fOpen").click();
+$("fOpen").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    if (/\.json$/i.test(f.name)) {
+      const p = JSON.parse(await f.text()); if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project");
+      commit(x => Object.assign(x, p)); sel = null; renderSide(); toast("Opened " + f.name);
+    } else {
+      const parsed = parseWorkbook(await f.arrayBuffer());
+      const base = blankProject(); Object.assign(base.meta, parsed.meta);
+      base.styles.push(...newTypesFrom(parsed, base.styles));
+      const p = projectFromRows(parsed.rows, parsed.lanes, base);
+      if (parsed.timeline) p.timeline = parsed.timeline;
+      commit(x => Object.assign(x, p)); sel = null; renderSide(); if (!parsed.timeline) $("bFit").click(); toast(`Opened ${parsed.rows.length} rows from ${f.name}`);
+    }
+  } catch (err) { toast("Couldn't open " + f.name + ": " + err.message, 5000); }
+};
+$("bImport").onclick = () => $("fImport").click();
+$("fImport").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try { previewImport(parseWorkbook(await f.arrayBuffer()), f.name); }
+  catch (err) { toast("Couldn't read " + f.name + ": " + err.message, 5000); }
+};
+$("bExport").onclick = exportExcel;
+$("bPdf").onclick = exportPdf;
+
+function download(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  ROOT.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+let toastT;
+function toast(msg, ms) { let t = ROOT.querySelector(".toast"); if (!t) { t = document.createElement("div"); t.className = "toast"; ROOT.appendChild(t); } t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms || 2600); }
+function showModal(html, acts) {
+  const m = document.createElement("div"); m.className = "modal"; m.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">${html}</div>`;
+  ROOT.appendChild(m);
+  const close = () => m.remove();
+  m.addEventListener("click", e => { const a = e.target.closest("[data-act]")?.dataset.act; if (e.target === m || a === "close") { acts.close?.(); return close(); } if (a && acts[a]) { if (acts[a](m) !== false) close(); } });
+  return m;
+}
+
+/* =====================================================================
+   Excel: export + read + update preview
+   ===================================================================== */
+const xDate = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
+function exportExcel() {
+  download(buildExcelBlob(), fileBase() + ".xlsx");
+  toast("Exported " + fileBase() + ".xlsx");
+}
+function buildExcelBlob() {
+  const wb = XLSX.utils.book_new();
+  const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
+  const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
+  const prog = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke"]]
+    .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke]));
+  const ws = XLSX.utils.aoa_to_sheet(prog, { cellDates: true });
+  for (let r = 1; r < prog.length; r++) for (const c of [4,5]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
+  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9].map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: `A1:K${prog.length}` };
+  XLSX.utils.book_append_sheet(wb, ws, "Program");
+  const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
+  lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
+  XLSX.utils.book_append_sheet(wb, lanes, "Lanes");
+  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel"]].concat(P.styles.map(s => [s.name, s.behaviour, s.shape, s.fill || "LANE", s.stroke, s.notes])));
+  styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
+  XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
+  const m = P.meta;
+  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["Format","poap/2"]], { cellDates: true });
+  ["B9","B10"].forEach(a => { if (proj[a]) proj[a].z = "dd-mmm-yy"; });
+  proj["!cols"] = [{ wch: 14 }, { wch: 44 }];
+  XLSX.utils.book_append_sheet(wb, proj, "Project");
+  const out = XLSX.write(wb, { bookType: "xlsx", type: "array", cellDates: true });
+  return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function toISO(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) { const d = new Date(v.getTime() + 12*3600e3); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+  if (typeof v === "number") return fromDays(Math.round(v) - 25569);
+  const s = String(v).trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  if ((m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/))) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; }
+  if ((m = s.match(/^(\d{1,2})[ -]([A-Za-z]{3})[a-z]*[ -](\d{2,4})$/))) { const mi = MON.findIndex(x => x.toLowerCase() === m[2].toLowerCase()); if (mi >= 0) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${String(mi+1).padStart(2,"0")}-${m[1].padStart(2,"0")}`; } }
+  return null;
+}
+const hex = v => { const s = String(v ?? "").trim(); return /^#?[0-9a-f]{6}$/i.test(s) ? ("#" + s.replace("#","")).toUpperCase() : ""; };
+
+/* Reads either this tool's export or the original Visio-era workbook (header row may sit below a banner row). */
+function parseWorkbook(buf) {
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const shName = wb.SheetNames.find(n => /^program/i.test(n)) || wb.SheetNames[0];
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[shName], { header: 1, raw: true, defval: null });
+  const hi = aoa.findIndex(r => r.some(c => String(c ?? "").trim().toLowerCase() === "shapeid"));
+  if (hi < 0) throw new Error(`no "ShapeID" column found on sheet "${shName}"`);
+  const H = aoa[hi].map(c => String(c ?? "").trim().toLowerCase().replace(/\s+/g, ""));
+  const col = (...names) => H.findIndex(h => names.includes(h));
+  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke") };
+  const rows = [], problems = [];
+  for (let r = hi + 1; r < aoa.length; r++) {
+    const R = aoa[r], g = k => C[k] >= 0 ? R[C[k]] : null;
+    if (!g("id") && !g("name")) continue;
+    const start = toISO(g("start")), end = toISO(g("end")) || start;
+    if (!start) { problems.push(`Row ${r+1} (${g("id") || g("name")}): no valid start date, skipped`); continue; }
+    rows.push({ xlRow: r + 1, id: String(g("id") ?? "").trim(), name: String(g("name") ?? "").trim(), style: String(g("style") ?? "BAR").trim() || "BAR", lane: String(g("lane") ?? "").trim(), start, end: toDays(end) < toDays(start) ? start : end, status: String(g("status") ?? "Active").trim() || "Active", row: g("row") === null || g("row") === "" ? NaN : Number(g("row")), y: Number(g("y")) || NaN, fill: hex(g("fill")), stroke: hex(g("stroke")) });
+  }
+  let lanes = [];
+  const lsh = wb.Sheets["Lanes"];
+  if (lsh) {
+    const la = XLSX.utils.sheet_to_json(lsh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
+    lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0 }));
+  }
+  let meta = {}, timeline = null;
+  const psh = wb.Sheets["Project"];
+  if (psh) {
+    const kv = Object.fromEntries(XLSX.utils.sheet_to_json(psh, { header: 1, raw: true }).slice(1).map(r => [String(r[0] ?? "").trim().toLowerCase(), r[1]]));
+    meta = { program: kv.program, number: kv.number, title: kv.title, subtitle: kv.subtitle, client: kv.client, author: kv.author || kv.preparedby, revision: kv.revision };
+    meta = Object.fromEntries(Object.entries(meta).filter(([,v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]));
+    const a = toISO(kv.timelinestart), b = toISO(kv.timelineend); if (a && b) timeline = { start: a, end: b };
+  }
+  let styles = [];
+  const ssh = wb.Sheets["StyleRegister"];
+  if (ssh) {
+    const sa = XLSX.utils.sheet_to_json(ssh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
+    styles = sa.filter(x => x.stylename).map(x => {
+      const name = String(x.stylename).trim(), ms = /move/i.test(x.behaviour || "") || /^ml/i.test(name);
+      const okShape = (ms ? MS_SHAPES : BAR_SHAPES).some(([k]) => k === x.shape);
+      return { name, behaviour: ms ? "Move" : "Stretch", shape: okShape ? x.shape : guessShape(name, ms), fill: /^lane$/i.test(String(x.defaultfill || "")) ? "" : hex(x.defaultfill), stroke: hex(x.defaultstroke) || BRAND.navy, notes: String(x.legendlabel || x.notes || name).trim() };
+    });
+  }
+  return { rows, lanes, meta, timeline, problems, styles };
+}
+/* Types the workbook uses that this project doesn't have yet: from its StyleRegister sheet,
+   or guessed from the Style column. Existing types are never overwritten. */
+function newTypesFrom(parsed, existing) {
+  const have = n => existing.some(s => s.name.toLowerCase() === n.toLowerCase()) || out.some(s => s.name.toLowerCase() === n.toLowerCase());
+  const out = [];
+  for (const s of parsed.styles || []) if (!have(s.name)) out.push(s);
+  for (const r of parsed.rows) if (r.style && !have(r.style)) {
+    const ms = /^(ml|ms)/i.test(r.style) || r.start === r.end;
+    out.push({ name: r.style, behaviour: ms ? "Move" : "Stretch", shape: guessShape(r.style, ms), fill: ms ? "#4F7CAC" : "", stroke: BRAND.navy, notes: r.style.replace(/^ML_/i, "").replace(/_/g, " ") });
+  }
+  return out;
+}
+
+function previewImport(parsed, fname) {
+  const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
+  const byId = new Map(P.items.map(i => [i.id, i]));
+  const seen = new Set(), changes = [], adds = [], dupes = [];
+  const newTypes = newTypesFrom(parsed, P.styles);
+  const lookup = { styles: [...P.styles, ...newTypes] };   // resolve styles as they will be after the update
+  for (const r of parsed.rows) {
+    if (r.id && seen.has(r.id)) { dupes.push(r); continue; }
+    if (r.id) seen.add(r.id);
+    const cur = r.id && byId.get(r.id);
+    if (!cur) { adds.push(r); continue; }
+    const st = styleOf(lookup, r.style).name, ms = isMs(lookup, st), end = ms ? r.start : r.end;
+    const diffs = [];
+    if (r.name && r.name !== cur.name) diffs.push(["Name", cur.name, r.name]);
+    if (r.start !== cur.start) diffs.push([ms ? "Date" : "Start", fmt(cur.start), fmt(r.start)]);
+    if (!ms && end !== cur.end) diffs.push(["Finish", fmt(cur.end), fmt(end)]);
+    if (st !== cur.style) diffs.push(["Style", cur.style, st]);
+    if (r.lane && r.lane.toLowerCase() !== laneName(cur.lane).toLowerCase()) diffs.push(["Lane", laneName(cur.lane), r.lane]);
+    if (r.status && r.status !== cur.status) diffs.push(["Status", cur.status, r.status]);
+    if (diffs.length) changes.push({ r, cur, diffs });
+  }
+  const missing = P.items.filter(i => !seen.has(i.id));
+  const tr = (id, what, from, to) => `<tr><td>${esc(id)}</td><td>${esc(what)}</td><td>${from != null ? `<span class="old">${esc(from)}</span> → ` : ""}${esc(to)}</td></tr>`;
+  const body = [
+    ...newTypes.map(s => tr(s.name, `New ${s.behaviour === "Move" ? "milestone" : "bar"} type`, null, s.notes)),
+    ...changes.flatMap(c => c.diffs.map((d, k) => tr(k ? "" : c.cur.id, d[0], d[1], d[2]))),
+    ...adds.map(a => tr(a.id || "(new)", "New item", null, `${a.name} · ${a.lane || "Unassigned"} · ${fmt(a.start)}`)),
+    ...dupes.map(d => tr(d.id, "Duplicate ShapeID", null, `Excel row ${d.xlRow} “${d.name}” added with a new ID`)),
+    ...missing.map(m => tr(m.id, "Not in workbook", null, m.name)),
+    ...parsed.problems.map(p => `<tr><td></td><td>Skipped</td><td>${esc(p)}</td></tr>`),
+  ].join("");
+  const nothing = !changes.length && !adds.length && !dupes.length && !newTypes.length;
+  showModal(`
+    <header><h3>Update from ${esc(fname)}</h3><p>Rows are matched to the programme by ShapeID. Positions and colours you set on the sheet are kept.</p></header>
+    <div class="body">
+      <div class="chips">
+        ${newTypes.length ? `<span class="chip new">${newTypes.length} new type${newTypes.length > 1 ? "s" : ""}</span>` : ""}<span class="chip chg">${changes.length} changed</span><span class="chip new">${adds.length + dupes.length} new</span>
+        <span class="chip miss">${missing.length} not in workbook</span>${parsed.problems.length ? `<span class="chip err">${parsed.problems.length} skipped</span>` : ""}
+      </div>
+      ${body ? `<div style="overflow-x:auto"><table class="diff"><thead><tr><th>ShapeID</th><th>Change</th><th>Detail</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p class="note">The workbook matches the programme. Nothing to update.</p>`}
+    </div>
+    <footer>
+      ${missing.length ? `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="impDel"> Delete the ${missing.length} item${missing.length>1?"s":""} not in the workbook</label>` : ""}
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn" data-act="close">Cancel</button>
+      <button class="btn primary" data-act="apply" ${nothing && !missing.length ? "disabled" : ""}>Apply update</button>
+    </footer>`, {
+    apply: m => {
+      const del = m.querySelector("#impDel")?.checked;
+      commit(p => {
+        p.styles.push(...clone(newTypes));
+        const laneFor = name => { let l = p.lanes.find(x => x.name.toLowerCase() === name.toLowerCase()); if (!l) l = newLane(p, name); return l.id; };
+        for (const c of changes) {
+          const it = p.items.find(i => i.id === c.cur.id), r = c.r, st = styleOf(p, r.style).name;
+          const oldLane = it.lane;
+          Object.assign(it, { name: r.name || it.name, start: r.start, end: isMs(p, st) ? r.start : r.end, style: st, status: r.status || it.status });
+          if (r.fill) it.fill = r.fill; if (r.stroke) it.stroke = r.stroke;
+          if (r.lane) { it.lane = laneFor(r.lane); if (it.lane !== oldLane) it.row = freeRow(p, it); }
+          if (Number.isFinite(r.row)) it.row = r.row;
+        }
+        const reserved = new Set(parsed.rows.map(r => r.id).filter(Boolean));
+        for (const r of [...adds, ...dupes]) {
+          const st = styleOf(p, r.style).name;
+          const id = r.id && !p.items.some(i => i.id === r.id) ? r.id : nextId(p, st, r.id || null, reserved);
+          const it = { id, name: r.name, style: st, lane: laneFor(r.lane || "Unassigned"), start: r.start, end: isMs(p, st) ? r.start : r.end, status: r.status, row: 0, fill: r.fill, stroke: r.stroke };
+          it.row = Number.isFinite(r.row) ? r.row : freeRow(p, it);
+          p.items.push(it);
+        }
+        if (del) { const gone = new Set(missing.map(x => x.id)); p.items = p.items.filter(i => !gone.has(i.id)); }
+      });
+      toast(`Updated ${changes.length}, added ${adds.length + dupes.length}${del ? `, deleted ${missing.length}` : ""}.`);
+    }
+  });
+}
+
+/* =====================================================================
+   PDF: the same SVG sheet, scaled onto A3 landscape as vectors
+   ===================================================================== */
+const FONT_URLS = {
+  normal: "https://cdn.jsdelivr.net/gh/JulietaUla/Montserrat@master/fonts/ttf/Montserrat-Medium.ttf",
+  bold: "https://cdn.jsdelivr.net/gh/JulietaUla/Montserrat@master/fonts/ttf/Montserrat-Bold.ttf",
+};
+let fontCache = null;
+async function loadPdfFonts() {
+  if (fontCache !== null) return fontCache;
+  if (HOST && HOST.loadFonts) { try { fontCache = await HOST.loadFonts(); } catch (e) { fontCache = false; } return fontCache; }
+  const b64 = buf => { const u = new Uint8Array(buf); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+  try {
+    const [n, b] = await Promise.all([FONT_URLS.normal, FONT_URLS.bold].map(u => fetch(u).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })));
+    fontCache = { normal: b64(n), bold: b64(b) };
+  } catch (e) { fontCache = false; }   // offline: fall back to Helvetica
+  return fontCache;
+}
+async function exportPdf() {
+  const btn = $("bPdf"); btn.disabled = true; btn.textContent = "Building PDF…";
+  try {
+    const { blob, fonts } = await buildPdfBlob();
+    download(blob, fileBase() + ".pdf");
+    toast("Exported " + fileBase() + ".pdf" + (fonts ? "" : " (Helvetica: brand font unavailable offline)"));
+  } catch (err) { console.error(err); toast("PDF export failed: " + err.message, 5000); }
+  finally { btn.disabled = false; btn.textContent = "Export PDF"; }
+}
+async function buildPdfBlob() {
+  {
+    const { jsPDF } = (HOST && HOST.jspdf) || window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a3" });
+    const fonts = await loadPdfFonts();
+    let face = "helvetica";
+    if (fonts) {
+      doc.addFileToVFS("Montserrat-Medium.ttf", fonts.normal); doc.addFont("Montserrat-Medium.ttf", "Montserrat", "normal");
+      doc.addFileToVFS("Montserrat-Bold.ttf", fonts.bold); doc.addFont("Montserrat-Bold.ttf", "Montserrat", "bold");
+      face = "Montserrat";
+    }
+    const PW = 420, PH = 297, M = 7, availW = PW - 2*M, availH = PH - 2*M;
+    const span = toDays(P.timeline.end) - toDays(P.timeline.start) + 1;
+    const pxW = 1500, ppd = (pxW - G.headW) / span;
+    const holder = document.createElement("div"); holder.style.cssText = "position:fixed;left:-99999px;top:0";
+    const svg = document.createElementNS(NS, "svg"); holder.appendChild(svg); ROOT.appendChild(holder);
+    const opts = { ppd, print: true, spare: false, font: face };
+    let L = draw(svg, opts);
+    // spread rows to fill the sheet (up to 2x) so the page reads like the Visio A3
+    const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), baseRow = G.rowH;
+    const slack = availH / (availW / L.W) - L.H;
+    if (rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); L = draw(svg, opts); G.rowH = baseRow; }
+    const k = Math.min(availW / L.W, availH / L.H);
+    const lib = (HOST && HOST.svg2pdf) || window.svg2pdf;
+    const svgFn = lib?.svg2pdf || lib;
+    try { await svgFn(svg, doc, { x: M + (availW - L.W * k) / 2, y: M, width: L.W * k, height: L.H * k }); }
+    finally { holder.remove(); }
+    doc.setProperties({ title: `${P.meta.number} ${P.meta.title} PoaP Rev ${P.meta.revision}`, author: P.meta.author || "", creator: "PoaP Builder" });
+    return { blob: doc.output("blob"), fonts };
+  }
+}
+
+/* =====================================================================
+   Library storage (only with a host, e.g. the SharePoint web part)
+   HOST.list() -> [{ name, path, modified, by }]   HOST.read(path) -> { text, etag, by, modified }
+   HOST.write(path, text, etag|null) -> { etag } or { conflict: true }   HOST.writeFile(folder, name, blob) -> { url }
+   ===================================================================== */
+const timeAgo = iso => { const m = Math.round((Date.now() - new Date(iso)) / 6e4); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(iso).toLocaleDateString("en-AU"); };
+function showStatus() {
+  const s = $("saved"); if (!s) return;
+  if (!HOST) { s.textContent = "Draft kept in this browser"; return; }
+  const dirty = DOC && JSON.stringify(P) !== DOC.base, name = DOC && DOC.name.replace(/\.poap\.json$/i, "");
+  const renamed = DOC && DOC.name !== fileBase() + ".poap.json";
+  s.textContent = !DOC ? "Not saved to the library yet · press Save once to start auto-saving"
+    : renamed && dirty ? `${name} · title block changed, press Save to choose the file`
+    : dirty ? `${name} · saving shortly…` : `${name} · saved${DOC.savedAt ? " " + new Date(DOC.savedAt).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) : ""}`;
+}
+function loadDoc(project, doc) {
+  P = project; DOC = doc; past = []; future = []; sel = null;
+  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+  render(); renderSide(); showStatus();
+}
+
+async function libraryOpen() {
+  let files;
+  try { files = await HOST.list(); }
+  catch (err) {
+    if (err.missingLibrary) return showModal(`<header><h3>No “${esc(HOST.libraryTitle)}” library yet</h3><p>Programmes are saved in a document library on this site. Create it now? Site owners and members with edit rights can do this.</p></header>
+      <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="create">Create library</button></footer>`,
+      { create: () => { HOST.createLibrary().then(() => { toast("Library created."); libraryOpen(); }, e => toast("Couldn't create the library: " + e.message, 6000)); } });
+    return toast("Couldn't read the library: " + err.message, 6000);
+  }
+  const rows = files.map((f, i) => `<tr data-open="${i}" style="cursor:pointer"><td>${esc(f.name.replace(/\.poap\.json$/i, ""))}</td><td>${esc(f.by || "")}</td><td>${esc(timeAgo(f.modified))}</td></tr>`).join("");
+  showModal(`<header><h3>Open a programme</h3><p>From the “${esc(HOST.libraryTitle)}” library on this site.</p></header>
+    <div class="body">${rows ? `<table class="diff"><thead><tr><th>Programme</th><th>Saved by</th><th>When</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="note">No programmes saved yet. Build one and press Save.</p>`}</div>
+    <footer><button class="btn" data-act="file">From my computer (.json / .xlsx)…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button></footer>`,
+    { file: () => { DOC = null; $("fOpen").click(); } });
+  ROOT.querySelectorAll("[data-open]").forEach(tr => tr.onclick = async () => {
+    const f = files[+tr.dataset.open]; tr.closest(".modal").remove();
+    try {
+      const r = await HOST.read(f.path), p = JSON.parse(r.text);
+      if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project");
+      loadDoc(p, { path: f.path, name: f.name, etag: r.etag, base: JSON.stringify(p) });
+      toast("Opened " + f.name);
+    } catch (err) { toast("Couldn't open " + f.name + ": " + err.message, 6000); }
+  });
+}
+
+async function librarySave(opts = {}) {
+  // project number, title or revision changed since the file was named: new file or same file?
+  const wanted = fileBase() + ".poap.json";
+  if (DOC && DOC.name !== wanted && !opts.keepName) {
+    return new Promise(done => showModal(`<header><h3>Save as a new file?</h3><p>The title block now reads “${esc(wanted.replace(/\.poap\.json$/i, ""))}” but this programme is saved as “${esc(DOC.name.replace(/\.poap\.json$/i, ""))}”. A new file keeps the old one as it was, which suits a new revision.</p></header>
+      <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn" data-act="keep">Keep the old name</button><button class="btn primary" data-act="new">Save as new file</button></footer>`, {
+      keep: () => { librarySave({ keepName: true }).then(done); },
+      new: () => { DOC = null; librarySave().then(done); },
+      close: () => done(false),
+    }));
+  }
+  const text = JSON.stringify(P, null, 1), snapshot = JSON.stringify(P);
+  const name = DOC ? DOC.name : fileBase() + ".poap.json";
+  const path = DOC ? DOC.path : HOST.folderPath + "/" + name;
+  try {
+    const r = await HOST.write(path, text, DOC ? DOC.etag : null, !!opts.replace);
+    if (r.exists) {   // a new programme whose name is already taken in the library
+      return showModal(`<header><h3>“${esc(name)}” already exists</h3><p>Another programme in the library has this name. Replace it, or change the project number, title or revision first.</p></header>
+        <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn danger" data-act="replace">Replace it</button></footer>`,
+        { replace: () => { librarySave({ replace: true }); } });
+    }
+    if (r.conflict) return resolveConflict(path, name);
+    DOC = { path, name, etag: r.etag, base: snapshot, savedAt: new Date().toISOString() };
+    showStatus(); if (!opts.auto) toast("Saved " + name);
+    return true;
+  } catch (err) { toast((opts.auto ? "Auto-save failed: " : "Couldn't save: ") + err.message + (opts.auto ? ". Your changes are kept; press Save to retry." : ""), 6000); return false; }
+}
+
+/* Someone saved since we opened: merge their version and ours against the version we opened. */
+async function resolveConflict(path, name) {
+  let theirs;
+  try { theirs = await HOST.read(path); } catch (err) { return toast("Couldn't read the newer version: " + err.message, 6000); }
+  const m = merge3(JSON.parse(DOC.base), P, JSON.parse(theirs.text));
+  showModal(`<header><h3>${esc(theirs.by || "Someone")} saved this programme ${esc(timeAgo(theirs.modified))}</h3>
+      <p>Your changes and theirs can be combined. ${m.both ? `<b>${m.both}</b> item${m.both > 1 ? "s were" : " was"} changed by both of you; your version is kept for ${m.both > 1 ? "those" : "it"}.` : "None of the same items were changed by both of you."}</p></header>
+    <div class="body"><div class="chips"><span class="chip chg">${m.mine} of your changes</span><span class="chip new">${m.theirs} of theirs</span>${m.both ? `<span class="chip miss">${m.both} changed by both</span>` : ""}</div></div>
+    <footer><button class="btn" data-act="theirs">Discard mine, load theirs</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="merge">Save combined version</button></footer>`, {
+    theirs: () => { const t = JSON.parse(theirs.text); loadDoc(t, { path, name, etag: theirs.etag, base: JSON.stringify(t) }); toast("Loaded the latest version."); },
+    merge: () => {
+      past.push(JSON.stringify(P)); future = [];
+      P = m.project; DOC = { ...DOC, etag: theirs.etag, base: JSON.stringify(JSON.parse(theirs.text)) };
+      render(); renderSide(); librarySave();
+    },
+  });
+}
+function merge3(base, mine, theirs) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const out = clone(theirs); let nMine = 0, nTheirs = 0, both = 0;
+  for (const part of ["meta", "timeline", "view"]) for (const k of new Set([...Object.keys(base[part] || {}), ...Object.keys(mine[part] || {})]))
+    if (!same(mine[part]?.[k], base[part]?.[k])) { out[part][k] = mine[part][k]; nMine++; }
+  const mergeList = (key, idOf) => {
+    const map = arr => new Map((arr || []).map(x => [idOf(x), x]));
+    const b = map(base[key]), m = map(mine[key]), t = map(theirs[key]);
+    const order = [...(theirs[key] || []).map(idOf), ...(mine[key] || []).map(idOf).filter(id => !t.has(id))];
+    // keep my lane/type order if I reordered and they didn't
+    const ids = !same([...m.keys()], [...b.keys()]) && same([...t.keys()], [...b.keys()]) ? [...new Set([...m.keys(), ...order])] : order;
+    const res = [];
+    for (const id of ids) {
+      const bi = b.get(id), mi = m.get(id), ti = t.get(id);
+      if (!bi) { if (mi) { res.push(mi); if (!ti) nMine++; else if (!same(mi, ti)) both++; } else if (ti) { res.push(ti); nTheirs++; } continue; }
+      const mc = !mi || !same(mi, bi), tc = !ti || !same(ti, bi);
+      if (!mc) { if (ti) res.push(ti); if (tc) nTheirs++; }
+      else if (!tc) { if (mi) res.push(mi); nMine++; }
+      else { both++; const keep = mi || ti; if (keep) res.push(keep); }
+    }
+    out[key] = res;
+  };
+  mergeList("lanes", l => l.id); mergeList("styles", s => s.name); mergeList("items", i => i.id);
+  return { project: out, mine: nMine, theirs: nTheirs, both };
+}
+
+async function libraryIssue() {
+  const btn = $("bIssue"); btn.disabled = true; btn.textContent = "Issuing…";
+  try {
+    if (!(await librarySave())) return;
+    const base = fileBase(), folder = HOST.folderPath + "/Issued";
+    const { blob, fonts } = await buildPdfBlob();
+    await HOST.writeFile(folder, base + ".pdf", blob);
+    await HOST.writeFile(folder, base + ".xlsx", buildExcelBlob());
+    toast(`Issued ${base} (PDF and Excel) to ${HOST.libraryTitle}/Issued` + (fonts ? "" : " · brand font unavailable, Helvetica used"), 5000);
+  } catch (err) { toast("Couldn't issue: " + err.message, 6000); }
+  finally { btn.disabled = false; btn.textContent = "Issue"; }
+}
+if (HOST) {
+  window.addEventListener("beforeunload", e => { if (DOC && JSON.stringify(P) !== DOC.base) { e.preventDefault(); e.returnValue = ""; } });
+  $("bIssue").hidden = false;
+  $("bIssue").onclick = libraryIssue;
+  $("bSave").title = `Save to the “${HOST.libraryTitle}” library (Ctrl+S)`;
+  $("bOpen").title = `Open a programme from the “${HOST.libraryTitle}” library`;
+}
+
+/* ===================================================================== */
+document.fonts?.ready.then(() => { render(); });
+render(); renderSide(); showStatus();
+</script>
+</body>
+</html>
