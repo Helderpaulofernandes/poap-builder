@@ -487,7 +487,8 @@ function layout(opts) {
         : t.pos === "bottom" ? bodyBottom - 4 - t.h - t.row * step
         : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
   }
-  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + G.ftrH, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare };
+  const ftrH = opts.ftrH || G.ftrH;   // the footer grows when the legend and key need more lines
+  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + ftrH, ftrH, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare };
 }
 
 /* ---------- curtain tags: position, alignment, size, style and colours ---------- */
@@ -542,7 +543,11 @@ function img(parent, href, x, y, w, h, align) {
 
 /* Draws the whole sheet into svg. opts.print strips interaction affordances; opts.font overrides the face. */
 function draw(svg, opts) {
-  const L = layout(opts);
+  let L = layout(opts);
+  // labels first: numbered ones go in the footer key, which may need a taller footer
+  const labels = planLabels(L), fh = footerPlan(L, labels.keyList).height;
+  if (fh !== L.ftrH) L = layout({ ...opts, ftrH: fh });
+  L.labels = labels;
   svg.innerHTML = "";
   svg.setAttribute("width", L.W); svg.setAttribute("height", L.H);
   svg.setAttribute("viewBox", `0 0 ${L.W} ${L.H}`);
@@ -579,7 +584,6 @@ function draw(svg, opts) {
 
   // items
   const gi = el("g", {}, svg);
-  L.labels = planLabels(L);
   // summary bars first so the bars inside them draw on top
   const ordered = [...P.items].sort((a, b) => (isContainer(P, b) ? 1 : 0) - (isContainer(P, a) ? 1 : 0));
   for (const it of ordered) {
@@ -674,26 +678,52 @@ function drawHeader(svg, L, F, opts) {
   el("line", { x1: 0, x2: L.W, y1: H, y2: H, stroke: BRAND.navy, "stroke-width": 1.8 }, g);
 }
 
+/* Footer contents flow left to right and wrap: "Legend:" with the types used, then "Key:" with the numbered
+   bar labels. Returns each entry's place and the footer height needed (never less than the standard 48 px). */
+const FOOTER_BOX_W = 250, FOOTER_LINE = 15;
+function footerPlan(L, keyList) {
+  const left = 14, right = L.W - FOOTER_BOX_W - 12;
+  const legendW = textW("Legend:", 11, 700) + 14, indent = left + legendW;
+  const entries = [{ kind: "heading", text: "Legend:", w: legendW }];
+  // milestone types, curtains, and bar types with their own colour (lane-coloured bars need no key)
+  P.styles.filter(s => (s.behaviour !== "Stretch" || s.fill) && P.items.some(i => i.style === s.name))
+    .forEach(s => { const icon = s.behaviour === "Move" ? 18 : 28; entries.push({ kind: "style", s, icon, w: icon + textW(s.notes || s.name, 9.5, 500) + 22 }); });
+  if (keyList.length) {
+    entries.push({ kind: "heading", text: "Key:", w: textW("Key:", 11, 700) + 10, gap: 14 });
+    keyList.forEach(k => entries.push({ kind: "key", k, w: 15 + textW(k.name, 9, 500) + 16 }));
+  }
+  let x = left, line = 0;
+  for (const e of entries) {
+    x += e.gap || 0;
+    if (x + e.w > right && x > indent + 1) { line++; x = indent; }
+    e.x = x; e.line = line; x += e.w;
+  }
+  const lines = line + 1;
+  return { entries, lines, height: Math.max(G.ftrH, lines * FOOTER_LINE + 14) };
+}
 function drawFooter(svg, L, F) {
-  const g = el("g", { "pointer-events": "none" }, svg), y0 = L.H - G.ftrH, m = P.meta;
+  const g = el("g", { "pointer-events": "none" }, svg), y0 = L.H - L.ftrH, m = P.meta;
   el("line", { x1: 0, x2: L.W, y1: y0, y2: y0, stroke: BRAND.navy, "stroke-width": 1.8 }, g);
-  const boxW = 250, bx = L.W - boxW, cy = y0 + G.ftrH / 2;
-  el("text", { x: 14, y: cy + 4, fill: BRAND.ink, "font-size": 11, "font-weight": 700, "font-family": F.font }, g, "Legend:");
-  let x = 14 + textW("Legend:", 11, 700) + 14;
-  // milestone types, plus bar types that have their own colour (lane-coloured bars need no key)
-  const used = P.styles.filter(s => (s.behaviour !== "Stretch" || s.fill) && P.items.some(i => i.style === s.name));
-  for (const s of used) {
-    if (x > bx - 120) break;
+  const bx = L.W - FOOTER_BOX_W, plan = footerPlan(L, L.labels?.keyList || []);
+  // one line sits in the middle, as before; several lines stack from the top
+  const lineY = i => plan.lines === 1 ? y0 + L.ftrH / 2 : y0 + 7 + FOOTER_LINE / 2 + i * FOOTER_LINE;
+  for (const e of plan.entries) {
+    const cy = lineY(e.line), x = e.x;
+    if (e.kind === "heading") { el("text", { x, y: cy + 4, fill: BRAND.ink, "font-size": 11, "font-weight": 700, "font-family": F.font }, g, e.text); continue; }
+    if (e.kind === "key") {
+      keyBadge(g, x + 6, cy, e.k.n, F);
+      el("text", { x: x + 15, y: cy + 3.3, fill: BRAND.ink, "font-size": 9, "font-weight": 500, "font-family": F.font }, g, e.k.name);
+      continue;
+    }
+    const s = e.s;
     if (s.behaviour === "Move") drawMarker(g, s.shape, x + 6, cy, 13, s.fill, s.stroke);
-    else if (s.behaviour === "Curtain") { el("rect", { x, y: cy - 7, width: 22, height: 14, fill: s.fill, "fill-opacity": Math.max(.25, s.opacity ?? .18), stroke: s.stroke, "stroke-dasharray": s.shape === "solid" ? null : "3 2" }, g); }
+    else if (s.behaviour === "Curtain") { el("rect", { x, y: cy - 6, width: 22, height: 12, fill: s.fill, "fill-opacity": Math.max(.25, s.opacity ?? .18), stroke: s.stroke, "stroke-dasharray": s.shape === "solid" ? null : "3 2" }, g); }
     else drawBarShape(g, s.shape, x, cy - 6, 22, 12, s.fill || laneBar(BRAND.navy), s.stroke);
-    const tx = x + (s.behaviour === "Move" ? 18 : 28);
-    el("text", { x: tx, y: cy + 3.5, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, s.notes || s.name);
-    x = tx + textW(s.notes || s.name, 9.5, 500) + 22;
+    el("text", { x: x + e.icon, y: cy + 3.5, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, s.notes || s.name);
   }
   el("line", { x1: bx, x2: bx, y1: y0, y2: L.H, stroke: BRAND.navy, "stroke-width": 1.2 }, g);
   // title box: Author / Date Printed / Revision, one row each
-  const rows = [["Author:", m.author || ""], ["Date Printed:", fmtLong(todayISO())], ["Revision:", m.revision || ""]], rh = G.ftrH / rows.length;
+  const rows = [["Author:", m.author || ""], ["Date Printed:", fmtLong(todayISO())], ["Revision:", m.revision || ""]], rh = L.ftrH / rows.length;
   rows.forEach(([a, b], i) => {
     if (i) el("line", { x1: bx, x2: L.W, y1: y0 + rh * i, y2: y0 + rh * i, stroke: BRAND.navy, "stroke-width": .8 }, g);
     const yy = y0 + rh * i + rh / 2 + 3.4;
@@ -761,10 +791,10 @@ function vText(parent, text, cx, cy, maxW, size, weight, fill, F, laneId) {
 const LABEL_MODES = [["auto", "Auto"], ["inside", "Inside"], ["right", "Right"], ["above", "Above"], ["key", "Key no."], ["none", "Hidden"]];
 const ABOVE_FONT = 7.5;
 /* Decides where each bar's name goes. Auto: inside if it fits, else to the right if there's room before the
-   next thing on the row, else above the bar if the row gap allows, else a numbered key (inside a summary bar,
-   listed in its header) or, outside a summary, to the right anyway. */
+   next thing on the row, else above the bar if the row gap allows, else a numbered marker listed in the
+   key in the page footer. */
 function planLabels(L) {
-  const out = new Map(), keys = new Map();
+  const out = new Map(), keyList = [];   // numbered labels, one sequence for the whole sheet
   const cyOf = (ln, row) => ln.y + G.pad + row * G.rowH + G.rowH / 2;
   for (const ln of L.lanes) {
     const its = P.items.filter(i => i.lane === ln.l.id && !isCurtain(P, i.style));
@@ -791,16 +821,15 @@ function planLabels(L) {
       const fitsAbove = G.rowH - G.barH >= 8.5 && x1 + aw <= (parent ? L.x(parent.end) + L.ppd - 3 : L.W - 4)
         && free(aboveOcc, i.row, x1, x1 + aw) && free(msOcc, i.row - 1, x1, x1 + aw);
       let mode = i.labelMode || "auto";
-      if (mode === "auto") mode = fitsInside ? "inside" : fitsRight ? "right" : fitsAbove ? "above" : parent ? "key" : "right";
-      if (mode === "key" && !parent) mode = "right";   // a key needs a summary bar header to list it in
+      if (mode === "auto") mode = fitsInside ? "inside" : fitsRight ? "right" : fitsAbove ? "above" : "key";
       if (mode === "right") take(occ, i.row, x2, x2 + 5 + tw);
       if (mode === "above") take(aboveOcc, i.row, x1, x1 + aw);
       const plan = { mode, auto: !i.labelMode || i.labelMode === "auto" };
-      if (mode === "key") { const list = keys.get(parent.id) || keys.set(parent.id, []).get(parent.id); plan.n = list.length + 1; list.push({ n: plan.n, name: i.name }); }
+      if (mode === "key") { plan.n = keyList.length + 1; keyList.push({ n: plan.n, name: i.name }); }
       out.set(i.id, plan);
     }
   }
-  out.keys = keys;
+  out.keyList = keyList;
   return out;
 }
 function keyBadge(g, x, cy, n, F, stroke) {
@@ -817,29 +846,8 @@ function drawContainer(g, it, ln, L, opts, F) {
   const grp = el("g", { "data-id": it.id }, g);
   el("rect", { x: x1, y, width: w, height: h, rx: 4, fill, stroke, "stroke-width": 1.2, "pointer-events": "none" }, grp);
   el("line", { x1: x1 + 1, x2: x2 - 1, y1: y + G.rowH - 1, y2: y + G.rowH - 1, stroke, "stroke-width": .6, "stroke-opacity": .35, "pointer-events": "none" }, grp);
-  // header: name, then the numbered key; key text shrinks, then names are shortened, to fit the width
-  let tx = x1 + 6;
-  el("text", { x: tx, y: hy, fill: BRAND.navy, "font-size": 8.5, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, it.name);
-  tx += textW(it.name, 8.5, 700) + 10;
-  const keys = (L.labels?.keys?.get(it.id)) || [];
-  if (keys.length) {
-    const room = x2 - 6 - tx;
-    let size = 8, names = keys.map(k => k.name);
-    const need = s => keys.reduce((n, k, i) => n + 14 + textW(names[i], s, 500) + 8, 0);
-    while (size > 6.5 && need(size) > room) size -= .5;
-    if (need(size) > room) {   // shorten the longest names until it fits
-      for (let guard = 0; guard < 400 && need(size) > room; guard++) {
-        const i = names.reduce((b, n, j) => n.length > names[b].length ? j : b, 0);
-        if (names[i].length <= 4) break;
-        names[i] = names[i].replace(/…$/, "").slice(0, -1).trimEnd() + "…";
-      }
-    }
-    keys.forEach((k, i) => {
-      keyBadge(grp, tx + 5.6, hy - 2.6, k.n, F, stroke);
-      el("text", { x: tx + 14, y: hy, fill: BRAND.navy, "font-size": size, "font-weight": 500, "font-family": F.font, "pointer-events": "none" }, grp, names[i]);
-      tx += 14 + textW(names[i], size, 500) + 8;
-    });
-  }
+  // title in the header row (numbered labels are listed in the page footer's key)
+  el("text", { x: x1 + 6, y: hy, fill: BRAND.navy, "font-size": 8.5, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, it.name);
   if (selected) el("rect", { x: x1 - 2, y: y - 2, width: w + 4, height: h + 4, rx: 5, fill: "none", stroke: BRAND.orange, "stroke-width": 1.8, "pointer-events": "none" }, grp);
   if (!opts.print) {   // grab the header to move it with its bars; edges change dates; bottom edge changes height
     el("rect", { x: x1, y, width: w, height: G.rowH - 1, fill: "transparent", "data-id": it.id, "data-part": "body", style: "cursor:grab" }, grp);
@@ -876,7 +884,8 @@ function drawItem(g, it, ln, L, opts, F) {
     drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke);
     const tw = textW(it.name, 9, 500), plan = L.labels?.get(it.id) || { mode: tw + 10 < w ? "inside" : "right" };
     const text = { fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font, "pointer-events": "none" };
-    if (plan.mode === "inside") el("text", { x: x1 + w / 2, y: cy + 3.3, "text-anchor": "middle", ...text }, grp, it.name);
+    const leftAlign = (it.labelAlign || P.page.barAlign || "centre") === "left";
+    if (plan.mode === "inside") el("text", leftAlign ? { x: x1 + 5, y: cy + 3.3, ...text } : { x: x1 + w / 2, y: cy + 3.3, "text-anchor": "middle", ...text }, grp, it.name);
     else if (plan.mode === "right") el("text", { x: x2 + 5, y: cy + 3.3, ...text }, grp, it.name);
     else if (plan.mode === "above") el("text", { x: x1 + 1, y: y - 2.2, ...text, "font-size": ABOVE_FONT, "font-weight": 600 }, grp, it.name);
     else if (plan.mode === "key") keyBadge(grp, x1 + Math.min(8, w / 2), cy, plan.n, F, stroke);
@@ -1259,6 +1268,7 @@ function renderSide() {
     <div class="f"><label>Row spacing</label><div class="seg" role="group" aria-label="Row spacing">${SPACING.map(([k, n, v]) => `<button type="button" data-space="${v}" aria-pressed="${+P.page.rowH === v}">${n}</button>`).join("")}</div></div>
     <div class="f"><label for="pgRow">Row height: <span id="pgRowVal">${P.page.rowH}</span> px</label><input id="pgRow" type="range" min="14" max="40" step="1" value="${P.page.rowH}" style="accent-color:var(--accent-2)"></div>
     <label class="check"><input type="checkbox" id="pgFill" ${P.page.fill !== false ? "checked" : ""}> Spread rows to fill the page</label>
+    <div class="f"><label>Text inside bars</label><div class="seg" role="group" aria-label="Text inside bars">${[["centre", "Centred"], ["left", "Left-aligned"]].map(([v, n]) => `<button type="button" data-baralign="${v}" aria-pressed="${(P.page.barAlign || "centre") === v}">${n}</button>`).join("")}</div></div>
     <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
     ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%. Try Compact spacing or Tidy all lanes.</p>` : ""}
     <h2>Timeline</h2>
@@ -1292,6 +1302,7 @@ function renderSide() {
   $("pgRow").oninput = e => { $("pgRowVal").textContent = e.target.value; P.page.rowH = +e.target.value; render(); };
   $("pgRow").onchange = e => { const v = +e.target.value; P.page.rowH = origRow; commit(p => p.page.rowH = v, true); };
   $("pgFill").onchange = e => commit(p => p.page.fill = e.target.checked, true);
+  side.querySelectorAll("[data-baralign]").forEach(b => b.onclick = () => commit(p => p.page.barAlign = b.dataset.baralign, true));
   $("pgTidy").onclick = () => {
     const before = P.lanes.reduce((n, l) => n + laneRows(l, false), 0);
     commit(p => p.lanes.forEach(l => packLane(p, l.id)), true);
@@ -1315,16 +1326,19 @@ function itemExtras(cur) {
       <div class="f"><label for="cSpan">Height (rows, including the title row)</label><input id="cSpan" type="number" min="2" max="20" value="${spanOf(cur)}"></div>
       <label class="check"><input type="checkbox" id="cFit" ${cur.fitChildren ? "checked" : ""}> Dates follow the bars inside</label>
       <div class="actions"><button class="btn" id="cFitNow" ${kids.length ? "" : "disabled"}>Fit to bars inside now</button></div>
-      <p class="note">${kids.length ? `${kids.length} bar${kids.length > 1 ? "s" : ""}/milestone${kids.length > 1 ? "s" : ""} inside. They move with it when you drag its title.` : "Drag bars into the rows below its title to put them inside."} Labels that don't fit become numbers listed in the title row.</p>
+      <p class="note">${kids.length ? `${kids.length} bar${kids.length > 1 ? "s" : ""}/milestone${kids.length > 1 ? "s" : ""} inside. They move with it when you drag its title.` : "Drag bars into the rows below its title to put them inside."} Labels that don't fit become numbers, listed in the key at the bottom of the page.</p>
     </div>`;
   }
   const plan = LAY?.labels?.get(cur.id), mode = cur.labelMode || "auto";
+  const align = cur.labelAlign || "";
   return `<div class="f"><label>Label</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-label="${v}" aria-pressed="${mode === v}">${n}</button>`).join("")}</div></div>
-    ${mode === "auto" && plan ? `<p class="note">Auto puts it ${{ inside: "inside the bar", right: "to the right", above: "above the bar", key: `in the summary's key as no. ${plan.n}` }[plan.mode] || "beside the bar"}.</p>` : ""}`;
+    ${mode === "auto" && plan ? `<p class="note">Auto puts it ${{ inside: "inside the bar", right: "to the right", above: "above the bar", key: `as no. ${plan.n}, listed in the key at the bottom of the page` }[plan.mode] || "beside the bar"}.</p>` : ""}
+    <div class="f"><label>Text inside the bar</label><div class="seg" role="group" aria-label="Text alignment inside the bar">${[["", `Page default (${P.page.barAlign === "left" ? "left" : "centred"})`], ["centre", "Centred"], ["left", "Left"]].map(([v, n]) => `<button type="button" data-align="${v}" aria-pressed="${align === v}">${n}</button>`).join("")}</div></div>`;
 }
 function bindItemExtras(cur) {
   const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
   $("side").querySelectorAll("[data-label]").forEach(b => b.onclick = () => upd(x => { if (b.dataset.label === "auto") delete x.labelMode; else x.labelMode = b.dataset.label; }));
+  $("side").querySelectorAll("[data-align]").forEach(b => b.onclick = () => upd(x => { if (!b.dataset.align) delete x.labelAlign; else x.labelAlign = b.dataset.align; }));
   if ($("cSpan")) $("cSpan").onchange = e => upd(x => x.span = Math.max(2, Math.min(20, +e.target.value || 3)));
   if ($("cFit")) $("cFit").onchange = e => upd(x => { x.fitChildren = e.target.checked; });
   if ($("cFitNow")) $("cFitNow").onclick = () => upd(x => {
