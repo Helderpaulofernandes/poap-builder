@@ -73,7 +73,20 @@ button, input, select { font: inherit; color: inherit; }
 .zoom { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .zoom input { width: 110px; accent-color: var(--accent-2); }
 .spacer { flex: 1; }
-.saved { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+/* save status: grey = not saved, amber = changes waiting, blue = saving, green = saved */
+.status { display: flex; align-items: center; gap: 7px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 99px; font-size: 12px; font-weight: 600; color: var(--muted); max-width: 100%; min-width: 0; }
+.status span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: #9AA6B5; flex: none; }
+.status[data-state="saved"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.status[data-state="saved"] i { background: var(--ok); }
+.status[data-state="pending"] { color: var(--warn); }
+.status[data-state="pending"] i { background: #E0A100; }
+.status[data-state="saving"] i { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+.status[data-state="none"] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+.status[data-state="none"] i { background: var(--danger); }
+.status .btn { padding: 2px 10px; border-radius: 99px; font-size: 11.5px; }
+.status:not(:has(.btn:not([hidden]))) { padding-right: 10px; }
+@keyframes pulse { 50% { opacity: .3; } }
 
 /* ---------- main ---------- */
 main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 300px; }
@@ -144,6 +157,7 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
 
 <div class="bar">
   <div class="brand"><span class="logo" id="brandLogoBox"><img id="brandLogo" alt="Martinus"></span><b>PoaP Builder</b><span id="docName"></span></div>
+  <div class="status" id="saveStatus" data-state="none" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="saved"></span><button class="btn" id="bSaveNow" hidden>Save now</button></div>
   <div class="grp">
     <button class="btn" id="bLane" title="Add a swimlane">+ Lane</button>
     <button class="btn" id="bBar" title="Add a bar to the selected lane">+ Bar</button>
@@ -166,7 +180,6 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <button class="btn primary" id="bPdf">Export PDF</button>
     <button class="btn" id="bIssue" title="Save this revision's PDF and Excel to the Issued folder in the library" hidden>Issue</button>
   </div>
-  <span class="saved" id="saved"></span>
   <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls" hidden>
   <input type="file" id="fImport" accept=".xlsx,.xlsm,.xls" hidden>
   <input type="file" id="fLogo" accept="image/png,image/jpeg" hidden>
@@ -192,7 +205,7 @@ const ROOT = (HOST && HOST.root) || document.body;
 const MARTINUS_LOGO = (HOST && HOST.logo) || window.POAP_BRAND_LOGO || "";   // from brand-logo.js
 const LOGO_RATIO = 260 / 35;
 const BRAND = { navy: "#163E6B", orange: "#F47920", ink: "#14263D", grid: "#C9D2DD" };
-const G = { headW: 46, hdrH: 74, topH: 40, botH: 40, ftrH: 36, rowH: 26, pad: 6, barH: 16, ms: 12 };
+const G = { headW: 46, hdrH: 74, topH: 40, botH: 40, ftrH: 48, rowH: 26, pad: 6, barH: 16, ms: 12 };
 const LANE_PRESETS = [
   ["Martinus orange", "#F47920"], ["Martinus navy", "#163E6B"], ["Steel blue", "#4F7CAC"], ["Teal", "#128A84"],
   ["Green", "#5E9A35"], ["Purple", "#6E4E9E"], ["Red", "#C8102E"], ["Grey", "#6F7C8C"],
@@ -328,25 +341,35 @@ function commit(mutator, keepSel) {
   changed();
 }
 function changed() {
+  touched = true;
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   showStatus();
   render(); renderSide();
   scheduleAutoSave();
 }
-/* With a library host, a programme that has been saved once is saved again a few seconds
-   after the last change. A new file name (title block change) still needs a manual Save. */
+/* Once a programme has been saved (to the SharePoint library, or to a file on this computer),
+   it is saved again a few seconds after the last change. A title block change that renames
+   the file waits for a manual Save. */
 let autoTimer = null, saving = false;
+let touched = false;   // changes since this programme was started or opened (matters while DOC is null)
+const isDirty = () => !!DOC && JSON.stringify(P) !== DOC.base;
 function scheduleAutoSave() {
-  if (!HOST || !DOC) return;
+  if (!DOC || DOC.kind === "download") return;   // a download can't be updated in place
   clearTimeout(autoTimer);
   autoTimer = setTimeout(async () => {
-    if (!DOC || JSON.stringify(P) === DOC.base || ROOT.querySelector(".modal")) return;
+    if (!isDirty() || ROOT.querySelector(".modal")) return;
     if (DOC.name !== fileBase() + ".poap.json") return showStatus();   // waits for a manual Save
     if (saving) return scheduleAutoSave();
-    saving = true;
-    try { await librarySave({ auto: true }); } finally { saving = false; }
-    if (DOC && JSON.stringify(P) !== DOC.base) scheduleAutoSave();       // edited while saving
-  }, 4000);
+    await saveDoc({ auto: true });
+    if (isDirty()) scheduleAutoSave();                                   // edited while saving
+  }, 3000);
+}
+/* the one save entry point: library with a host, otherwise a file on this computer */
+async function saveDoc(opts = {}) {
+  if (saving) return false;
+  saving = true; showStatus();
+  try { return await (HOST ? librarySave(opts) : fileSave(opts)); }
+  finally { saving = false; showStatus(); }
 }
 function undo() { if (!past.length) return; future.push(JSON.stringify(P)); P = JSON.parse(past.pop()); changed(); }
 function redo() { if (!future.length) return; past.push(JSON.stringify(P)); P = JSON.parse(future.pop()); changed(); }
@@ -461,11 +484,12 @@ function drawHeader(svg, L, F, opts) {
     el("text", { x: clientW / 2, y: H / 2 + 4, "text-anchor": "middle", fill: "#8794A6", "font-size": 10, "font-weight": 600, "font-family": F.font }, g, "CLIENT LOGO");
   }
   el("line", { x1: clientW, x2: clientW, y1: 8, y2: H - 8, stroke: "#C9D2DD", "stroke-width": 1 }, g);
-  if (MARTINUS_LOGO) {
-    const logoW = Math.max(150, Math.min(330, L.W - clientW - 560)), logoH = logoW / LOGO_RATIO;
+  const tx = clientW + 14;
+  if (MARTINUS_LOGO) {   // as large as fits beside the title text, never over it
+    const titleW = Math.max(textW((m.program || "").toUpperCase(), 15, 700) * 1.03, textW(`${m.number || ""} ${m.title || ""}`, 14, 700) + (m.subtitle ? textW(`  –  ${m.subtitle}`, 11, 600) : 0));
+    const logoW = Math.max(70, Math.min(330, L.W - (tx + titleW) - 40)), logoH = logoW / LOGO_RATIO;
     img(g, MARTINUS_LOGO, L.W - logoW - 14, (H - logoH) / 2, logoW, logoH, "xMaxYMid");
   }
-  const tx = clientW + 14;
   el("text", { x: tx, y: 32, fill: BRAND.navy, "font-size": 15, "font-weight": 700, "font-family": F.font, "letter-spacing": ".02em" }, g, (m.program || "").toUpperCase());
   const t2 = el("text", { x: tx, y: 55, fill: BRAND.orange, "font-size": 14, "font-weight": 700, "font-family": F.font }, g, `${m.number || ""} ${m.title || ""}`.trim());
   if (m.subtitle) el("tspan", { "font-size": 11, "font-weight": 600 }, t2, `  –  ${m.subtitle}`);
@@ -489,14 +513,14 @@ function drawFooter(svg, L, F) {
     x = tx + textW(s.notes || s.name, 9.5, 500) + 22;
   }
   el("line", { x1: bx, x2: bx, y1: y0, y2: L.H, stroke: BRAND.navy, "stroke-width": 1.2 }, g);
-  el("line", { x1: bx, x2: L.W, y1: cy, y2: cy, stroke: BRAND.navy, "stroke-width": .8 }, g);
-  const row = (i, a, b) => {
-    const yy = y0 + G.ftrH / 4 * (i * 2 + 1) + 3.5;
+  // title box: Author / Date Printed / Revision, one row each
+  const rows = [["Author:", m.author || ""], ["Date Printed:", fmtLong(todayISO())], ["Revision:", m.revision || ""]], rh = G.ftrH / rows.length;
+  rows.forEach(([a, b], i) => {
+    if (i) el("line", { x1: bx, x2: L.W, y1: y0 + rh * i, y2: y0 + rh * i, stroke: BRAND.navy, "stroke-width": .8 }, g);
+    const yy = y0 + rh * i + rh / 2 + 3.4;
     el("text", { x: bx + 6, y: yy, fill: BRAND.ink, "font-size": 9.5, "font-weight": 700, "font-family": F.font }, g, a);
     el("text", { x: bx + 96, y: yy, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, b);
-  };
-  row(0, "Author:", m.author || "");
-  row(1, "Date Printed:", fmtLong(todayISO()) + (m.revision ? `   Rev ${m.revision}` : ""));
+  });
 }
 
 function eachMonth(L, fn) {
@@ -717,7 +741,7 @@ document.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); return; }
-  if ((e.ctrlKey || e.metaKey) && k === "s" && HOST) { e.preventDefault(); librarySave(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "s") { e.preventDefault(); saveDoc(); return; }
   if (e.key === "Escape") { sel = null; render(); renderSide(); return; }
   if (!sel || sel.type !== "item") return;
   const it = P.items.find(i => i.id === sel.id); if (!it) return;
@@ -964,31 +988,37 @@ $("bFit").onclick = () => {
   const s = new Date(a*DAY), e = new Date(b*DAY);
   commit(p => { p.timeline.start = fromDays(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1)/DAY); p.timeline.end = fromDays(Date.UTC(e.getUTCFullYear(), e.getUTCMonth()+2, 0)/DAY); }, true);
 };
-$("bNew").onclick = () => showModal(`<header><h3>Start a new programme?</h3><p>The current programme stays in its saved file. Unsaved changes in this browser will be replaced.</p></header>
+$("bNew").onclick = () => guardUnsaved(() => showModal(`<header><h3>Start a new programme</h3><p>You'll be asked where to save it, so every change is kept from the start.</p></header>
   <footer><button class="btn primary" data-act="blank">Blank programme</button><button class="btn" data-act="sample">Load the example</button><span class="spacer"></span><button class="btn" data-act="close">Cancel</button></footer>`,
-  { blank: () => { DOC = null; commit(p => Object.assign(p, blankProject())); sel = null; renderSide(); }, sample: () => { DOC = null; commit(p => Object.assign(p, seedProject())); sel = null; renderSide(); } });
+  { blank: () => startNew(blankProject()), sample: () => startNew(seedProject()) }));
 const fileBase = () => `${P.meta.number} ${P.meta.title} PoaP Rev${P.meta.revision}`.replace(/[\\/:*?"<>|]+/g, "-").trim();
-$("bSave").onclick = () => {
-  if (HOST) return librarySave();
-  download(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" }), fileBase() + ".poap.json"); toast("Saved " + fileBase() + ".poap.json");
-};
-$("bOpen").onclick = () => HOST ? libraryOpen() : $("fOpen").click();
+$("bSave").onclick = () => saveDoc();
+$("bSaveNow").onclick = () => saveDoc();
+$("bOpen").onclick = () => guardUnsaved(() => HOST ? libraryOpen() : fileOpen());
 $("fOpen").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  try {
-    if (/\.json$/i.test(f.name)) {
-      const p = JSON.parse(await f.text()); if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project");
-      commit(x => Object.assign(x, p)); sel = null; renderSide(); toast("Opened " + f.name);
-    } else {
-      const parsed = parseWorkbook(await f.arrayBuffer());
-      const base = blankProject(); Object.assign(base.meta, parsed.meta);
-      base.styles.push(...newTypesFrom(parsed, base.styles));
-      const p = projectFromRows(parsed.rows, parsed.lanes, base);
-      if (parsed.timeline) p.timeline = parsed.timeline;
-      commit(x => Object.assign(x, p)); sel = null; renderSide(); if (!parsed.timeline) $("bFit").click(); toast(`Opened ${parsed.rows.length} rows from ${f.name}`);
-    }
-  } catch (err) { toast("Couldn't open " + f.name + ": " + err.message, 5000); }
+  try { await openFromFile(f, null); } catch (err) { toast("Couldn't open " + f.name + ": " + err.message, 5000); }
 };
+/* f: a File; handle: its FileSystemFileHandle when the browser gave us one (auto-save goes back to it) */
+async function openFromFile(f, handle) {
+  if (/\.json$/i.test(f.name)) {
+    const text = await f.text(), p = JSON.parse(text);
+    if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project");
+    loadDoc(p, handle ? { kind: "file", handle, name: f.name, base: JSON.stringify(p), lastMod: f.lastModified, savedAt: new Date(f.lastModified).toISOString() } : null);
+    toast("Opened " + f.name);
+    if (!handle) promptFirstSave("This programme isn't connected to a saved file yet.");
+  } else {
+    const parsed = parseWorkbook(await f.arrayBuffer());
+    const base = blankProject(); Object.assign(base.meta, parsed.meta);
+    base.styles.push(...newTypesFrom(parsed, base.styles));
+    const p = projectFromRows(parsed.rows, parsed.lanes, base);
+    if (parsed.timeline) p.timeline = parsed.timeline;
+    loadDoc(p, null); if (!parsed.timeline) $("bFit").click();
+    toast(`Opened ${parsed.rows.length} rows from ${f.name}`);
+    promptFirstSave("This programme was built from a workbook and hasn't been saved yet.");
+  }
+}
+function startNew(project) { loadDoc(project, null); promptFirstSave("Your new programme hasn't been saved yet."); }
 $("bImport").onclick = () => $("fImport").click();
 $("fImport").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -1250,24 +1280,180 @@ async function buildPdfBlob() {
 }
 
 /* =====================================================================
-   Library storage (only with a host, e.g. the SharePoint web part)
-   HOST.list() -> [{ name, path, modified, by }]   HOST.read(path) -> { text, etag, by, modified }
-   HOST.write(path, text, etag|null) -> { etag } or { conflict: true }   HOST.writeFile(folder, name, blob) -> { url }
+   Saving. DOC is where this programme is saved, or null when it isn't saved anywhere yet:
+     { kind: "library", path, name, etag, base, savedAt }      SharePoint library (with a host)
+     { kind: "file", handle, name, lastMod, base, savedAt }    a file on this computer (Edge/Chrome)
+     { kind: "download", name, base, savedAt }                 browsers that can only download
+   base is the programme as last saved, so we can tell unsaved changes and merge others' edits.
    ===================================================================== */
 const timeAgo = iso => { const m = Math.round((Date.now() - new Date(iso)) / 6e4); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(iso).toLocaleDateString("en-AU"); };
+const clock = iso => new Date(iso).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" });
+const canPickFiles = !HOST && "showSaveFilePicker" in window;
 function showStatus() {
-  const s = $("saved"); if (!s) return;
-  if (!HOST) { s.textContent = "Draft kept in this browser"; return; }
-  const dirty = DOC && JSON.stringify(P) !== DOC.base, name = DOC && DOC.name.replace(/\.poap\.json$/i, "");
+  const box = $("saveStatus"), s = $("saved"), btn = $("bSaveNow"); if (!box) return;
+  const name = DOC && DOC.name.replace(/\.poap\.json$/i, ""), dirty = isDirty();
   const renamed = DOC && DOC.name !== fileBase() + ".poap.json";
-  s.textContent = !DOC ? "Not saved to the library yet · press Save once to start auto-saving"
-    : renamed && dirty ? `${name} · title block changed, press Save to choose the file`
-    : dirty ? `${name} · saving shortly…` : `${name} · saved${DOC.savedAt ? " " + new Date(DOC.savedAt).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) : ""}`;
+  let state, text, button = false;
+  if (saving) { state = "saving"; text = "Saving…"; }
+  else if (!DOC) { state = "none"; text = HOST ? "Not saved to the library" : "Not saved"; button = true; }
+  else if (dirty && renamed) { state = "pending"; text = "Title block changed · save to choose the file"; button = true; }
+  else if (dirty && DOC.kind === "download") { state = "pending"; text = `Changes since ${clock(DOC.savedAt)} download`; button = true; }
+  else if (dirty) { state = "pending"; text = "Unsaved changes · saving in a few seconds"; }
+  else { state = "saved"; text = `All changes saved ${clock(DOC.savedAt)}`; }
+  box.dataset.state = state; s.textContent = text; btn.hidden = !button;
+  box.title = DOC ? `Saved to ${HOST ? DOC.path : DOC.kind === "file" ? DOC.name + " on this computer" : "your downloads as " + DOC.name}${DOC.kind === "download" ? "" : ". Changes save automatically."}` : "Save once and every change after that is saved automatically.";
 }
 function loadDoc(project, doc) {
-  P = project; DOC = doc; past = []; future = []; sel = null;
+  P = project; DOC = doc; past = []; future = []; sel = null; touched = false;
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+  rememberFile();
   render(); renderSide(); showStatus();
+}
+
+/* Before New or Open replaces the current programme: make sure nothing is lost. */
+async function guardUnsaved(next) {
+  while (saving) await new Promise(r => setTimeout(r, 100));
+  if (DOC && DOC.kind !== "download" && isDirty()) { if (await saveDoc()) next(); return; }
+  if ((!DOC && touched) || (DOC?.kind === "download" && isDirty())) {
+    return showModal(`<header><h3>Save this programme first?</h3><p>${DOC ? "Your latest changes haven't been downloaded." : "It hasn't been saved anywhere yet."} If you continue without saving, those changes are lost.</p></header>
+      <footer><button class="btn danger" data-act="discard">Don't save</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save">Save</button></footer>`,
+      { discard: () => next(), save: () => { saveDoc().then(ok => ok && next()); } });
+  }
+  next();
+}
+/* Ask for the first save straight away, so auto-save protects the work from the start. */
+function promptFirstSave(why) {
+  const dest = HOST ? `the “${esc(HOST.libraryTitle)}” library` : canPickFiles ? "a file on your computer, for example a OneDrive or SharePoint folder" : "your downloads";
+  showModal(`<header><h3>Save before you start</h3><p>${esc(why)} Save it to ${dest} now; ${HOST || canPickFiles ? "after that every change is saved automatically" : "this browser can't save automatically, so download again after changes"}. Or open a programme you saved before.</p></header>
+    <footer><button class="btn" data-act="open">Open a saved programme…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Later</button><button class="btn primary" data-act="save">Save now</button></footer>`,
+    { save: () => { saveDoc(); }, open: () => { $("bOpen").click(); } });
+}
+async function flushSave() {
+  while (saving) await new Promise(r => setTimeout(r, 100));
+  return DOC && !isDirty() ? true : saveDoc();
+}
+window.addEventListener("beforeunload", e => {
+  if ((DOC && DOC.kind !== "download" && (isDirty() || saving)) || (HOST && !DOC && touched)) { e.preventDefault(); e.returnValue = ""; }
+});
+
+/* Someone else saved since we last did: offer to combine their version with ours. */
+function conflictPrompt(theirs, { loadTheirs, saveMerged }) {
+  const m = merge3(JSON.parse(DOC.base), P, JSON.parse(theirs.text));
+  showModal(`<header><h3>${esc(theirs.by || "Someone")} saved this programme ${esc(timeAgo(theirs.modified))}</h3>
+      <p>Your changes and theirs can be combined. ${m.both ? `<b>${m.both}</b> item${m.both > 1 ? "s were" : " was"} changed by both of you; your version is kept for ${m.both > 1 ? "those" : "it"}.` : "None of the same items were changed by both of you."}</p></header>
+    <div class="body"><div class="chips"><span class="chip chg">${m.mine} of your changes</span><span class="chip new">${m.theirs} of theirs</span>${m.both ? `<span class="chip miss">${m.both} changed by both</span>` : ""}</div></div>
+    <footer><button class="btn" data-act="theirs">Discard mine, load theirs</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="merge">Save combined version</button></footer>`, {
+    theirs: () => { loadTheirs(JSON.parse(theirs.text)); toast("Loaded the latest version."); },
+    merge: () => { past.push(JSON.stringify(P)); future = []; P = m.project; saveMerged(JSON.stringify(JSON.parse(theirs.text))); render(); renderSide(); saveDoc(); },
+  });
+}
+
+/* ---------- files on this computer (no host) ---------- */
+const FILE_TYPES = [{ description: "PoaP Builder programme", accept: { "application/json": [".json"] } }];
+async function fileOpen() {
+  if (!("showOpenFilePicker" in window)) return $("fOpen").click();
+  let handle;
+  try { [handle] = await window.showOpenFilePicker({ types: [...FILE_TYPES, { description: "Excel workbook", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx", ".xlsm"] } }] }); }
+  catch (e) { return; }   // cancelled
+  try { const f = await handle.getFile(); await openFromFile(f, /\.json$/i.test(f.name) ? handle : null); }
+  catch (err) { toast("Couldn't open the file: " + err.message, 5000); }
+}
+async function fileSave(opts = {}) {
+  const wanted = fileBase() + ".poap.json";
+  if (DOC && DOC.kind === "file" && DOC.name !== wanted && !opts.keepName) {
+    return new Promise(done => showModal(`<header><h3>Save as a new file?</h3><p>The title block now reads “${esc(wanted.replace(/\.poap\.json$/i, ""))}” but this programme is saved as “${esc(DOC.name.replace(/\.poap\.json$/i, ""))}”. A new file keeps the old one as it was, which suits a new revision.</p></header>
+      <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn" data-act="keep">Keep the old file</button><button class="btn primary" data-act="new">Save as new file</button></footer>`, {
+      keep: () => { fileSave({ keepName: true }).then(done); },
+      new: () => { fileSave({ newFile: true }).then(done); },
+      close: () => done(false),
+    }));
+  }
+  const text = JSON.stringify(P, null, 1), snapshot = JSON.stringify(P);
+  if (!canPickFiles) {   // Firefox / Safari: download a copy each time
+    download(new Blob([text], { type: "application/json" }), wanted);
+    DOC = { kind: "download", name: wanted, base: snapshot, savedAt: new Date().toISOString() };
+    toast("Downloaded " + wanted); return true;
+  }
+  try {
+    let handle = DOC?.kind === "file" && !opts.newFile ? DOC.handle : null;
+    if (!handle) {
+      try { handle = await window.showSaveFilePicker({ suggestedName: wanted, types: FILE_TYPES }); }
+      catch (e) { if (e.name === "AbortError") return false; throw e; }
+    } else {
+      // someone (or OneDrive sync) changed the file since our last save?
+      const f = await handle.getFile();
+      if (f.lastModified > DOC.lastMod + 1500) {
+        const theirs = { text: await f.text(), modified: new Date(f.lastModified).toISOString(), by: "Someone" };
+        conflictPrompt(theirs, {
+          loadTheirs: t => loadDoc(t, { ...DOC, base: JSON.stringify(t), lastMod: f.lastModified, savedAt: theirs.modified }),
+          saveMerged: base => { DOC = { ...DOC, base, lastMod: f.lastModified }; },
+        });
+        return false;
+      }
+    }
+    if ((await handle.queryPermission?.({ mode: "readwrite" })) === "prompt" && (await handle.requestPermission({ mode: "readwrite" })) !== "granted") throw new Error("permission to save to the file was refused");
+    const w = await handle.createWritable(); await w.write(text); await w.close();
+    const f = await handle.getFile();
+    DOC = { kind: "file", handle, name: f.name, lastMod: f.lastModified, base: snapshot, savedAt: new Date().toISOString() };
+    rememberFile();
+    if (!opts.auto) toast("Saved " + f.name + ". Changes now save automatically.");
+    return true;
+  } catch (err) { toast((opts.auto ? "Auto-save failed: " : "Couldn't save: ") + err.message + ". Your changes are kept in this browser; press Save to retry.", 6000); return false; }
+}
+
+/* Remember the file between visits (the browser keeps the handle; it asks again for permission). */
+const idb = () => new Promise((res, rej) => { const r = indexedDB.open("poap-builder", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function idbSet(key, value) { try { const db = await idb(); const tx = db.transaction("kv", "readwrite"); value == null ? tx.objectStore("kv").delete(key) : tx.objectStore("kv").put(value, key); } catch (e) {} }
+async function idbGet(key) { try { const db = await idb(); return await new Promise(res => { const r = db.transaction("kv").objectStore("kv").get(key); r.onsuccess = () => res(r.result); r.onerror = () => res(null); }); } catch (e) { return null; } }
+function rememberFile() {
+  if (HOST) {   // the library file: path and the version we last saved
+    try { DOC?.kind === "library" ? localStorage.setItem(STORE + ":doc", JSON.stringify(DOC)) : localStorage.removeItem(STORE + ":doc"); } catch (e) {}
+    return;
+  }
+  if (!("indexedDB" in window)) return;
+  idbSet("doc", DOC?.kind === "file" ? { handle: DOC.handle, name: DOC.name, lastMod: DOC.lastMod, base: DOC.base, savedAt: DOC.savedAt } : null);
+}
+/* SharePoint: after a reload, carry on with the programme from the library */
+async function offerLibraryReconnect() {
+  let last = null; try { last = JSON.parse(localStorage.getItem(STORE + ":doc")); } catch (e) {}
+  if (!last) return promptFirstSave(touched || P.items.length ? "This programme isn't saved to the library yet." : "Nothing is saved yet.");
+  const unsaved = JSON.stringify(P) !== last.base;
+  showModal(`<header><h3>Continue with ${esc(last.name.replace(/\.poap\.json$/i, ""))}?</h3><p>From the “${esc(HOST.libraryTitle)}” library${unsaved ? ". This browser also has changes that weren't saved yet; they'll be saved now" : ""}.</p></header>
+    <footer><button class="btn" data-act="open">Open another…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Not now</button><button class="btn primary" data-act="go">Continue</button></footer>`, {
+    open: () => { $("bOpen").click(); },
+    go: async () => {
+      try {
+        const r = await HOST.read(last.path);
+        DOC = { ...last };
+        if (r.etag !== last.etag && !unsaved) { const t = JSON.parse(r.text); loadDoc(t, { ...last, etag: r.etag, base: JSON.stringify(t), savedAt: r.modified }); }
+        else { showStatus(); if (unsaved || r.etag !== last.etag) saveDoc(); }   // a changed etag ends in the merge prompt
+        toast("Continuing with " + last.name);
+      } catch (err) { toast("Couldn't load it from the library: " + err.message, 6000); try { localStorage.removeItem(STORE + ":doc"); } catch (e) {} }
+    },
+  });
+}
+async function offerReconnect() {
+  if (HOST) return offerLibraryReconnect();
+  const last = canPickFiles ? await idbGet("doc") : null;
+  if (!last || !last.handle) {
+    if (touched || P.items.length) promptFirstSave("This programme isn't saved to a file yet.");
+    return;
+  }
+  const unsaved = JSON.stringify(P) !== last.base;
+  showModal(`<header><h3>Continue with ${esc(last.name.replace(/\.poap\.json$/i, ""))}?</h3><p>Last saved ${esc(timeAgo(last.savedAt))}${unsaved ? ". This browser also has newer changes that weren't saved to the file; they'll be saved now" : ""}. Continuing reconnects the file so changes keep saving automatically.</p></header>
+    <footer><button class="btn" data-act="close">Not now</button><span class="spacer" style="flex:1"></span><button class="btn primary" data-act="go">Continue</button></footer>`, {
+    go: async () => {
+      try {
+        if ((await last.handle.requestPermission({ mode: "readwrite" })) !== "granted") return toast("Permission to the file wasn't given, so changes won't save to it.", 5000);
+        DOC = { kind: "file", handle: last.handle, name: last.name, lastMod: last.lastMod, base: last.base, savedAt: last.savedAt };
+        const f = await last.handle.getFile();
+        if (f.lastModified > last.lastMod + 1500 && !unsaved) {          // changed elsewhere, nothing new here: just load it
+          const t = JSON.parse(await f.text()); loadDoc(t, { ...DOC, base: JSON.stringify(t), lastMod: f.lastModified, savedAt: new Date(f.lastModified).toISOString() });
+        } else { showStatus(); if (unsaved || f.lastModified > last.lastMod + 1500) saveDoc(); }
+        toast("Connected to " + last.name);
+      } catch (err) { toast("Couldn't reconnect: " + err.message + ". Use Open to pick the file.", 6000); idbSet("doc", null); }
+    },
+  });
 }
 
 async function libraryOpen() {
@@ -1289,7 +1475,7 @@ async function libraryOpen() {
     try {
       const r = await HOST.read(f.path), p = JSON.parse(r.text);
       if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project");
-      loadDoc(p, { path: f.path, name: f.name, etag: r.etag, base: JSON.stringify(p) });
+      loadDoc(p, { kind: "library", path: f.path, name: f.name, etag: r.etag, base: JSON.stringify(p), savedAt: r.modified || f.modified });
       toast("Opened " + f.name);
     } catch (err) { toast("Couldn't open " + f.name + ": " + err.message, 6000); }
   });
@@ -1314,10 +1500,11 @@ async function librarySave(opts = {}) {
     if (r.exists) {   // a new programme whose name is already taken in the library
       return showModal(`<header><h3>“${esc(name)}” already exists</h3><p>Another programme in the library has this name. Replace it, or change the project number, title or revision first.</p></header>
         <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn danger" data-act="replace">Replace it</button></footer>`,
-        { replace: () => { librarySave({ replace: true }); } });
+        { replace: () => { saveDoc({ replace: true }); } });
     }
-    if (r.conflict) return resolveConflict(path, name);
-    DOC = { path, name, etag: r.etag, base: snapshot, savedAt: new Date().toISOString() };
+    if (r.conflict) { await resolveConflict(path, name); return false; }
+    DOC = { kind: "library", path, name, etag: r.etag, base: snapshot, savedAt: new Date().toISOString() };
+    rememberFile();
     showStatus(); if (!opts.auto) toast("Saved " + name);
     return true;
   } catch (err) { toast((opts.auto ? "Auto-save failed: " : "Couldn't save: ") + err.message + (opts.auto ? ". Your changes are kept; press Save to retry." : ""), 6000); return false; }
@@ -1327,17 +1514,9 @@ async function librarySave(opts = {}) {
 async function resolveConflict(path, name) {
   let theirs;
   try { theirs = await HOST.read(path); } catch (err) { return toast("Couldn't read the newer version: " + err.message, 6000); }
-  const m = merge3(JSON.parse(DOC.base), P, JSON.parse(theirs.text));
-  showModal(`<header><h3>${esc(theirs.by || "Someone")} saved this programme ${esc(timeAgo(theirs.modified))}</h3>
-      <p>Your changes and theirs can be combined. ${m.both ? `<b>${m.both}</b> item${m.both > 1 ? "s were" : " was"} changed by both of you; your version is kept for ${m.both > 1 ? "those" : "it"}.` : "None of the same items were changed by both of you."}</p></header>
-    <div class="body"><div class="chips"><span class="chip chg">${m.mine} of your changes</span><span class="chip new">${m.theirs} of theirs</span>${m.both ? `<span class="chip miss">${m.both} changed by both</span>` : ""}</div></div>
-    <footer><button class="btn" data-act="theirs">Discard mine, load theirs</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="merge">Save combined version</button></footer>`, {
-    theirs: () => { const t = JSON.parse(theirs.text); loadDoc(t, { path, name, etag: theirs.etag, base: JSON.stringify(t) }); toast("Loaded the latest version."); },
-    merge: () => {
-      past.push(JSON.stringify(P)); future = [];
-      P = m.project; DOC = { ...DOC, etag: theirs.etag, base: JSON.stringify(JSON.parse(theirs.text)) };
-      render(); renderSide(); librarySave();
-    },
+  conflictPrompt(theirs, {
+    loadTheirs: t => loadDoc(t, { kind: "library", path, name, etag: theirs.etag, base: JSON.stringify(t), savedAt: theirs.modified }),
+    saveMerged: base => { DOC = { ...DOC, etag: theirs.etag, base }; },
   });
 }
 function merge3(base, mine, theirs) {
@@ -1369,7 +1548,7 @@ function merge3(base, mine, theirs) {
 async function libraryIssue() {
   const btn = $("bIssue"); btn.disabled = true; btn.textContent = "Issuing…";
   try {
-    if (!(await librarySave())) return;
+    if (!(await flushSave())) return;
     const base = fileBase(), folder = HOST.folderPath + "/Issued";
     const { blob, fonts } = await buildPdfBlob();
     await HOST.writeFile(folder, base + ".pdf", blob);
@@ -1379,7 +1558,6 @@ async function libraryIssue() {
   finally { btn.disabled = false; btn.textContent = "Issue"; }
 }
 if (HOST) {
-  window.addEventListener("beforeunload", e => { if (DOC && JSON.stringify(P) !== DOC.base) { e.preventDefault(); e.returnValue = ""; } });
   $("bIssue").hidden = false;
   $("bIssue").onclick = libraryIssue;
   $("bSave").title = `Save to the “${HOST.libraryTitle}” library (Ctrl+S)`;
@@ -1389,6 +1567,7 @@ if (HOST) {
 /* ===================================================================== */
 document.fonts?.ready.then(() => { render(); });
 render(); renderSide(); showStatus();
+offerReconnect();
 </script>
 </body>
 </html>
