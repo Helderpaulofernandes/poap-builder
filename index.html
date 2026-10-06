@@ -124,6 +124,13 @@ aside h2:first-child { margin-top: 0; }
 .type-preview { background: #FFFFFF; border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
 .check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
 .logo-slot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tagfmt { display: grid; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 4px; }
+.seg { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.seg button { flex: 1; border: 0; border-right: 1px solid var(--line); background: var(--bg); padding: 5px 6px; font-size: 11.5px; font-weight: 600; cursor: pointer; color: var(--muted); }
+.seg button:last-child { border-right: 0; }
+.seg button:hover { background: var(--hover); color: var(--fg); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.seg button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
 .logo-editor { display: grid; gap: 12px; }
 .logo-editor canvas { width: 100%; max-width: 498px; aspect-ratio: 166 / 54; border: 1px dashed #8794A6; background: #FFFFFF; cursor: grab; touch-action: none; justify-self: center; }
 .logo-editor canvas:active { cursor: grabbing; }
@@ -421,8 +428,11 @@ function laneRows(l, spare) {
 }
 function layout(opts) {
   const ppd = opts.ppd, t0 = toDays(P.timeline.start), t1 = toDays(P.timeline.end) + 1;
-  const W = G.headW + (t1 - t0) * ppd;
-  const bandTop = G.hdrH, bodyTop = bandTop + G.topH;
+  const W = G.headW + (t1 - t0) * ppd, x = d => G.headW + (toDays(d) - t0) * ppd;
+  const tags = layoutCurtainTags(x, ppd, W);
+  // curtain tag strip: a band of its own between the timeline and the first lane, only when used
+  const bandTop = G.hdrH, stripTop = bandTop + G.topH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
+  const bodyTop = stripTop + stripH;
   let y = bodyTop; const lanes = [];
   for (const l of P.lanes) {
     const rows = laneRows(l, opts.spare);
@@ -430,7 +440,53 @@ function layout(opts) {
     lanes.push({ l, y, h, rows }); y += h;
   }
   if (!lanes.length) y += 70;
-  return { ppd, t0, t1, W, bandTop, bodyTop, bodyBottom: y, H: y + G.botH + G.ftrH, lanes, x: d => G.headW + (toDays(d) - t0) * ppd };
+  const bodyBottom = y, g = tags.groups;
+  // vertical position of each tag now that the lanes are laid out
+  for (const t of tags.list) {
+    const grp = g[t.pos], step = grp.step;
+    t.y = t.pos === "strip" ? stripTop + 3 + t.row * step
+        : t.pos === "top" ? bodyTop + 4 + t.row * step
+        : t.pos === "bottom" ? bodyBottom - 4 - t.h - t.row * step
+        : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
+  }
+  return { ppd, t0, t1, W, bandTop, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + G.ftrH, lanes, tags: tags.list, x };
+}
+
+/* ---------- curtain tags: position, alignment, size, style and colours ---------- */
+const TAG_DEFAULTS = { tagPos: "strip", tagAlign: "left", tagSize: "M", tagStyle: "pill", tagFill: "", tagText: "" };
+const TAG_SIZES = { S: { font: 8, h: 13 }, M: { font: 9, h: 15 }, L: { font: 10.5, h: 18 } };
+const TAG_KEYS = Object.keys(TAG_DEFAULTS);
+/* a curtain's own setting wins, then its type's, then the default */
+function tagFmt(it, st) {
+  const f = {}; for (const k of TAG_KEYS) f[k] = it[k] ?? st[k] ?? TAG_DEFAULTS[k];
+  const stroke = it.stroke || st.stroke || BRAND.navy;
+  f.fillColour = f.tagFill || stroke;
+  f.textColour = f.tagText || (f.tagStyle === "pill" ? "#FFFFFF" : f.fillColour);
+  return f;
+}
+/* x position, size and stacking row of every curtain tag; rows stop tags in the same position overlapping */
+function layoutCurtainTags(x, ppd, W) {
+  const groups = { strip: { rows: [], height: 0, step: 0 }, top: { rows: [], height: 0, step: 0 }, middle: { rows: [], height: 0, step: 0 }, bottom: { rows: [], height: 0, step: 0 } };
+  const list = [];
+  P.items.filter(it => isCurtain(P, it.style)).sort((a, b) => toDays(a.start) - toDays(b.start)).forEach(it => {
+    const st = styleOf(P, it.style), f = tagFmt(it, st), sz = TAG_SIZES[f.tagSize] || TAG_SIZES.M;
+    const x1 = Math.max(G.headW, x(it.start)), x2 = Math.min(W, x(it.end) + ppd);
+    if (x2 <= x1) return;
+    const text = curtainTag(it, st), w = textW(text, sz.font, 700) + (f.tagStyle === "text" ? 6 : 14), h = sz.h;
+    let tx = f.tagAlign === "right" ? x2 - 2 - w : f.tagAlign === "centre" ? (x1 + x2 - w) / 2 : x1 + 2;
+    tx = Math.max(G.headW + 1, Math.min(W - w - 1, tx));
+    const grp = groups[f.tagPos] || groups.strip, pos = groups[f.tagPos] ? f.tagPos : "strip";
+    let row = grp.rows.findIndex(spans => spans.every(([a, b]) => tx + w + 4 < a || tx > b + 4));
+    if (row < 0) { row = grp.rows.length; grp.rows.push([]); }
+    grp.rows[row].push([tx, tx + w]);
+    list.push({ it, st, f, sz, text, x: tx, w, h, x1, x2, pos, row });
+  });
+  for (const k in groups) {
+    const grp = groups[k], hs = list.filter(t => t.pos === k).map(t => t.h);
+    grp.step = (hs.length ? Math.max(...hs) : 15) + 3;
+    grp.height = grp.rows.length ? grp.rows.length * grp.step - 3 : 0;
+  }
+  return { list, groups };
 }
 
 function el(name, attrs, parent, text) {
@@ -463,13 +519,14 @@ function draw(svg, opts) {
 
   // grid
   const gg = el("g", { "pointer-events": "none" }, svg);
+  if (L.stripH) el("rect", { x: G.headW, y: L.stripTop, width: L.W - G.headW, height: L.stripH, fill: "#F7F8FA" }, gg);
   if (L.ppd >= 4) {
     for (let d = L.t0; d < L.t1; d++) if (new Date(d*DAY).getUTCDay() === 1) {
       const x = G.headW + (d - L.t0) * L.ppd;
-      el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: "#EDF0F4", "stroke-width": .6 }, gg);
+      el("line", { x1: x, x2: x, y1: L.stripTop, y2: L.bodyBottom, stroke: "#EDF0F4", "stroke-width": .6 }, gg);
     }
   }
-  eachMonth(L, (x) => el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: BRAND.grid, "stroke-width": .7, "stroke-dasharray": "3 3" }, gg));
+  eachMonth(L, (x) => el("line", { x1: x, x2: x, y1: L.stripTop, y2: L.bodyBottom, stroke: BRAND.grid, "stroke-width": .7, "stroke-dasharray": "3 3" }, gg));
   L.lanes.forEach(ln => el("line", { x1: 0, x2: L.W, y1: ln.y + ln.h, y2: ln.y + ln.h, stroke: BRAND.navy, "stroke-width": .9 }, gg));
 
   const today = todayISO();
@@ -488,10 +545,11 @@ function draw(svg, opts) {
     const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
     drawItem(gi, it, ln, L, opts, F);
   }
-  drawCurtainTags(svg, curtains, L, opts, F);
+  drawCurtainTags(svg, L, opts, F);
 
   // lane titles (vertical, in the swimlane colour)
   const gh = el("g", {}, svg);
+  if (L.stripH) el("rect", { x: 0, y: L.stripTop, width: G.headW, height: L.stripH, fill: "#F7F8FA", stroke: BRAND.navy, "stroke-width": .9 }, gh);
   L.lanes.forEach(ln => {
     el("rect", { x: 0, y: ln.y, width: G.headW, height: ln.h, fill: laneHeader(ln.l.colour), stroke: BRAND.navy, "stroke-width": .9, "data-lanehead": ln.l.id, style: opts.print ? null : "cursor:pointer" }, gh);
     vText(gh, ln.l.name.toUpperCase(), G.headW / 2, ln.y + ln.h / 2, ln.h - 10, 9.5, 700, BRAND.navy, F, ln.l.id);
@@ -502,7 +560,8 @@ function draw(svg, opts) {
 
   drawBand(svg, L, L.bandTop, F);
   drawBand(svg, L, L.bodyBottom, F);
-  el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+  el("line", { x1: 0, x2: L.W, y1: L.stripTop, y2: L.stripTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+  if (L.stripH) el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": .9, "pointer-events": "none" }, svg);
   el("line", { x1: 0, x2: L.W, y1: L.bodyBottom, y2: L.bodyBottom, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   drawFooter(svg, L, F);
   el("rect", { x: .9, y: .9, width: L.W - 1.8, height: L.H - 1.8, fill: "none", stroke: BRAND.navy, "stroke-width": 1.8, "pointer-events": "none" }, svg);
@@ -517,7 +576,7 @@ function curtainColours(it) {
   return { st, fill: it.fill || st.fill || BRAND.orange, stroke: it.stroke || st.stroke || BRAND.navy, opacity: it.opacity ?? st.opacity ?? 0.18 };
 }
 function drawCurtainShades(svg, curtains, L) {
-  const g = el("g", { "pointer-events": "none" }, svg), y1 = L.bodyTop, h = L.bodyBottom - L.bodyTop;
+  const g = el("g", { "pointer-events": "none" }, svg), y1 = L.stripTop, h = L.bodyBottom - L.stripTop;
   for (const it of curtains) {
     const { st, fill, stroke, opacity } = curtainColours(it);
     const x1 = Math.max(G.headW, L.x(it.start)), x2 = Math.min(L.W, L.x(it.end) + L.ppd), w = x2 - x1;
@@ -533,26 +592,23 @@ function drawCurtainShades(svg, curtains, L) {
     if (st.shape !== "solid") for (const x of [x1, x2]) el("line", { x1: x, x2: x, y1, y2: y1 + h, stroke, "stroke-width": 1.1, "stroke-dasharray": "5 3" }, g);
   }
 }
-/* tag pills at the top of the body; overlapping tags stack into rows */
-function drawCurtainTags(svg, curtains, L, opts, F) {
-  const g = el("g", {}, svg), rows = [];
-  [...curtains].sort((a, b) => toDays(a.start) - toDays(b.start)).forEach(it => {
-    const { st, stroke } = curtainColours(it);
-    const x1 = Math.max(G.headW, L.x(it.start)), x2 = Math.min(L.W, L.x(it.end) + L.ppd);
-    if (x2 <= x1) return;
-    const text = curtainTag(it, st), w = textW(text, 9, 700) + 14;
-    let r = rows.findIndex(end => end + 4 < x1); if (r < 0) { r = rows.length; rows.push(0); }
-    rows[r] = x1 + w;
-    const y = L.bodyTop + 4 + r * 18, selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+/* curtain tags, placed by layoutCurtainTags; the tag is also the handle for dragging the curtain */
+function drawCurtainTags(svg, L, opts, F) {
+  const g = el("g", {}, svg), top = L.stripTop, h = L.bodyBottom - L.stripTop;
+  for (const t of L.tags) {
+    const { it, f, sz } = t, selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
     const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
-    el("rect", { x: x1 + 2, y, width: w, height: 15, rx: 7.5, fill: stroke, "data-id": it.id, "data-part": "body" }, grp);
-    el("text", { x: x1 + 9, y: y + 10.8, fill: "#FFFFFF", "font-size": 9, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, text);
-    if (selected) el("rect", { x: x1, y: L.bodyTop, width: x2 - x1, height: L.bodyBottom - L.bodyTop, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, grp);
+    const box = { x: t.x, y: t.y, width: t.w, height: t.h, rx: f.tagStyle === "pill" ? t.h / 2 : 3, "data-id": it.id, "data-part": "body" };
+    if (f.tagStyle === "pill") el("rect", { ...box, fill: f.fillColour }, grp);
+    else if (f.tagStyle === "outline") el("rect", { ...box, fill: "#FFFFFF", "fill-opacity": .92, stroke: f.fillColour, "stroke-width": 1.1 }, grp);
+    else el("rect", { ...box, fill: "transparent" }, grp);   // plain text: invisible grab area
+    el("text", { x: t.x + (f.tagStyle === "text" ? 3 : 7), y: t.y + t.h / 2 + sz.font * .36, fill: f.textColour, "font-size": sz.font, "font-weight": 700, "font-family": F.font, "pointer-events": "none" }, grp, t.text);
+    if (selected) el("rect", { x: t.x1, y: top, width: t.x2 - t.x1, height: h, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, grp);
     if (!opts.print) {   // full-height edge strips to drag the start and finish
-      el("rect", { x: x1 - 3, y: L.bodyTop, width: 6, height: L.bodyBottom - L.bodyTop, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
-      el("rect", { x: x2 - 3, y: L.bodyTop, width: 6, height: L.bodyBottom - L.bodyTop, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
+      el("rect", { x: t.x1 - 3, y: top, width: 6, height: h, fill: "transparent", "data-id": it.id, "data-part": "l", style: "cursor:ew-resize" }, grp);
+      el("rect", { x: t.x2 - 3, y: top, width: 6, height: h, fill: "transparent", "data-id": it.id, "data-part": "r", style: "cursor:ew-resize" }, grp);
     }
-  });
+  }
 }
 
 function drawHeader(svg, L, F, opts) {
@@ -976,6 +1032,35 @@ function renderSide() {
   $("addBarType").onclick = () => addType("Stretch");
   $("addCurtainType").onclick = () => addType("Curtain");
 }
+/* tag format controls; f is the effective format (tagFmt), set(key, value) stores it */
+const TAG_CHOICES = {
+  tagPos: [["strip", "Strip"], ["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]],
+  tagAlign: [["left", "Left"], ["centre", "Centre"], ["right", "Right"]],
+  tagSize: [["S", "S"], ["M", "M"], ["L", "L"]],
+  tagStyle: [["pill", "Filled"], ["outline", "Outlined"], ["text", "Text only"]],
+};
+function tagControls(f) {
+  const seg = (key, label) => `<div class="f"><label>${label}</label><div class="seg" role="group" aria-label="${label}">${TAG_CHOICES[key].map(([v, n]) =>
+    `<button type="button" data-tag="${key}" data-val="${v}" aria-pressed="${f[key] === v}">${n}</button>`).join("")}</div></div>`;
+  return `<div class="tagfmt">
+    ${seg("tagPos", "Tag position")}
+    <p class="note">Strip keeps tags in their own band under the timeline, clear of milestones and bars.</p>
+    ${seg("tagAlign", "Tag alignment")}
+    <div class="row2">${seg("tagSize", "Tag size")}${seg("tagStyle", "Tag style")}</div>
+    <div class="row2">
+      <div class="f"><label for="tagFill">Tag colour</label><input id="tagFill" type="color" value="${f.fillColour}"></div>
+      <div class="f"><label for="tagText">Text colour</label><input id="tagText" type="color" value="${f.textColour}"></div>
+    </div>
+    ${f.tagFill || f.tagText ? `<p class="note"><a href="#" id="tagAuto">Automatic tag colours</a></p>` : ""}
+  </div>`;
+}
+function bindTagControls(root, set) {
+  root.querySelectorAll("[data-tag]").forEach(b => b.onclick = () => set(b.dataset.tag, b.dataset.val));
+  root.querySelector("#tagFill").onchange = e => set("tagFill", e.target.value.toUpperCase());
+  root.querySelector("#tagText").onchange = e => set("tagText", e.target.value.toUpperCase());
+  const auto = root.querySelector("#tagAuto"); if (auto) auto.onclick = e => { e.preventDefault(); set("tagFill", ""); set("tagText", ""); };
+}
+
 /* inspector for one curtain */
 function renderCurtainSide(side, cur) {
   const { st, fill, stroke, opacity } = curtainColours(cur);
@@ -995,7 +1080,8 @@ function renderCurtainSide(side, cur) {
       <div class="f"><label for="cFill">Shade colour</label><input id="cFill" type="color" value="${fill}"></div>
       <div class="f"><label for="cStroke">Tag &amp; edges</label><input id="cStroke" type="color" value="${stroke}"></div>
     </div>
-    <p class="note">${cur.fill || cur.stroke || cur.opacity != null ? `Custom look for this curtain · <a href="#" id="cReset">use the type's</a>` : `Uses the “${esc(st.notes)}” type's colours and shading.`}</p>
+    ${tagControls(tagFmt(cur, st))}
+    <p class="note">${cur.fill || cur.stroke || cur.opacity != null || TAG_KEYS.some(k => cur[k] != null) ? `Custom look for this curtain · <a href="#" id="cReset">use the type's</a>` : `Uses the “${esc(st.notes)}” type's colours, shading and tag format.`}</p>
     <div class="f"><label for="cId">ShapeID</label><input id="cId" value="${esc(cur.id)}"></div>
     <div class="actions"><button class="btn" id="cDup">Duplicate</button><button class="btn danger" id="cDel">Delete</button></div>
     <p class="note">Curtains run through every lane. Drag the tag to move one; drag its left or right edge to change the dates.</p>`;
@@ -1014,7 +1100,8 @@ function renderCurtainSide(side, cur) {
   };
   $("cFill").onchange = e => upd(x => x.fill = e.target.value.toUpperCase());
   $("cStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
-  if ($("cReset")) $("cReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; delete x.opacity; }); };
+  if ($("cReset")) $("cReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; delete x.opacity; TAG_KEYS.forEach(k => delete x[k]); }); };
+  bindTagControls(side, (k, v) => upd(x => { x[k] = v; }));
   $("cId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; } upd(x => x.id = v); sel.id = v; renderSide(); };
   $("cDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id), start: addDays(cur.end, 1), end: addDays(cur.end, curtainDays(cur)) }; commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
   $("cDel").onclick = () => { commit(p => p.items = p.items.filter(i => i.id !== cur.id)); sel = null; renderSide(); };
@@ -1052,7 +1139,9 @@ function renderTypeSide(side, s) {
     <div class="f"><label for="sShape">${curtain ? "Shading" : "Shape"}</label><select id="sShape">${kind.shapes().map(([k, n]) => `<option value="${k}" ${k === s.shape ? "selected" : ""}>${n}</option>`).join("")}</select></div>
     ${bar ? `<label class="check"><input type="checkbox" id="sLane" ${s.fill ? "" : "checked"}> Use the lane colour</label>` : ""}
     ${curtain ? `<div class="f"><label for="sOpacity">Shading: <span id="sPct">${pct}%</span></label><input id="sOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${s.fill}"></div>
-      <div class="f"><label for="sDays">Duration in the tag</label><select id="sDays">${DAYS_OPTIONS.map(([k, n]) => `<option value="${k}" ${k === (s.days || "") ? "selected" : ""}>${n}</option>`).join("")}</select></div>` : ""}
+      <div class="f"><label for="sDays">Duration in the tag</label><select id="sDays">${DAYS_OPTIONS.map(([k, n]) => `<option value="${k}" ${k === (s.days || "") ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+      ${tagControls(tagFmt({}, s))}
+      <p class="note">These are the defaults for every curtain of this type; a curtain can override them.</p>` : ""}
     <div class="row2">
       <div class="f"><label for="sFill">${curtain ? "Shade colour" : "Fill"}</label><input id="sFill" type="color" value="${s.fill || laneBar(BRAND.orange)}" ${bar && !s.fill ? "disabled" : ""}></div>
       <div class="f"><label for="sStroke">${curtain ? "Tag & edges" : "Outline"}</label><input id="sStroke" type="color" value="${s.stroke || BRAND.navy}"></div>
@@ -1073,6 +1162,7 @@ function renderTypeSide(side, s) {
     $("sOpacity").oninput = e => { $("sPct").textContent = e.target.value + "%"; s.opacity = +e.target.value / 100; render(); };
     $("sOpacity").onchange = e => { const v = +e.target.value / 100; s.opacity = orig; upd(x => x.opacity = v); };
     $("sDays").onchange = e => upd(x => x.days = e.target.value);
+    bindTagControls(side, (k, v) => upd(x => { x[k] = v; }));
   }
   $("sLabel").onchange = e => {
     const label = e.target.value.trim(); if (!label) { renderSide(); return; }
@@ -1304,7 +1394,11 @@ function buildExcelBlob() {
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
   XLSX.utils.book_append_sheet(wb, lanes, "Lanes");
-  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration"]].concat(P.styles.map(s => [s.name, s.behaviour, s.shape, s.fill || "LANE", s.stroke, s.notes, s.behaviour === "Curtain" ? s.opacity ?? .18 : "", s.behaviour === "Curtain" ? s.days || "none" : ""])));
+  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration","TagPosition","TagAlign","TagSize","TagStyle","TagColour","TagTextColour"]].concat(P.styles.map(s => {
+    const c = s.behaviour === "Curtain", f = c ? tagFmt({}, s) : {};
+    return [s.name, s.behaviour, s.shape, s.fill || "LANE", s.stroke, s.notes, c ? s.opacity ?? .18 : "", c ? s.days || "none" : "",
+      c ? f.tagPos : "", c ? f.tagAlign : "", c ? f.tagSize : "", c ? f.tagStyle : "", c ? s.tagFill || "" : "", c ? s.tagText || "" : ""];
+  })));
   styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
@@ -1374,6 +1468,12 @@ function parseWorkbook(buf) {
         const o = Number(x.opacity); s.opacity = Number.isFinite(o) && x.opacity !== null && x.opacity !== "" ? Math.min(.9, Math.max(0, o > 1 ? o / 100 : o)) : .18;
         const d = String(x.tagduration ?? "").trim(); s.days = d === "none" || d === "" ? "" : ["plain", "+", "−"].includes(d) ? d : d === "-" ? "−" : "plain";
         if (!s.fill) s.fill = BRAND.orange;
+        const pick = (v, key) => TAG_CHOICES[key].some(([k]) => k === v) ? v : undefined;
+        Object.assign(s, Object.fromEntries(Object.entries({
+          tagPos: pick(String(x.tagposition ?? "").toLowerCase(), "tagPos"), tagAlign: pick(String(x.tagalign ?? "").toLowerCase().replace("center", "centre"), "tagAlign"),
+          tagSize: pick(String(x.tagsize ?? "").toUpperCase(), "tagSize"), tagStyle: pick(String(x.tagstyle ?? "").toLowerCase(), "tagStyle"),
+          tagFill: hex(x.tagcolour) || undefined, tagText: hex(x.tagtextcolour) || undefined,
+        }).filter(([, v]) => v !== undefined)));
       }
       return s;
     });
