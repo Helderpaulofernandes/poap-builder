@@ -6,11 +6,17 @@ A browser tool for drawing a **Program of Activities and Possessions** (PoaP): a
 - Create your own milestone and bar types (shape, colours, legend name).
 - Export to Excel, edit dates there, and update the drawing from the workbook (matched by ShapeID, with a preview of every change).
 - Export a branded A3 landscape PDF.
-- Save and reopen projects as `.poap.json` files.
+- Save to a `.poap.json` file once; after that every change saves to it automatically (Edge and Chrome).
 
 The sample programme is example data.
 
 ## Use it
 
 Open the published page, or download `index.html` and `brand-logo.js` into the same folder and open `index.html` in Edge or Chrome.
-Your work stays on your computer: drafts are kept in your browser and **Save** downloads a project file. Nothing is uploaded.
+
+- The first **Save** asks where to keep the file, for example a OneDrive or SharePoint-synced folder. The status in the top bar then shows when changes were last saved.
+- Next visit, the page offers to continue with the same file.
+- If someone else changes the file (for example through OneDrive sync), you're offered a merge of both versions.
+- Firefox and Safari can't save to a file in place, so there **Save** downloads a copy each time.
+
+Your work stays on your computer and in the folders you choose. Nothing is uploaded.
