@@ -683,19 +683,20 @@ function drawHeader(svg, L, F, opts) {
 const FOOTER_BOX_W = 250, FOOTER_LINE = 15;
 function footerPlan(L, keyList) {
   const left = 14, right = L.W - FOOTER_BOX_W - 12;
-  const legendW = textW("Legend:", 11, 700) + 14, indent = left + legendW;
-  const entries = [{ kind: "heading", text: "Legend:", w: legendW }];
+  // both headings get the same width so legend and key entries line up in one column
+  const headW = Math.max(textW("Legend:", 11, 700), textW("Key:", 11, 700)) + 14, indent = left + headW;
+  const entries = [{ kind: "heading", text: "Legend:", w: headW }];
   // milestone types, curtains, and bar types with their own colour (lane-coloured bars need no key)
   P.styles.filter(s => (s.behaviour !== "Stretch" || s.fill) && P.items.some(i => i.style === s.name))
     .forEach(s => { const icon = s.behaviour === "Move" ? 18 : 28; entries.push({ kind: "style", s, icon, w: icon + textW(s.notes || s.name, 9.5, 500) + 22 }); });
   if (keyList.length) {
-    entries.push({ kind: "heading", text: "Key:", w: textW("Key:", 11, 700) + 10, gap: 14 });
+    entries.push({ kind: "heading", text: "Key:", w: headW, newLine: true });   // the key always starts its own line
     keyList.forEach(k => entries.push({ kind: "key", k, w: 15 + textW(k.name, 9, 500) + 16 }));
   }
   let x = left, line = 0;
   for (const e of entries) {
-    x += e.gap || 0;
-    if (x + e.w > right && x > indent + 1) { line++; x = indent; }
+    if (e.newLine) { line++; x = left; }
+    else if (x + e.w > right && x > indent + 1) { line++; x = indent; }
     e.x = x; e.line = line; x += e.w;
   }
   const lines = line + 1;
