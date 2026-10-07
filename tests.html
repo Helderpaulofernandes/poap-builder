@@ -264,6 +264,27 @@ const TESTS = {
     const m = document.querySelector(".modal");
     T.ok(m && /keyboard|Ctrl/i.test(m.innerText) && /side panel/i.test(m.innerText), "help shown");
   },
+  "Shift-drag moves up or down only, keeping the dates": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-02-01", "2027-02-10"], ["C", "2027-03-01", "2027-03-10"]]);
+    const svgRect = document.getElementById("chart").getBoundingClientRect(), k = svgRect.width / LAY.W;
+    const at = (x, y, shift) => ({ clientX: svgRect.x + x * k, clientY: svgRect.y + y * k, bubbles: true, shiftKey: !!shift });
+    const drag = (id, dx, dy, shift) => {
+      const t = document.querySelector(`#chart [data-id="${id}"][data-part="body"]`), it = T.item(id), x = LAY.x(it.start) + 4, y = rowCenter(it);
+      t.dispatchEvent(new PointerEvent("pointerdown", at(x, y, shift)));
+      window.dispatchEvent(new PointerEvent("pointermove", at(x + dx, y + dy, shift)));
+      window.dispatchEvent(new PointerEvent("pointerup", at(x + dx, y + dy, shift)));
+    };
+    // one activity: 20 days right and two rows down with Shift held → same dates, new row
+    drag("A", 20 * LAY.ppd, 2 * LAY.rowH, true);
+    T.eq([T.item("A").start, T.item("A").end, T.item("A").row], ["2027-01-01", "2027-01-10", 2]);
+    // B selected, then Shift-drag C a row up and sideways: both move up, neither changes dates
+    selectItems(["B"]); const rB = T.item("B").row, rC = T.item("C").row;
+    drag("C", 15 * LAY.ppd, -LAY.rowH, true);
+    T.eq([T.item("B").start, T.item("C").start, T.item("B").row - rB, T.item("C").row - rC], ["2027-02-01", "2027-03-01", -1, -1], "the selection moves together, dates kept");
+    // a Shift-click (no movement) still adds to the selection
+    selectItems(["A"]); drag("B", 0, 0, true);
+    T.eq([...MULTI].sort(), ["A", "B"]);
+  },
   "Start screen offers the choices": async () => {
     await showStartScreen();
     const acts = [...document.querySelectorAll(".startscreen [data-start]")].map(b => b.dataset.start);
