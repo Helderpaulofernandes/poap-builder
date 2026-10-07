@@ -58,7 +58,25 @@ button, input, select { font: inherit; color: inherit; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 16px; background: var(--panel); border-bottom: 3px solid var(--accent-2); }
 .brand { display: flex; align-items: center; gap: 10px; margin-right: 4px; }
 .brand .logo { background: #FFFFFF; border-radius: 3px; padding: 3px 5px; display: flex; }
-.brand .logo img { height: 15px; display: block; }
+.brand .logo img { height: 15px; max-width: 170px; object-fit: contain; display: block; }
+.brandpick { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--panel); border-radius: 4px; padding: 3px 7px 3px 3px; cursor: pointer; }
+.brandpick:hover { background: var(--hover); }
+.brandpick:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.brandpick .bname { font-size: 11.5px; font-weight: 600; color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brandpick .caret { font-size: 10px; color: var(--muted); }
+.brandlist { display: grid; gap: 6px; }
+.brandrow { display: grid; grid-template-columns: 150px 1fr auto auto; gap: 12px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); cursor: pointer; text-align: left; }
+.brandrow:hover { background: var(--hover); }
+.brandrow[aria-current="true"] { border-color: var(--accent-2); box-shadow: inset 3px 0 0 var(--accent-2); }
+.brandrow .lg { background: #FFFFFF; border-radius: 3px; height: 34px; display: grid; place-items: center; padding: 3px 6px; }
+.brandrow .lg img { max-width: 100%; max-height: 28px; }
+.brandrow .sw2 { display: flex; gap: 4px; }
+.brandrow .sw2 i { width: 16px; height: 16px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.brand-preview { background: #FFFFFF; border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; display: grid; gap: 8px; color: #14263D; }
+.brand-preview .ph { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.brand-preview .ph img { max-height: 34px; max-width: 55%; }
+.brand-preview .band { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; font-size: 10px; font-weight: 600; text-align: center; }
+.brand-preview .band span { padding: 3px 0; }
 .brand b { font-weight: 700; font-size: 14px; letter-spacing: .01em; color: var(--accent); }
 .brand span { font: 11px var(--font-mono); color: var(--muted); }
 .grp { display: flex; gap: 4px; align-items: center; }
@@ -176,7 +194,12 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
 <body>
 
 <div class="bar">
-  <div class="brand"><span class="logo" id="brandLogoBox"><img id="brandLogo" alt="Martinus"></span><b>PoaP Builder</b><span id="docName"></span></div>
+  <div class="brand">
+    <button type="button" class="brandpick" id="bBrand" title="Change branding: logo and colours (joint ventures, alliances)" aria-haspopup="dialog">
+      <span class="logo"><img id="brandLogo" alt=""></span><span class="bname" id="brandName"></span><span class="caret" aria-hidden="true">▾</span>
+    </button>
+    <b>PoaP Builder</b><span id="docName"></span>
+  </div>
   <div class="status" id="saveStatus" data-state="none" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="saved"></span><button class="btn" id="bSaveNow" hidden>Save now</button></div>
   <div class="grp">
     <button class="btn" id="bLane" title="Add a swimlane">+ Lane</button>
@@ -249,10 +272,49 @@ function applySpacing() {
   G.pad = Math.round(Math.max(2, Math.min(8, r * .22)));
 }
 const inlineMsDate = () => G.rowH < 22;   // tight rows: milestone date goes on the name's line
-const LANE_PRESETS = [
-  ["Martinus orange", "#F47920"], ["Martinus navy", "#163E6B"], ["Steel blue", "#4F7CAC"], ["Teal", "#128A84"],
-  ["Green", "#5E9A35"], ["Purple", "#6E4E9E"], ["Red", "#C8102E"], ["Grey", "#6F7C8C"],
-];
+/* lane colour presets: the brand's two colours first, then a fixed set */
+const LANE_PRESETS_FIXED = [["Steel blue", "#4F7CAC"], ["Teal", "#128A84"], ["Green", "#5E9A35"], ["Purple", "#6E4E9E"], ["Red", "#C8102E"], ["Grey", "#6F7C8C"]];
+const lanePresets = () => [["Brand accent", BRAND.orange], ["Brand main colour", BRAND.navy], ...LANE_PRESETS_FIXED];
+
+/* ---------- branding: logo + main colour + accent colour; a programme carries its brand (P.brand) ---------- */
+const DEFAULT_BRAND = { id: "martinus", name: "Martinus", logo: "", ratio: LOGO_RATIO, primary: "#163E6B", accent: "#F47920" };
+const BRANDS_KEY = "poap-builder-brands";
+const currentBrand = () => { try { return (P && P.brand) || DEFAULT_BRAND; } catch (e) { return DEFAULT_BRAND; } };   // P may not exist yet at start-up
+const brandLogoSrc = b => (b || currentBrand()).logo || MARTINUS_LOGO;
+const brandRatio = b => (b || currentBrand()).logo ? ((b || currentBrand()).ratio || 4) : LOGO_RATIO;
+/* mix with black: t=0 original, t=1 black */
+function shade(hexIn, t) {
+  const h = String(hexIn).replace("#", ""), c = [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16));
+  return "#" + c.map(v => Math.round(v * (1 - t)).toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+function applyBrandColours() {
+  const b = currentBrand();
+  BRAND.navy = b.primary; BRAND.orange = b.accent; BRAND.ink = shade(b.primary, .4);
+  document.documentElement.style.setProperty("--accent-2", b.accent);
+}
+function loadBrands() {
+  let saved = []; try { saved = JSON.parse(localStorage.getItem(BRANDS_KEY)) || []; } catch (e) {}
+  return [DEFAULT_BRAND, ...saved.filter(b => b && b.id !== DEFAULT_BRAND.id)];
+}
+function saveBrands(list) { try { localStorage.setItem(BRANDS_KEY, JSON.stringify(list.filter(b => b.id !== DEFAULT_BRAND.id))); } catch (e) { toast("Couldn't keep the brand list in this browser (storage full?). It's still saved in this programme.", 6000); } }
+/* a programme opened with a brand we don't have yet adds it to this browser's list */
+function rememberProjectBrand() {
+  const b = P.brand; if (!b || !b.id) return;
+  const list = loadBrands(); if (!list.some(x => x.id === b.id)) { list.push(clone(b)); saveBrands(list); }
+}
+/* re-colour the programme: anything using the old brand's colours takes the new brand's */
+function remapBrandColours(p, from, to) {
+  const map = new Map([[from.primary.toUpperCase(), to.primary], [from.accent.toUpperCase(), to.accent]]);
+  const swap = v => (v && map.get(String(v).toUpperCase())) || v;
+  p.lanes.forEach(l => l.colour = swap(l.colour));
+  p.styles.forEach(s => { s.fill = swap(s.fill); s.stroke = swap(s.stroke); if (s.tagFill) s.tagFill = swap(s.tagFill); if (s.tagText) s.tagText = swap(s.tagText); });
+  p.items.forEach(i => { if (i.fill) i.fill = swap(i.fill); if (i.stroke) i.stroke = swap(i.stroke); if (i.tagFill) i.tagFill = swap(i.tagFill); });
+}
+function switchBrand(b) {
+  const from = currentBrand();
+  commit(p => { remapBrandColours(p, from, b); if (b.id === DEFAULT_BRAND.id) delete p.brand; else p.brand = clone(b); }, true);
+  toast(`Branding: ${b.name}`);
+}
 const $ = id => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
 const measureCtx = document.createElement("canvas").getContext("2d");
@@ -683,10 +745,12 @@ function drawHeader(svg, L, F, opts) {
   }
   el("line", { x1: clientW, x2: clientW, y1: 8, y2: H - 8, stroke: "#C9D2DD", "stroke-width": 1 }, g);
   const tx = clientW + 14;
-  if (MARTINUS_LOGO) {   // as large as fits beside the title text, never over it
+  if (brandLogoSrc()) {   // as large as fits beside the title text, never over it
     const titleW = Math.max(textW((m.program || "").toUpperCase(), 15, 700) * 1.03, textW(`${m.number || ""} ${m.title || ""}`, 14, 700) + (m.subtitle ? textW(`  –  ${m.subtitle}`, 11, 600) : 0));
-    const logoW = Math.max(70, Math.min(330, L.W - (tx + titleW) - 40)), logoH = logoW / LOGO_RATIO;
-    img(g, MARTINUS_LOGO, L.W - logoW - 14, (H - logoH) / 2, logoW, logoH, "xMaxYMid");
+    // wide logos (JV pairs) are limited by width, squarer ones by the header height
+    const ratio = brandRatio(), maxH = H - 22;
+    const logoW = Math.max(70, Math.min(420, maxH * ratio, L.W - (tx + titleW) - 40)), logoH = logoW / ratio;
+    img(g, brandLogoSrc(), L.W - logoW - 14, (H - logoH) / 2, logoW, logoH, "xMaxYMid");
   }
   el("text", { x: tx, y: 32, fill: BRAND.navy, "font-size": 15, "font-weight": 700, "font-family": F.font, "letter-spacing": ".02em" }, g, (m.program || "").toUpperCase());
   const t2 = el("text", { x: tx, y: 55, fill: BRAND.orange, "font-size": 14, "font-weight": 700, "font-family": F.font }, g, `${m.number || ""} ${m.title || ""}`.trim());
@@ -1102,7 +1166,10 @@ function render() {
   $("viewMode").value = mode; $("zoomBox").hidden = mode !== "free";
   $("zoom").value = P.view.zoom;
   $("docName").textContent = `${P.meta.number} · Rev ${P.meta.revision}`;
-  if (MARTINUS_LOGO) $("brandLogo").src = MARTINUS_LOGO; else $("brandLogoBox").hidden = true;
+  applyBrandColours();
+  const logo = brandLogoSrc();
+  if (logo) { $("brandLogo").src = logo; $("brandLogo").hidden = false; } else $("brandLogo").hidden = true;
+  $("brandName").textContent = currentBrand().name;
   if (mode === "free") { PLAN = null; applySpacing(); LAY = draw($("chart"), { ppd: P.view.zoom, spare: true }); }
   else { PLAN = drawPage($("chart")); LAY = PLAN.L; }
   placePaper(mode);
@@ -1366,12 +1433,12 @@ function renderSide() {
   if (sel && sel.type === "style" && cur) { renderTypeSide(side, cur); return; }
   if (sel && sel.type === "lane" && cur) {
     const idx = P.lanes.indexOf(cur), n = P.items.filter(i => i.lane === cur.id).length;
-    const custom = !LANE_PRESETS.some(([, c]) => c.toUpperCase() === cur.colour.toUpperCase());
+    const custom = !lanePresets().some(([, c]) => c.toUpperCase() === cur.colour.toUpperCase());
     side.innerHTML = `
       <h2>Swimlane</h2>
       <div class="f"><label for="lName">Name</label><input id="lName" value="${esc(cur.name)}"></div>
       <div class="f"><label>Lane colour</label>
-        <div class="swatches">${LANE_PRESETS.map(([n, c]) => `<button class="sw" data-c="${c}" title="${n}" aria-label="${n}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${laneHeader(c)}"></button>`).join("")}
+        <div class="swatches">${lanePresets().map(([n, c]) => `<button class="sw" data-c="${c}" title="${n}" aria-label="${n}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${laneHeader(c)}"></button>`).join("")}
           <input id="lColour" type="color" value="${cur.colour}" title="Custom colour" aria-label="Custom lane colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
       </div>
       <div class="preview">Title <i style="background:${laneHeader(cur.colour)}"></i> Bars <i style="background:${laneBar(cur.colour)}"></i></div>
@@ -1828,6 +1895,148 @@ async function openLogoEditor(src, crop) {
 }
 
 /* =====================================================================
+   Branding: picker, editor, logo trimming and colours picked from the logo
+   ===================================================================== */
+function openBrandMenu() {
+  const list = loadBrands(), cur = currentBrand();
+  const m = showModal(`<header><h3>Branding</h3><p>The logo and colours used on the sheet, for Martinus, joint ventures and alliances. Switching re-colours the lanes, bars and timeline that use the current brand's colours.</p></header>
+    <div class="body"><div class="brandlist">${list.map(b => `
+      <div class="brandrow" role="button" tabindex="0" data-brand="${esc(b.id)}" aria-current="${b.id === cur.id}">
+        <span class="lg"><img src="${brandLogoSrc(b)}" alt=""></span>
+        <span><b>${esc(b.name)}</b>${b.id === cur.id ? ` <span class="note">· in use</span>` : ""}</span>
+        <span class="sw2" title="Main colour and accent"><i style="background:${b.primary}"></i><i style="background:${b.accent}"></i></span>
+        <span>${b.id !== DEFAULT_BRAND.id ? `<button class="btn" data-edit="${esc(b.id)}">Edit</button>` : ""}</span>
+      </div>`).join("")}</div></div>
+    <footer><button class="btn primary" data-act="add">+ Add branding…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Close</button></footer>`,
+    { add: () => { openBrandEditor(null); } });
+  const pick = r => { const b = list.find(x => x.id === r.dataset.brand); m.remove(); if (b && b.id !== cur.id) switchBrand(b); };
+  m.querySelectorAll("[data-brand]").forEach(r => {
+    r.onclick = e => { if (!e.target.closest("[data-edit]")) pick(r); };
+    r.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(r); } };
+  });
+  m.querySelectorAll("[data-edit]").forEach(btn => btn.onclick = e => { e.stopPropagation(); m.remove(); openBrandEditor(list.find(x => x.id === btn.dataset.edit)); });
+}
+
+/* Where the logo actually is: transparent (or, for opaque images, white) margins are dropped, and so are
+   thin frame lines round the edge of a screenshot or export, like a 1 px box around the artwork. */
+function trimLogo(img) {
+  const { d, cw, ch, k, w, h } = logoPixels(img), hasAlpha = analyseLogo(img).hasAlpha;
+  const ink = (x, y) => { const i = (y * cw + x) * 4; return d[i + 3] > 16 && (hasAlpha || !(d[i] > 225 && d[i + 1] > 225 && d[i + 2] > 225)); };
+  const colN = new Array(cw).fill(0), rowN = new Array(ch).fill(0);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (ink(x, y)) { colN[x]++; rowN[y]++; }
+  // a frame line: a nearly solid row/column with almost nothing beside it
+  const isLine = (arr, i, full) => arr[i] > full * .8 && [1, 2, 3].every(o => (arr[i + o] ?? 0) < full * .06 || (arr[i - o] ?? 0) < full * .06);
+  const lineCols = new Set(colN.map((_, i) => i).filter(i => isLine(colN, i, ch)));
+  const lineRows = new Set(rowN.map((_, i) => i).filter(i => isLine(rowN, i, cw)));
+  let x0 = cw, y0 = ch, x1 = -1, y1 = -1;
+  for (let y = 0; y < ch; y++) if (!lineRows.has(y)) for (let x = 0; x < cw; x++) if (!lineCols.has(x) && ink(x, y)) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (x1 < 0) return { x: 0, y: 0, w, h };
+  return { x: x0 / k, y: y0 / k, w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k };
+}
+const hsl = hex => {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.substr(i, 2), 16) / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, dl = mx - mn;
+  const s = dl ? dl / (1 - Math.abs(2 * l - 1)) : 0;
+  let hue = 0; if (dl) hue = mx === r ? ((g - b) / dl) % 6 : mx === g ? (b - r) / dl + 2 : (r - g) / dl + 4;
+  return { h: (hue * 60 + 360) % 360, s, l };
+};
+const toHex = (r, g, b) => "#" + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, "0")).join("").toUpperCase();
+/* main colour = the most used dark colour; accent = the most used colour of a clearly different hue */
+function logoPalette(canvas) {
+  const d = canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data, buckets = new Map();
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] < 128 || (d[i] > 225 && d[i + 1] > 225 && d[i + 2] > 225)) continue;   // transparent or white
+    const key = (d[i] >> 4) << 8 | (d[i + 1] >> 4) << 4 | (d[i + 2] >> 4), b = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+    b.n++; b.r += d[i]; b.g += d[i + 1]; b.b += d[i + 2]; buckets.set(key, b);
+  }
+  const cands = [...buckets.values()].filter(b => b.n > 20).sort((a, b) => b.n - a.n).map(b => { const hex = toHex(b.r / b.n, b.g / b.n, b.b / b.n); return { hex, n: b.n, ...hsl(hex) }; });
+  if (!cands.length) return { primary: DEFAULT_BRAND.primary, accent: DEFAULT_BRAND.accent };
+  const primary = cands.find(c => c.l < .38) || cands[0];
+  const hueGap = (a, b) => { const g = Math.abs(a - b) % 360; return Math.min(g, 360 - g); };
+  const accent = cands.find(c => c !== primary && c.s > .3 && c.l > .2 && c.l < .78 && (primary.s < .15 || hueGap(c.h, primary.h) > 25))
+    || cands.find(c => c !== primary && Math.abs(c.l - primary.l) > .2);
+  return { primary: primary.hex, accent: accent ? accent.hex : tint(primary.hex, .35) };
+}
+/* uploaded image -> trimmed PNG (max 1200 px wide), its shape, and colours picked from it */
+async function prepareLogo(src) {
+  let img = await loadImage(src);
+  const box = trimLogo(img), pad = Math.round(Math.min(box.w, box.h) * .04);   // a small even margin, by the short side
+  const k = Math.min(1, 1200 / (box.w + pad * 2));
+  const c = document.createElement("canvas"); c.width = Math.round((box.w + pad * 2) * k); c.height = Math.round((box.h + pad * 2) * k);
+  const x = c.getContext("2d"); x.imageSmoothingQuality = "high";
+  x.drawImage(img, box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2, 0, 0, c.width, c.height);
+  return { logo: c.toDataURL("image/png"), ratio: c.width / c.height, ...logoPalette(c) };
+}
+function openBrandEditor(existing) {
+  const isNew = !existing;
+  let b = existing ? clone(existing) : { id: "b" + uid(), name: "", logo: "", ratio: 4, primary: DEFAULT_BRAND.primary, accent: DEFAULT_BRAND.accent };
+  let picked = null;   // colours picked from the logo, to offer "use the logo's colours" again
+  const m = showModal(`<header><h3>${isNew ? "Add branding" : "Edit branding"}</h3><p>Upload the logo; its colours are picked for you and can be adjusted.</p></header>
+    <div class="body" style="display:grid;gap:12px">
+      <div class="f"><label for="brName">Name</label><input id="brName" value="${esc(b.name)}" placeholder="e.g. Martinus Degnan JV"></div>
+      <div class="f"><label>Logo</label><div class="actions"><button class="btn" id="brUpload">${b.logo ? "Replace logo…" : "Upload logo…"}</button><span class="note" id="brLogoNote">${b.logo ? "" : "PNG, JPG, SVG or WebP. White or transparent margins and thin frames are trimmed."}</span></div>
+        <input type="file" id="brFile" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden></div>
+      <div class="row2">
+        <div class="f"><label for="brPrimary">Main colour (titles, timeline, lines)</label><input id="brPrimary" type="color" value="${b.primary}"></div>
+        <div class="f"><label for="brAccent">Accent (project line, highlights)</label><input id="brAccent" type="color" value="${b.accent}"></div>
+      </div>
+      <div class="actions"><button class="btn" id="brSwap">Swap colours</button><button class="btn" id="brPicked" hidden>Use the logo's colours</button></div>
+      <div class="brand-preview" id="brPreview"></div>
+    </div>
+    <footer>${isNew ? "" : `<button class="btn danger" data-act="delete">Delete brand</button>`}<span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save">${isNew ? "Save and use" : "Save"}</button></footer>`, {
+    save: () => {
+      b.name = m.querySelector("#brName").value.trim();
+      if (!b.name) { toast("Give the brand a name."); m.querySelector("#brName").focus(); return false; }
+      if (!b.logo) { toast("Upload the brand's logo."); return false; }
+      const list = loadBrands(), i = list.findIndex(x => x.id === b.id);
+      if (i >= 0) list[i] = b; else list.push(b);
+      saveBrands(list);
+      if (isNew || currentBrand().id === b.id) switchBrand(b);
+      else toast(`Saved ${b.name}.`);
+    },
+    delete: () => {
+      saveBrands(loadBrands().filter(x => x.id !== b.id));
+      toast(currentBrand().id === b.id ? `Removed ${b.name} from the list; this programme keeps using it until you pick another.` : `Removed ${b.name}.`, 5000);
+    },
+  });
+  const preview = () => {
+    const p = m.querySelector("#brPreview"), M = P.meta;
+    p.innerHTML = `<div class="ph"><div><div style="font-weight:700;font-size:12px;color:${b.primary}">${esc((M.program || "PROGRAM").toUpperCase())}</div>
+        <div style="font-weight:700;font-size:11.5px;color:${b.accent}">${esc(`${M.number} ${M.title}`)}</div></div>
+        ${b.logo ? `<img src="${b.logo}" alt="">` : `<span class="note">Logo appears here</span>`}</div>
+      <div class="band" style="color:${b.primary}"><span style="background:${tint(b.primary, .6)}">2026</span><span style="background:${tint(b.accent, .7)}">2027</span><span style="background:${tint(b.accent, .5)}">Jan</span><span style="background:#fff">Feb</span></div>
+      <div style="display:flex;gap:6px;align-items:center;font-size:10px"><span style="width:12px;height:30px;background:${laneHeader(b.accent)};border:1px solid ${b.primary}"></span><span style="flex:1;height:10px;background:${laneBar(b.accent)};border:1px solid ${b.primary}"></span><span style="flex:1;height:10px;background:${laneBar(b.primary)};border:1px solid ${b.primary}"></span></div>`;
+    m.querySelector("#brPrimary").value = b.primary; m.querySelector("#brAccent").value = b.accent;
+    m.querySelector("#brPicked").hidden = !picked || (picked.primary === b.primary && picked.accent === b.accent);
+  };
+  m.querySelector("#brUpload").onclick = () => m.querySelector("#brFile").click();
+  m.querySelector("#brFile").onchange = e => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    if (f.size > 8e6) return toast("That image is over 8 MB. Use a smaller PNG, JPG or SVG.");
+    const r = new FileReader();
+    r.onload = async () => {
+      try {
+        const out = await prepareLogo(r.result);
+        Object.assign(b, { logo: out.logo, ratio: out.ratio, primary: out.primary, accent: out.accent });
+        picked = { primary: out.primary, accent: out.accent };
+        if (!m.querySelector("#brName").value.trim()) m.querySelector("#brName").value = f.name.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ");
+        m.querySelector("#brUpload").textContent = "Replace logo…";
+        m.querySelector("#brLogoNote").textContent = "Colours picked from the logo; adjust them if needed.";
+        preview();
+      } catch (err) { toast("Couldn't use that image: " + err.message, 5000); }
+    };
+    r.readAsDataURL(f);
+  };
+  m.querySelector("#brPrimary").oninput = e => { b.primary = e.target.value.toUpperCase(); preview(); };
+  m.querySelector("#brAccent").oninput = e => { b.accent = e.target.value.toUpperCase(); preview(); };
+  m.querySelector("#brSwap").onclick = () => { [b.primary, b.accent] = [b.accent, b.primary]; preview(); };
+  m.querySelector("#brPicked").onclick = () => { Object.assign(b, picked); preview(); };
+  preview();
+}
+$("bBrand").onclick = openBrandMenu;
+
+/* =====================================================================
    Toolbar actions
    ===================================================================== */
 $("bLane").onclick = () => { const l = { id: "L" + uid(), name: "New lane", colour: P.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 2 }; commit(p => p.lanes.push(l)); sel = { type: "lane", id: l.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
@@ -1882,7 +2091,7 @@ async function openFromFile(f, handle) {
     promptFirstSave("This programme was built from a workbook and hasn't been saved yet.");
   }
 }
-function startNew(project) { loadDoc(project, null); promptFirstSave("Your new programme hasn't been saved yet."); }
+function startNew(project) { if (P.brand) { remapBrandColours(project, DEFAULT_BRAND, P.brand); project.brand = clone(P.brand); } loadDoc(project, null); promptFirstSave("Your new programme hasn't been saved yet."); }
 $("bImport").onclick = () => $("fImport").click();
 $("fImport").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -2236,6 +2445,7 @@ function showStatus() {
 function loadDoc(project, doc) {
   P = upgradeProject(project); DOC = doc; past = []; future = []; sel = null; touched = false;
   if (DOC && !DOC.titleKey) DOC.titleKey = fileBase();
+  rememberProjectBrand();
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   rememberFile();
   render(); renderSide(); showStatus();
