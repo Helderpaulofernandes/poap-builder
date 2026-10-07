@@ -1,7 +1,7 @@
 // Which version this is, and what the start screen says about the other one.
-// The only file that differs between the branches: main = "stable", team-beta = "beta".
+// The only file that differs between the branches: main = "stable", team-beta = "beta" (this one).
 window.POAP_CHANNEL = {
-  channel: "stable",
+  channel: "beta",
   stableUrl: "https://helderpaulofernandes.github.io/poap-builder/",
   betaUrl: "https://helderpaulofernandes.github.io/poap-builder-beta/",
   title: "Team working",
