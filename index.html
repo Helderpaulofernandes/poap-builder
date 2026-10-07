@@ -1709,17 +1709,21 @@ $("chart").addEventListener("pointerdown", e => {
     drag = { link: true, id, end: t.getAttribute("data-part") === "lf" ? "f" : "s", x0: +t.getAttribute("cx"), y0: +t.getAttribute("cy") };
     e.preventDefault(); return;
   }
-  if (id && (e.shiftKey || e.ctrlKey || e.metaKey)) {   // add to / take out of the selection
+  // Ctrl-click adds to / takes out of the selection. So does a Shift-click; a Shift-drag instead moves the
+  // selection (with this one) up or down only, keeping its dates
+  const shiftBody = e.shiftKey && !e.ctrlKey && !e.metaKey && (t.getAttribute("data-part") || "body") === "body";
+  if (id && (e.ctrlKey || e.metaKey || (e.shiftKey && !shiftBody))) {
     const ids = selectedIds(); const i = ids.indexOf(id);
     if (i >= 0) ids.splice(i, 1); else ids.push(id);
     return selectItems(ids);
   }
   if (id) {
-    const it = P.items.find(i => i.id === id);
-    const group = MULTI.size > 1 && MULTI.has(id);   // dragging one of several selected: they all move
-    if (!group) MULTI.clear();
+    const it = P.items.find(i => i.id === id), prevSel = selectedIds();
+    const withThis = shiftBody ? [...new Set([...prevSel, id])] : null;
+    const group = (MULTI.size > 1 && MULTI.has(id)) || (withThis && withThis.length > 1);   // dragging one of several selected: they all move
+    if (!group) MULTI.clear(); else if (withThis) MULTI = new Set(withThis);
     sel = { type: "item", id };
-    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false };
+    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false, toggle: shiftBody, prevSel };
     // a summary bar carries the bars inside it
     if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
     if (drag.part === "b") drag.parents = new Map(P.items.map(i => [i.id, i.parent]));   // membership before this drag
@@ -1813,7 +1817,8 @@ window.addEventListener("pointermove", e => {
     return;
   }
   const p = svgPt(e), it = P.items.find(i => i.id === drag.id), o = drag.orig;
-  const dd = Math.round((p.x - drag.x0) / LAY.ppd);
+  // Shift held while moving: the dates stay put, only the row or lane changes
+  const dd = drag.part === "body" && e.shiftKey ? 0 : Math.round((p.x - drag.x0) / LAY.ppd);
   if (!drag.moved && Math.abs(p.x - drag.x0) < 3 && Math.abs(p.y - drag.y0) < 3) return;
   drag.moved = true;
   const ms = isMs(P, it.style);
@@ -1864,6 +1869,11 @@ window.addEventListener("pointerup", e => {
     $("chart").querySelector("#linkGhost")?.remove();
     if (tg) addLink(from, tg.it.id, (fromEnd === "f" ? "F" : "S") + (tg.end === "s" ? "S" : "F"));
     return;
+  }
+  if (!drag.moved && drag.toggle) {   // a Shift-click (no drag): add it to the selection, or take it out
+    const id = drag.id, ids = drag.prevSel.slice(), i = ids.indexOf(id); drag = null;
+    if (i >= 0) ids.splice(i, 1); else ids.push(id);
+    return selectItems(ids);
   }
   if (drag.moved) {
     // dropping a bar in a summary's rows puts it in that summary; dragging it out takes it out
@@ -1977,6 +1987,7 @@ function openHelp() {
   const rows = [
     ["Select", "Click a bar or milestone. " + k("Shift") + " or " + k("Ctrl") + "-click to add more; drag a box on empty space to select several"],
     ["Move", "Drag it (several selected move together), or " + k("←") + " " + k("→") + " for a day, with " + k("Shift") + " for a week"],
+    ["Move without changing dates", "Hold " + k("Shift") + " while dragging: up or down to another row or lane only, the dates stay. Works for several selected too"],
     ["Change dates", "Drag either end of a bar, or type them in the side panel"],
     ["Add", "Double-click empty space in a lane, or use + Bar, + Milestone, + Lane, + Curtain"],
     ["Duplicate / delete", k("Ctrl") + " " + k("D") + " / " + k("Del")],
