@@ -36,6 +36,29 @@ const HELPERS = () => {
     ok(c, m) { if (!c) throw new Error(m || "assertion failed"); },
     eq(a, b, m) { const A = JSON.stringify(a), B = JSON.stringify(b); if (A !== B) throw new Error(`${m ? m + ": " : ""}expected ${B}, got ${A}`); },
     clean() { document.querySelectorAll(".modal, .startscreen").forEach(x => x.remove()); sel = null; },
+    // a small made-up P6 export: key milestones, design stages, two construction portions, an unlinked chain
+    xer(shift = 0) {
+      const d = (s, n = 0) => addDays(s, n + shift) + " 08:00";
+      const wbs = [["100", "", "T-100", "Test Rail Upgrade (Option A)", "Y"], ["101", "100", "M", "Project Management"], ["102", "101", "K", "Key Milestones"],
+        ["103", "100", "D", "DESIGN"], ["104", "103", "1", "DESIGN STAGE 1 - CONCEPT"], ["105", "103", "2", "Design Stage 2"],
+        ["106", "100", "C", "Construction"], ["107", "106", "A", "Portion A - North / Metro"], ["108", "106", "B", "Portion B - South"],
+        ["109", "107", "1", "Segment 1"], ["110", "107", "2", "Segment 2"], ["111", "108", "1", "Segment 3"]];
+      // id, wbs, code, name, type, start, end, float hours, driving
+      const t = [["1", "102", "MS1", "Date for Contract Award", "TT_Mile", "2027-01-04", "2027-01-04", 0, "Y"], ["2", "102", "MS2", "Date for Completion", "TT_FinMile", "2027-12-17", "2027-12-17", 0, "Y"],
+        ["3", "102", "CT1", "Contingency - Weather", "TT_Task", "2027-12-01", "2027-12-14", 40, "N"],
+        ["4", "104", "D1A", "Concept", "TT_Task", "2027-01-05", "2027-02-10", 0, "Y"], ["5", "105", "D2A", "Detail", "TT_Task", "2027-02-11", "2027-04-01", 0, "Y"]];
+      let n = 10; const seg = (w, start, k) => { for (let i = 0; i < k; i++) t.push([String(n++), w, "A" + n, "Work " + n, "TT_Task", addDays(start, i * 7), addDays(start, i * 7 + 6), 80, "N"]); };
+      seg("109", "2027-05-03", 3); seg("110", "2027-06-07", 3); seg("111", "2027-05-10", 5);
+      t.push(["90", "111", "X1", "Orphan fence", "TT_Task", "2027-01-04", "2027-01-06", 800, "N"], ["91", "111", "X2", "Follows orphan", "TT_Task", "2027-01-07", "2027-01-08", 800, "N"]);
+      const pred = [["4", "1"], ["5", "4"], ["91", "90"], ["2", "5"]]; for (let i = 10; i < n; i++) pred.push([String(i), i === 10 || i === 13 || i === 16 ? "5" : String(i - 1)]);
+      const L = ["ERMHDR\t25.12", "%T\tPROJECT", "%F\tproj_id\tproj_short_name\tlast_recalc_date\tplan_start_date\tclndr_id", `%R\t1\tT-100\t${d("2027-01-04")}\t${d("2027-01-04")}\t9`,
+        "%T\tCALENDAR", "%F\tclndr_id\tclndr_name\tday_hr_cnt", "%R\t9\tStd\t8",
+        "%T\tPROJWBS", "%F\twbs_id\tproj_id\tparent_wbs_id\twbs_short_name\twbs_name\tseq_num\tproj_node_flag", ...wbs.map((w, i) => `%R\t${w[0]}\t1\t${w[1]}\t${w[2]}\t${w[3]}\t${i}\t${w[4] || "N"}`),
+        "%T\tTASK", "%F\ttask_id\tproj_id\twbs_id\tclndr_id\ttask_code\ttask_name\ttask_type\tstatus_code\tearly_start_date\tearly_end_date\ttotal_float_hr_cnt\tdriving_path_flag\tphys_complete_pct\tcomplete_pct_type",
+        ...t.map(x => `%R\t${x[0]}\t1\t${x[1]}\t9\t${x[2]}\t${x[3]}\t${x[4]}\tTK_NotStart\t${d(x[5])}\t${d(x[6])}\t${x[7]}\t${x[8]}\t0\tCP_Phys`),
+        "%T\tTASKPRED", "%F\ttask_pred_id\ttask_id\tpred_task_id\tproj_id\tpred_type\tlag_hr_cnt", ...pred.map((p, i) => `%R\t${i + 1}\t${p[0]}\t${p[1]}\t1\tPR_FS\t0`), "%E"];
+      return L.join("\r\n");
+    },
     // rows: [id, start, end, style?, extra?]; style defaults to the plain bar
     mini(rows) {
       const p = blankProject(); p.timeline = { start: "2027-01-01", end: "2027-06-30" };
@@ -202,6 +225,35 @@ const TESTS = {
     selectItems(["A", "B"]); document.getElementById("mxDel").click();
     T.eq([P.items.map(i => i.id), T.item("C").preds], [["C"], []], "deleted, and links to them removed");
     undo(); T.eq(P.items.length, 3, "undo brings them back");
+  },
+  "P6: reads the XER and suggests a summary": () => {
+    const M = p6Model(parseXer(T.xer()));
+    T.eq([M.code, M.title, M.dataDate, M.tasks.length], ["T-100", "Test Rail Upgrade (Option A)", "2027-01-04", 18]);
+    T.eq([...M.out].map(t => t.code).sort(), ["X1", "X2"], "the unlinked chain at the data date is left out");
+    const rec = p6Suggest(M);
+    T.eq([rec["M"], rec["M.K"], rec["D"], rec["D.1"], rec["C"], rec["C.A"], rec["C.B"], rec["C.A.1"]], ["split", "ms", "lane", "bar", "split", "lane", "lane", "bar"]);
+  },
+  "P6: builds lanes, bars, milestones and curtains": () => {
+    const M = p6Model(parseXer(T.xer())), { rows, lanes } = p6Build(M, p6Suggest(M));
+    T.eq(lanes.map(l => l.name), ["Key Milestones", "Design", "Portion A", "Portion B"], "short lane names, capitals tamed");
+    const r = id => rows.find(x => x.id === id);
+    T.eq(r("WBS D.1").name, "Design stage 1 - concept");
+    T.eq([r("WBS C.B.1").start, r("WBS C.B.1").end], ["2027-05-10", "2027-06-13"], "segment dates ignore the orphans");
+    T.eq([r("MS2").style, r("MS2").p6.crit], ["ML_Diamond", true]);
+    T.eq([r("CT1").style, r("CT1").lane], ["CUR_ALLOWANCE", ""], "contingency becomes a curtain");
+  },
+  "P6: an update keeps the layout and can keep the old dates as the baseline": async () => {
+    const M = p6Model(parseXer(T.xer())), { rows, lanes } = p6Build(M, p6Suggest(M));
+    const p = projectFromRows(rows, lanes, blankProject()); p.timeline = { start: "2027-01-01", end: "2028-01-31" }; p.p6 = { recipe: p6Suggest(M), code: "T-100", source: "T-100 OPTION A.xer" }; p.meta.title = "Option A";
+    loadDoc(p, null);
+    const rowBefore = T.item("WBS C.B.1").row;
+    await importP6(new File([T.xer(14)], "T-100 OPTION B.xer"), "update");
+    T.ok(document.getElementById("p6Sep").checked && document.getElementById("p6Keep").checked, "another scenario: separate programme and baseline offered");
+    document.querySelector(".modal [data-act=go]").click();
+    T.ok(/changed/.test(document.querySelector(".modal .chips").innerText), "change preview shown");
+    document.querySelector(".modal [data-act=apply]").click();
+    const s = T.item("WBS C.B.1");
+    T.eq([s.start, s.bStart, s.row, P.meta.title, DOC], ["2027-05-24", "2027-05-10", rowBefore, "Option B", null]);
   },
   "Help opens with ? and lists the shortcuts": () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));

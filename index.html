@@ -66,6 +66,26 @@ button, input, select { font: inherit; color: inherit; }
 .menu button { display: grid; gap: 1px; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 3px; cursor: pointer; }
 .menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
 .menu button b { font-weight: 600; font-size: 12.5px; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+/* P6 summary builder */
+.dlg.wide { width: min(1120px, 100%); }
+.p6b { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 16px; min-height: 0; }
+.p6tree { overflow: auto; max-height: 62vh; border: 1px solid var(--line); border-radius: 4px; }
+.p6row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 150px 150px; gap: 6px; align-items: center; padding: 4px 8px 4px calc(6px + var(--d) * 18px); border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.p6row.off .p6name, .p6row.off .p6meta { opacity: .5; }
+.p6row select { padding: 3px 4px; font-size: 12px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); }
+.p6tog { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0; font-size: 12px; }
+.p6name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p6code { font: 11px var(--font-mono); color: var(--muted); }
+.p6meta { font-size: 11px; color: var(--muted); line-height: 1.25; }
+.p6meta .warn, .p6warn b { color: var(--warn); }
+.p6sum { overflow: auto; max-height: 62vh; display: grid; gap: 8px; align-content: start; font-size: 12.5px; }
+.p6sum h4 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+.p6lanes { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.p6lanes li span { display: block; }
+.p6warn { border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 4px; padding: 8px; display: grid; gap: 6px; }
+.p6warn ul { margin: 4px 0 0; padding-left: 16px; max-height: 180px; overflow: auto; font-size: 11.5px; }
+@media (max-width: 800px) { .p6b { grid-template-columns: 1fr; } .p6row { grid-template-columns: 22px minmax(0, 1fr) 120px; } .p6row .p6meta { display: none; } }
 #bHelp { width: 30px; padding-left: 0; padding-right: 0; font-weight: 700; border-radius: 50%; }
 .helpbody h4 { margin: 14px 0 4px; font-size: 13px; color: var(--accent); }
 .helpbody ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
@@ -272,17 +292,21 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
   </div>
   <div class="grp">
     <div class="menuwrap">
-      <button class="btn" id="bExcel" aria-haspopup="menu" aria-expanded="false" title="Export the programme to Excel, or update it from an edited workbook">Excel <span aria-hidden="true">▾</span></button>
+      <button class="btn" id="bExcel" aria-haspopup="menu" aria-expanded="false" title="Excel and P6: export, import and update">Data <span aria-hidden="true">▾</span></button>
       <div class="menu" id="mExcel" role="menu" hidden>
         <button type="button" role="menuitem" id="bExport"><b>Export to Excel</b><span class="note">Every activity, lane and type, to edit or share</span></button>
         <button type="button" role="menuitem" id="bImport"><b>Update from Excel…</b><span class="note">Apply an edited workbook, with a preview of every change</span></button>
+        <hr>
+        <button type="button" role="menuitem" id="bP6New"><b>New summary from P6 (XER)…</b><span class="note">Pick what each part of the WBS shows; a suggestion to start from</span></button>
+        <button type="button" role="menuitem" id="bP6Upd"><b>Update from P6 (XER)…</b><span class="note">Next month's export or another scenario, summarised the same way</span></button>
       </div>
     </div>
     <button class="btn primary" id="bPdf">Export PDF</button>
     <button class="btn" id="bIssue" title="Save this revision's PDF and Excel to the Issued folder in the library" hidden>Issue</button>
   </div>
-  <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls" hidden>
+  <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls,.xer" hidden>
   <input type="file" id="fImport" accept=".xlsx,.xlsm,.xls" hidden>
+  <input type="file" id="fXer" accept=".xer" hidden>
   <input type="file" id="fLogo" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
 </div>
 <div class="bar tools">
@@ -558,8 +582,17 @@ function makesLoop(fromId, toId) {
 /* Critical path from the dates on the sheet: a backward pass from the programme finish gives each activity's
    latest finish; total float is that minus its finish. Activities with no successor may float to the finish.
    Critical = float within the near-critical allowance (finished work never is). */
+/* Without links of its own, a programme summarised from P6 uses P6's answer: critical when any of its
+   activities is on the driving path or has no float left (or within the near-critical allowance). */
+function p6CriticalPath() {
+  const its = P.items.filter(i => linkable(i) && (i.p6crit || i.p6tf != null)); if (!its.length) return null;
+  const lg = logic(), near = lg.mode === "float" ? +lg.nearDays || 0 : 0;
+  const float = new Map(its.filter(i => i.p6tf != null).map(i => [i.id, i.p6tf]));
+  const critical = new Set(its.filter(i => pctOf(i) < 100 && (i.p6crit || (i.p6tf != null && i.p6tf <= near))).map(i => i.id));
+  return { float, critical, finish: Math.max(...its.map(i => tpts(i).f)), loops: new Set(), links: [], driving: new Set(), broken: [], fromP6: true };
+}
 function criticalPath() {
-  const links = allLinks(); if (!links.length) return null;
+  const links = allLinks(); if (!links.length) return p6CriticalPath();
   const items = P.items.filter(linkable), T = new Map(items.map(i => [i.id, tpts(i)]));
   // the programme finish is the end of the linked network: unlinked items (notes, key dates) don't set it
   const inNet = new Set(links.flatMap(l => [l.from.id, l.to.id]));
@@ -1148,9 +1181,9 @@ function footerPlan(L, keyList) {
   if (pr.bars && P.items.some(i => tracked(i) && pctOf(i) > 0)) extra("pct", "Actual progress");
   if (pr.dataDate) extra("dd", `Data date ${fmt(pr.dataDate)}`);
   if (pr.dataDate && pr.line) extra("line", "Progress line");
-  const lg = logic(), cp = (lg.links || lg.critical) && allLinks().length ? (L.cp !== undefined ? L.cp : criticalPath()) : null;
+  const lg = logic(), cp = lg.links || lg.critical ? (L.cp !== undefined ? L.cp : criticalPath()) : null;
   if (cp && lg.critical && cp.critical.size) extra("crit", lg.mode === "float" && lg.nearDays ? `Critical (float ≤ ${lg.nearDays} d)` : "Critical path");
-  if (cp && lg.links) extra("link", "Relationship");
+  if (cp && lg.links && cp.links.length) extra("link", "Relationship");
   if (keyList.length) {
     entries.push({ kind: "heading", text: "Key:", w: headW, newLine: true });   // the key always starts its own line
     keyList.forEach(k => entries.push({ kind: "key", k, w: 15 + textW(k.name, 9, 500) + 16 }));
@@ -1595,8 +1628,8 @@ function render() {
   const logo = brandLogoSrc();
   if (logo) { $("brandLogo").src = logo; $("brandLogo").hidden = false; } else $("brandLogo").hidden = true;
   $("brandName").textContent = currentBrand().name;
-  const anyLinks = allLinks().length > 0;
-  $("tgLinks").setAttribute("aria-pressed", anyLinks && logic().links); $("tgCrit").setAttribute("aria-pressed", anyLinks && logic().critical);
+  const anyLinks = allLinks().length > 0, anyCrit = anyLinks || !!p6CriticalPath();
+  $("tgLinks").setAttribute("aria-pressed", anyLinks && logic().links); $("tgCrit").setAttribute("aria-pressed", anyCrit && logic().critical);
   $("tgLinks").title = anyLinks ? "Show relationship arrows" : "No relationships yet: press to find links automatically";
   // Show selector: only once there's a planned baseline to compare with
   $("showGrp").hidden = !hasPlan();
@@ -1889,13 +1922,18 @@ function groupFreeRow(p, c, it) {
   return c.row + 1;
 }
 /* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
+let PPD_HINT = null;   // the scale a programme being built will be drawn at, before it has been laid out
 function freeRow(p, it) {
   // days an item occupies on its row, including a label drawn beside it
   let laid = null; try { laid = LAY; } catch (e) {}   // not laid out yet while the page is starting up
-  const ppd = Math.max(0.5, (laid && laid.ppd) || p.view.zoom);
+  const ppd = Math.max(0.5, PPD_HINT || (laid && laid.ppd) || p.view.zoom);
+  const endD = p.timeline ? toDays(p.timeline.end) + 1 : Infinity;
   const span = x => {
     const s = toDays(x.start), e = toDays(x.end) + 1;
-    if (isMs(p, x.style)) return [s, s + Math.ceil((textW(x.name, 9, 500) + (inlineMsDate() ? textW("  00-Mmm-00", 8.5, 400) : 0) + 30) / ppd)];
+    if (isMs(p, x.style)) {
+      const w = Math.ceil((textW(x.name, 9, 500) + (inlineMsDate() ? textW("  00-Mmm-00", 8.5, 400) : 0) + 30) / ppd);
+      return s + w > endD ? [s - w, s + 1] : [s, s + w];   // near the right edge the name goes to the left
+    }
     const tw = textW(x.name, 9, 500) + 10;
     return [s, tw < (e - s) * ppd ? e : e + Math.ceil((tw + 4) / ppd)];   // name doesn't fit inside: it sits to the right
   };
@@ -2392,11 +2430,12 @@ function bindLinkFields(cur) {
 /* programme panel: show arrows / critical path, near-critical allowance, auto-push, find links */
 function logicSection() {
   const lg = logic(), cp = criticalPath();
-  const stats = cp ? `${cp.links.length} relationship${cp.links.length === 1 ? "" : "s"} · ${cp.critical.size} critical · finish ${fmt(fromDays(cp.finish - 1))}`
+  const stats = cp && cp.fromP6 ? `Critical path from P6: ${cp.critical.size} item${cp.critical.size === 1 ? "" : "s"} on the driving path or with no float left. Links you add here take over from it.`
+    : cp ? `${cp.links.length} relationship${cp.links.length === 1 ? "" : "s"} · ${cp.critical.size} critical · finish ${fmt(fromDays(cp.finish - 1))}`
     + (cp.broken.length ? ` · <span style="color:${LINK_BROKEN}">${cp.broken.length} broken by the dates</span>` : "") + (cp.loops.size ? ` · <span style="color:var(--danger)">loop through ${[...cp.loops].join(", ")}</span>` : "")
     : "No relationships yet. Use Find links, or select an activity and drag the dot at its end onto the next one.";
   return `<h2>Relationships</h2>
-    <div class="actions"><button class="btn primary" id="lgFind">Find links automatically…</button>${cp ? `<button class="btn" id="lgClear">Remove all links</button>` : ""}</div>
+    <div class="actions"><button class="btn primary" id="lgFind">Find links automatically…</button>${cp && cp.links.length ? `<button class="btn" id="lgClear">Remove all links</button>` : ""}</div>
     <p class="note">${stats}</p>
     <div class="f"><label>Relationship arrows</label><div class="seg" role="group" aria-label="Relationship arrows">${[["all", "All"], ["critical", "Critical path only"], ["off", "Off"]].map(([v, n]) => `<button type="button" data-arrows="${v}" aria-pressed="${(lg.links ? (lg.arrows === "critical" ? "critical" : "all") : "off") === v}">${n}</button>`).join("")}</div></div>
     <h2>Critical path</h2>
@@ -3112,7 +3151,7 @@ $("bBrand").onclick = openBrandMenu;
 })();
 /* Logic toggles: with no links yet, the first press offers to find them */
 const toggleLogic = key => {
-  if (!allLinks().length) return openFindLinks();
+  if (!allLinks().length && !(key === "critical" && p6CriticalPath())) return openFindLinks();
   commit(p => { p.logic = { ...logic(), ...(p.logic || {}) }; p.logic[key] = !p.logic[key]; }, true);
 };
 $("tgLinks").onclick = () => toggleLogic("links");
@@ -3154,6 +3193,7 @@ $("fOpen").onchange = async e => {
 };
 /* f: a File; handle: its FileSystemFileHandle when the browser gave us one (auto-save goes back to it) */
 async function openFromFile(f, handle) {
+  if (/\.xer$/i.test(f.name)) return importP6(f, "new");
   if (/\.json$/i.test(f.name)) {
     const text = await f.text(), p = JSON.parse(text);
     if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project");
@@ -3430,6 +3470,7 @@ function previewImport(parsed, fname) {
     apply: m => {
       const del = m.querySelector("#impDel")?.checked;
       commit(p => {
+        if (parsed.onApply) parsed.onApply(p);   // e.g. a P6 update keeping the current dates as the baseline first
         p.styles.push(...clone(newTypes));
         const laneFor = name => { let l = p.lanes.find(x => x.name.toLowerCase() === name.toLowerCase()); if (!l) l = newLane(p, name); return l.id; };
         for (const c of changes) {
@@ -3447,6 +3488,7 @@ function previewImport(parsed, fname) {
             if (r.bStart !== undefined) { if (r.bStart) { it.bStart = r.bStart; it.bEnd = isMs(p, st) ? r.bStart : (r.bEnd || r.bStart); } else { delete it.bStart; delete it.bEnd; } }
             if (r.preds !== undefined) { if (r.preds.length) it.preds = r.preds; else delete it.preds; }
           }
+          if (r.p6) { if (r.p6.crit) it.p6crit = true; else delete it.p6crit; if (r.p6.tf != null) it.p6tf = r.p6.tf; else delete it.p6tf; }   // P6's float, quietly refreshed
         }
         if (ddChange) p.progress = { ...prog(), ...(p.progress || {}), dataDate: ddNew };
         const reserved = new Set(parsed.rows.map(r => r.id).filter(Boolean));
@@ -3460,6 +3502,7 @@ function previewImport(parsed, fname) {
           if (!curtain && r.pct) it.pct = r.pct;
           if (!curtain && r.bStart) { it.bStart = r.bStart; it.bEnd = isMs(p, st) ? r.bStart : (r.bEnd || r.bStart); }
           if (!curtain && r.predsRaw) { const pr = parsePreds(r.predsRaw, allIds).filter(x => x.id !== id); if (pr.length) it.preds = pr; }
+          if (r.p6) { if (r.p6.crit) it.p6crit = true; if (r.p6.tf != null) it.p6tf = r.p6.tf; }
           it.row = curtain ? 0 : Number.isFinite(r.row) ? r.row : freeRow(p, it);
           p.items.push(it);
         }
@@ -3481,9 +3524,274 @@ function previewImport(parsed, fname) {
         }
       });
       toast(`Updated ${changes.length}, added ${adds.length + dupes.length}${laneDiffs.length ? `, ${laneDiffs.length} lane change${laneDiffs.length > 1 ? "s" : ""}` : ""}${del && removable ? `, removed ${removeLabel}` : ""}.`, 5000);
+      if (parsed.afterApply) parsed.afterApply();
     }
   });
 }
+
+/* =====================================================================
+   P6 import: read an XER export, suggest a summary from its WBS, let the planner adjust it, and build
+   (or update) the PoaP from it. What each WBS node shows is kept with the programme (P.p6.recipe), so the
+   next month's XER, or another scenario of the same project, is summarised the same way.
+   ===================================================================== */
+async function readXerText(f) {
+  const buf = await f.arrayBuffer();
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch (e) { return new TextDecoder("windows-1252").decode(buf); }
+}
+function parseXer(text) {
+  const T = {}; let cur = null, fields = null;
+  for (const line of text.split(/\r?\n/)) {
+    const p = line.split("\t");
+    if (p[0] === "%T") { cur = p[1]; T[cur] = T[cur] || []; }
+    else if (p[0] === "%F") fields = p.slice(1);
+    else if (p[0] === "%R" && cur && fields) { const r = {}; fields.forEach((f, i) => r[f] = p[i + 1] ?? ""); T[cur].push(r); }
+  }
+  if (!T.TASK || !T.PROJWBS) throw new Error("this doesn't look like a P6 XER export (no activities or WBS in it)");
+  return T;
+}
+/* activities, WBS tree and links of the (largest) project in the export */
+function p6Model(T) {
+  const n = id => T.TASK.filter(t => t.proj_id === id).length;
+  const proj = (T.PROJECT || []).slice().sort((a, b) => n(b.proj_id) - n(a.proj_id))[0] || {};
+  const pid = proj.proj_id, day = s => (s || "").slice(0, 10);
+  const hrs = new Map((T.CALENDAR || []).map(c => [c.clndr_id, +c.day_hr_cnt || 8]));
+  const W = new Map();
+  T.PROJWBS.filter(w => w.proj_id === pid).forEach(w => W.set(w.wbs_id, { id: w.wbs_id, parentId: w.parent_wbs_id, code: (w.wbs_short_name || "").trim(), name: (w.wbs_name || "").trim(), seq: +w.seq_num || 0, projNode: w.proj_node_flag === "Y", kids: [], tasks: [] }));
+  let top = [...W.values()].find(w => w.projNode) || { code: "", name: proj.proj_short_name || "Project", kids: [], tasks: [] };
+  for (const w of W.values()) if (w !== top) (W.get(w.parentId) || top).kids.push(w);
+  const walk = (w, path, depth) => {
+    w.path = path; w.depth = depth;
+    w.kids.sort((a, b) => a.seq - b.seq || a.code.localeCompare(b.code));
+    w.kids.forEach(k => { k.parent = w === top ? null : w; walk(k, path ? path + "." + k.code : k.code, depth + 1); });
+  };
+  walk(top, "", 0);
+  const tasks = T.TASK.filter(t => t.proj_id === pid).map(t => {
+    const ms = t.task_type === "TT_Mile" || t.task_type === "TT_FinMile";
+    const s = day(t.act_start_date) || day(t.restart_date) || day(t.early_start_date) || day(t.target_start_date);
+    const e = day(t.act_end_date) || day(t.reend_date) || day(t.early_end_date) || day(t.target_end_date);
+    const at = t.task_type === "TT_Mile" ? s || e : e || s;
+    const done = t.status_code === "TK_Complete";
+    const pct = done ? 100 : t.status_code === "TK_NotStart" ? 0 : t.complete_pct_type === "CP_Drtn" && +t.target_drtn_hr_cnt ? Math.round(100 * (1 - (+t.remain_drtn_hr_cnt || 0) / +t.target_drtn_hr_cnt)) : Math.round(+t.phys_complete_pct || 0);
+    const tf = t.total_float_hr_cnt === "" ? null : Math.round(+t.total_float_hr_cnt / (hrs.get(t.clndr_id) || 8) * 10) / 10;
+    return { id: t.task_id, code: (t.task_code || "").trim(), name: (t.task_name || "").trim(), type: t.task_type, ms, start: ms ? at : s, end: ms ? at : (e || s),
+      pct: Math.max(0, Math.min(100, pct)), actual: !!t.act_start_date, done, tf, driving: t.driving_path_flag === "Y", wbs: W.get(t.wbs_id) || top, preds: [], succs: [] };
+  }).filter(t => t.start);
+  tasks.forEach(t => t.wbs.tasks.push(t));
+  const byId = new Map(tasks.map(t => [t.id, t]));
+  (T.TASKPRED || []).forEach(r => { const a = byId.get(r.pred_task_id), b = byId.get(r.task_id); if (a && b) { a.succs.push(b); b.preds.push(a); } });
+  const dataDate = day(proj.last_recalc_date) || day(proj.plan_start_date);
+  // left out of the summary dates: unlinked activities sitting at the data date (placeholders, or work not tied
+  // into the programme yet) and whatever only follows from them
+  const out = new Set();
+  for (const t of tasks) {
+    if (t.actual || t.start > dataDate || t.preds.length) continue;
+    if (!t.ms || !t.succs.length) out.add(t);
+  }
+  for (let grew = true; grew;) { grew = false; for (const t of tasks) if (!out.has(t) && !t.actual && t.preds.length && t.preds.every(p => out.has(p))) { out.add(t); grew = true; } }
+  return { proj, code: proj.proj_short_name || "", title: top.name, dataDate, top, nodes: [...W.values()].filter(w => w !== top), tasks, out, roll: new Map() };
+}
+/* a WBS node's activities, the ones counted, and their date range (work, or milestones if it has no work) */
+function p6Roll(M, w) {
+  if (M.roll.has(w)) return M.roll.get(w);
+  const all = [...w.tasks, ...w.kids.flatMap(k => p6Roll(M, k).all)];
+  const inc = M.includeAll ? all : all.filter(t => !M.out.has(t));
+  const work = inc.filter(t => !t.ms && t.type !== "TT_LOE" && t.type !== "TT_WBS");
+  const use = work.length ? work : inc;
+  const r = { all, inc, work, ms: inc.filter(t => t.ms), s: use.length ? use.reduce((m, t) => t.start < m ? t.start : m, use[0].start) : null,
+    e: use.length ? use.reduce((m, t) => t.end > m ? t.end : m, use[0].end) : null, left: all.length - inc.length };
+  M.roll.set(w, r); return r;
+}
+const P6_MODES = [["lane", "Lane (parts below)"], ["split", "Look inside"], ["bar", "One bar"], ["ms", "Its milestones"], ["hide", "Leave out"]];
+const P6_NAMES = { ms: /milestone|key date|contract date/i, design: /design/i, build: /construct|main works|delivery|installation|civil|build/i, finish: /complet|handover|close.?out/i };
+/* A first suggestion from the WBS names and shape, for a typical summary: key milestones, design by stage,
+   construction by portion, completions. Anything else is left out until switched on. */
+function p6Suggest(M) {
+  const rec = {}, span = w => { const r = p6Roll(M, w); return r.s ? toDays(r.e) - toDays(r.s) + 1 : 0; };
+  const has = w => p6Roll(M, w).inc.length > 0;
+  const barsBelow = w => {
+    const kids = w.kids.filter(has), ws = span(w);
+    for (const k of kids) {
+      if (P6_NAMES.ms.test(k.name)) rec[k.path] = "ms";
+      // a parallel breakdown (packages next to stages, say) spans nearly all of its parent: leave it out
+      else if (kids.length > 3 && ws && span(k) >= ws * .75 && p6Roll(M, k).work.length) rec[k.path] = "hide";
+      else rec[k.path] = "bar";
+    }
+    if (!kids.length) rec[w.path] = rec[w.path] || "bar";
+  };
+  for (const w of M.top.kids) {
+    if (!has(w)) { rec[w.path] = "hide"; continue; }
+    if (P6_NAMES.design.test(w.name)) { rec[w.path] = "lane"; barsBelow(w); }
+    else if (P6_NAMES.build.test(w.name)) {
+      const parts = w.kids.filter(k => p6Roll(M, k).work.length >= 5);
+      if (parts.length >= 2 && parts.length <= 8) { rec[w.path] = "split"; w.kids.forEach(k => { if (parts.includes(k)) { rec[k.path] = "lane"; barsBelow(k); } else rec[k.path] = "hide"; }); }
+      else { rec[w.path] = "lane"; barsBelow(w); }
+    } else if (P6_NAMES.finish.test(w.name)) {
+      rec[w.path] = "lane";
+      w.kids.filter(has).forEach(k => { if (k.kids.some(has)) { rec[k.path] = "split"; barsBelow(k); } else rec[k.path] = "bar"; });
+    } else {
+      rec[w.path] = "split";
+      w.kids.forEach(k => rec[k.path] = P6_NAMES.ms.test(k.name) && has(k) ? "ms" : "hide");
+    }
+  }
+  return rec;
+}
+/* rows (as the Excel update reads them) and lanes from the WBS choices */
+function p6Build(M, rec) {
+  const rows = [], lanes = [], laneOf = new Map();
+  const mode = w => rec[w.path] || "hide";
+  // WBS names typed in capitals read as shouting on the sheet: sentence case, keeping short acronyms (AFC, CBC)
+  const short = s => {
+    s = s.replace(/\s+/g, " ").trim();
+    if (/[a-z]/.test(s) || !/[A-Z]{4}/.test(s)) return s;
+    const t = s.toLowerCase().replace(/\b[a-z]{2,3}\b/g, (w, i) => (s.substr(i, w.length).match(/^[A-Z]{2,3}$/) && !/^(ALL|AND|THE|FOR|OF|TO|IN|ON|BY)$/.test(s.substr(i, w.length)) ? w.toUpperCase() : w));
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+  // lane titles run up the side, so long WBS names make tall lanes: keep the part before " - " or " / "
+  const laneName = s => { s = short(s); const head = s.split(/\s+[-–\/]\s*|-\s+/)[0].trim(); return head.length >= 5 && head.length < s.length ? head : s; };
+  const addLane = (key, name) => {
+    if (!laneOf.has(key)) {
+      let nm = laneName(name); if (lanes.some(l => l.name === nm)) nm = short(name);   // keep lane names distinct
+      const l = { name: nm }; laneOf.set(key, l); lanes.push(l);
+    }
+    return laneOf.get(key);
+  };
+  const msStyle = (t, lane) => /contract award|date for (completion|contract)|deterministic|forecast date/i.test(t.name) ? "ML_Diamond" : /design/i.test(lane.name) ? "ML_Triangle" : "ML_Square";
+  const crit = ts => ts.some(t => !t.done && (t.driving || (t.tf != null && t.tf <= 0)));
+  const minTf = ts => { const f = ts.filter(t => !t.done && t.tf != null).map(t => t.tf); return f.length ? Math.min(...f) : null; };
+  const visit = (w, lane) => {
+    const m = mode(w), r = p6Roll(M, w);
+    if (m === "hide" || !r.inc.length) return;
+    if (m === "lane") lane = addLane(w.path, w.name);
+    if (m === "bar") {
+      lane = lane || addLane((w.path.split(".")[0]), (M.top.kids.find(k => k.path === w.path.split(".")[0]) || w).name);
+      const dur = t => toDays(t.end) - toDays(t.start) + 1, wsum = r.work.reduce((n, t) => n + dur(t), 0);
+      const pct = wsum ? Math.round(r.work.reduce((n, t) => n + dur(t) * t.pct, 0) / wsum) : 0;
+      rows.push({ id: "WBS " + w.path, name: short(w.name), style: "BAR", lane: lane.name, start: r.s, end: r.e, status: pct >= 100 ? "Complete" : "Active", row: NaN, y: NaN, fill: "", stroke: "", pct, p6: { crit: crit(r.inc), tf: minTf(r.inc) } });
+      return;
+    }
+    if (m === "ms") {
+      lane = lane || addLane(w.path, w.name);
+      r.ms.forEach(t => rows.push({ id: t.code, name: t.name, style: msStyle(t, lane), lane: lane.name, start: t.start, end: t.start, status: t.done ? "Complete" : "Active", row: NaN, y: NaN, fill: "", stroke: "", pct: t.done ? 100 : 0, p6: { crit: crit([t]), tf: t.done ? null : t.tf } }));
+      // contingency and allowance activities kept with the milestones become curtains across the sheet
+      r.work.filter(t => /contingen|allowance|float|buffer/i.test(t.name)).forEach(t => rows.push({ id: t.code, name: t.name.replace(/\s*-\s*contingency\s*-\s*/i, " · ").trim(), style: /allowance|weather/i.test(t.name) ? "CUR_ALLOWANCE" : "CUR_CONTINGENCY", lane: "", start: t.start, end: t.end, status: "Active", row: 0, y: NaN, fill: "", stroke: "" }));
+      return;
+    }
+    w.kids.forEach(k => visit(k, lane));   // lane / look inside: its parts decide
+  };
+  M.top.kids.forEach(w => visit(w, null));
+  // within each lane, earliest first, so rows fill in a cascade
+  const order = new Map(lanes.map((l, i) => [l.name, i]));
+  rows.sort((a, b) => (order.get(a.lane) ?? -1) - (order.get(b.lane) ?? -1) || toDays(a.start) - toDays(b.start) || toDays(a.end) - toDays(b.end));
+  return { rows, lanes };
+}
+/* entry point: a new programme from an XER, or an update of this one (mode "update") */
+async function importP6(file, mode) {
+  const M = p6Model(parseXer(await readXerText(file)));
+  const saved = mode === "update" && P.p6 && P.p6.recipe;
+  if (mode === "update" && P.p6 && P.p6.code && M.code && P.p6.code !== M.code)
+    toast(`Note: this programme was built from ${P.p6.code}; the file is ${M.code}.`, 6000);
+  M.includeAll = !!(saved && P.p6.includeAll);
+  openP6Builder(M, { ...p6Suggest(M), ...(saved || {}) }, file.name, mode);
+}
+/* the scenario named in the file: "P26-8287 RESOURCE HEAVY.xer" → "Resource Heavy" */
+const p6Scenario = fname => fname.replace(/\.xer$/i, "").replace(/^[A-Z]{0,4}-?\d[\w-]*\s+/i, "").trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+function openP6Builder(M, rec, fname, mode) {
+  const update = mode === "update";
+  const otherScenario = update && p6Scenario(fname) && p6Scenario(fname).toLowerCase() !== String(P.meta.title || "").toLowerCase();
+  const m = showModal(`<header><h3>${update ? "Update from" : "Summary from"} P6: ${esc(fname)}</h3>
+      <p>${esc(M.title)}${M.code ? ` (${esc(M.code)})` : ""} · data date ${M.dataDate ? fmt(M.dataDate) : "not set"} · ${M.tasks.length} activities. Choose what each part of the WBS shows on the PoaP. ${update ? "These are the choices used last time; new WBS parts have a suggestion." : "This is a suggestion to start from."}</p></header>
+    <div class="body p6b"><div class="p6tree" id="p6Tree"></div><div class="p6sum" id="p6Sum"></div></div>
+    <footer>
+      <button class="btn" id="p6Reset" title="Back to the suggestion from the WBS">Suggest again</button>
+      ${update ? `<label class="check" title="Show this programme's current dates as a narrow grey baseline under the updated bars"><input type="checkbox" id="p6Keep" ${otherScenario ? "checked" : ""}> Show the current dates as the baseline</label>
+        <label class="check" title="Keep this programme as it is and save the update as its own file"><input type="checkbox" id="p6Sep" ${otherScenario ? "checked" : ""}> Make it a separate programme${otherScenario ? ` (“${esc(p6Scenario(fname))}”)` : ""}</label>` : ""}
+      <span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button>
+      <button class="btn primary" data-act="go">${update ? "Review the changes" : "Build the summary"}</button></footer>`, {
+    go: () => {
+      const { rows, lanes } = p6Build(M, rec);
+      if (!rows.length) { toast("Nothing is selected to show. Set some WBS parts to a lane, bar or milestones."); return false; }
+      const recipe = Object.fromEntries(Object.entries(rec).filter(([k]) => M.nodes.some(w => w.path === k)));
+      const p6 = { recipe, code: M.code, title: M.title, source: fname, imported: todayISO(), includeAll: !!M.includeAll };
+      const anyProgress = M.tasks.some(t => t.actual);
+      const dataDate = anyProgress && M.dataDate ? addDays(M.dataDate, -1) : "";   // P6's data date is the start of the day; ours is the end
+      if (!update) {
+        const base = blankProject();
+        // the scenario usually names the file ("P26-8287 BASE CASE.xer" → "Base Case"); the project's full name goes on top
+        const scen = p6Scenario(fname);
+        Object.assign(base.meta, { program: (M.title || "").toUpperCase(), number: (M.code || base.meta.number).replace(/-[A-Z]{1,3}$/, ""), title: scen || "Summary", subtitle: "Summary program" });
+        base.page.rowH = rows.length > 40 ? 18 : 22;   // P6 summaries are dense: start compact
+        // whole months around everything, and the scale the sheet will print at, so rows are packed for real label widths
+        const s = Math.min(...rows.map(r => toDays(r.start))), e = Math.max(...rows.map(r => toDays(r.end)));
+        const d0 = new Date(s * DAY), d1 = new Date(e * DAY);
+        base.timeline = { start: fromDays(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), 1) / DAY), end: fromDays(Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth() + 1, 0) / DAY) };
+        const [pw, ph] = PAPER[base.page.size] || PAPER.A3, wmm = (base.page.orient === "portrait" ? Math.min(pw, ph) : Math.max(pw, ph)) - 2 * base.page.margin;
+        PPD_HINT = (wmm * PX_PER_MM - G.headW) / (toDays(base.timeline.end) - toDays(base.timeline.start) + 1);
+        let p; try { p = projectFromRows(rows, lanes, base); } finally { PPD_HINT = null; }
+        const extra = new Map(rows.map(r => [r.id, r.p6]));
+        p.items.forEach(i => { const x = extra.get(i.id); if (x) { if (x.crit) i.p6crit = true; if (x.tf != null) i.p6tf = x.tf; } });
+        p.p6 = p6;
+        if (dataDate) p.progress = { dataDate };
+        startNew(p);
+        toast(`Built ${rows.length} items in ${lanes.length} lanes from ${M.tasks.length} activities. Choose where to save it.`, 6000);
+      } else {
+        const keep = m.querySelector("#p6Keep")?.checked, sep = m.querySelector("#p6Sep")?.checked;
+        const before = P.meta.title || ((P.p6 && P.p6.source) || "Previous").replace(/\.xer$/i, "");
+        // nothing changes until the update is applied: then the baseline, the new scenario name and the new file
+        previewImport({ rows, lanes, meta: {}, timeline: null, page: null, problems: [], styles: [], fromTool: false, progress: dataDate ? { dataDate } : undefined,
+          onApply: q => {
+            q.p6 = p6;
+            if (keep) { q.items.forEach(i => { if (!isCurtain(q, i.style)) { i.bStart = i.start; i.bEnd = i.end; } }); q.progress = { ...prog(), ...(q.progress || {}), baseline: true, baselineSet: todayISO(), baselineName: before }; }
+            if (sep) { q.meta.title = p6Scenario(fname) || q.meta.title; if (M.title) q.meta.program = M.title.toUpperCase(); }
+          },
+          afterApply: () => { if (sep) { DOC = null; showStatus(); toast(`${P.meta.title} is a separate programme now. Press Save to choose where to keep it; ${before} stays as it was.`, 7000); } },
+        }, fname);
+      }
+    },
+  });
+  m.querySelector(".dlg").classList.add("wide");
+  const tree = m.querySelector("#p6Tree"), sum = m.querySelector("#p6Sum");
+  const open = new Set(M.top.kids.map(w => w.path));   // expanded nodes
+  const showKids = w => ["lane", "split"].includes(rec[w.path] || "hide");
+  const paint = () => {
+    const rows = [], scroll = tree.scrollTop;
+    const add = w => {
+      const r = p6Roll(M, w); if (!r.all.length) return;
+      const md = rec[w.path] || "hide", kidsHere = w.kids.some(k => p6Roll(M, k).all.length);
+      rows.push(`<div class="p6row ${md === "hide" ? "off" : ""}" style="--d:${w.depth - 1}">
+        <button type="button" class="p6tog" data-tog="${esc(w.path)}" ${kidsHere ? "" : "disabled"} aria-label="${open.has(w.path) ? "Collapse" : "Expand"}">${kidsHere ? (open.has(w.path) ? "▾" : "▸") : ""}</button>
+        <span class="p6name" title="${esc(w.path)} · ${esc(w.name)}"><span class="p6code">${esc(w.code)}</span> ${esc(w.name)}</span>
+        <span class="p6meta">${r.s ? `${fmt(r.s)} – ${fmt(r.e)}` : ""}<br>${r.work.length} act${r.ms.length ? ` · ${r.ms.length} ms` : ""}${r.left ? ` · <span class="warn" title="Unlinked activities at the data date, left out of the dates">${r.left} left out</span>` : ""}</span>
+        <select data-mode="${esc(w.path)}" aria-label="What ${esc(w.name)} shows">${P6_MODES.map(([v, n]) => `<option value="${v}" ${v === md ? "selected" : ""}>${n}</option>`).join("")}</select></div>`);
+      if (open.has(w.path) && (showKids(w) || md === "hide")) w.kids.forEach(add);
+    };
+    M.top.kids.forEach(add);
+    tree.innerHTML = rows.join(""); tree.scrollTop = scroll;
+    // what it will make
+    const { rows: items, lanes } = p6Build(M, rec);
+    const per = lanes.map(l => { const its = items.filter(i => i.lane === l.name); return `<li><b>${esc(l.name)}</b><span class="note">${[its.filter(i => i.style === "BAR").length && `${its.filter(i => i.style === "BAR").length} bars`, its.filter(i => /^ML_/.test(i.style)).length && `${its.filter(i => /^ML_/.test(i.style)).length} milestones`].filter(Boolean).join(", ")}</span></li>`; }).join("");
+    const curtains = items.filter(i => /^CUR_/.test(i.style)).length, critical = items.filter(i => i.p6 && i.p6.crit).length;
+    const left = M.includeAll ? 0 : M.out.size;
+    sum.innerHTML = `<h4>The PoaP will have</h4><ol class="p6lanes">${per || "<li class='note'>Nothing yet</li>"}</ol>
+      ${curtains ? `<p class="note">${curtains} contingency curtain${curtains > 1 ? "s" : ""}.</p>` : ""}
+      <p class="note">${items.length} items from ${M.tasks.length} activities. ${critical ? `${critical} on P6's critical or driving path (red outline).` : ""}</p>
+      ${M.out.size ? `<div class="p6warn"><b>${M.out.size} activities aren't linked into the programme.</b> They start at the data date with no predecessor (or only follow such activities), so they're ${M.includeAll ? "<b>included</b>" : "left out of the bar dates"}.
+        <label class="check"><input type="checkbox" id="p6All" ${M.includeAll ? "checked" : ""}> Include them anyway</label>
+        <details><summary>Show them</summary><ul>${[...M.out].slice(0, 60).map(t => `<li><span class="p6code">${esc(t.code)}</span> ${esc(t.name)} <span class="note">${esc(t.wbs.path)}</span></li>`).join("")}${M.out.size > 60 ? `<li class="note">and ${M.out.size - 60} more</li>` : ""}</ul></details></div>` : ""}
+      <p class="note">Your choices are saved with the programme, so the next XER (or another scenario) is summarised the same way.</p>`;
+    const all = sum.querySelector("#p6All"); if (all) all.onchange = e => { M.includeAll = e.target.checked; M.roll.clear(); paint(); };
+  };
+  tree.addEventListener("change", e => { const s = e.target.closest("[data-mode]"); if (!s) return; rec[s.dataset.mode] = s.value; if (["lane", "split"].includes(s.value)) open.add(s.dataset.mode); paint(); });
+  tree.addEventListener("click", e => { const b = e.target.closest("[data-tog]"); if (!b) return; const k = b.dataset.tog; open.has(k) ? open.delete(k) : open.add(k); paint(); });
+  m.querySelector("#p6Reset").onclick = () => { Object.keys(rec).forEach(k => delete rec[k]); Object.assign(rec, p6Suggest(M)); paint(); };
+  paint();
+}
+$("fXer").onchange = async e => {
+  const f = e.target.files[0], mode = e.target.dataset.mode || "new"; e.target.value = ""; if (!f) return;
+  try { await importP6(f, mode); } catch (err) { toast("Couldn't read " + f.name + ": " + err.message, 6000); }
+};
+const pickXer = mode => { $("fXer").dataset.mode = mode; $("fXer").click(); };
+$("bP6New").onclick = () => guardUnsaved(() => pickXer("new"));
+$("bP6Upd").onclick = () => pickXer("update");
 
 /* =====================================================================
    PDF: the same SVG sheet, scaled onto A3 landscape as vectors
@@ -3739,6 +4047,7 @@ async function showStartScreen() {
       ${draft ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", true) : ""}
       ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft)}
       ${choice("open", "open", "Open a saved programme…", HOST ? `From ${esc(HOST.libraryTitle)} or your computer.` : "A .poap.json file.")}
+      ${choice("p6", "excel", "Summarise a P6 programme (XER)…", "Pick what each part of the WBS shows, starting from a suggestion.")}
       ${choice("excel", "excel", "Start from an Excel workbook…", "A programme exported from PoaP Builder, or the older Visio workbook.")}
       ${choice("example", "example", "Explore the example", "A sample programme to try things out. Nothing is saved until you choose to.")}
     </div>
@@ -3757,6 +4066,7 @@ async function showStartScreen() {
     if (a === "new") return startNew(blankProject());
     if (a === "open") return HOST ? libraryOpen() : fileOpen();
     if (a === "excel") return $("fOpen").click();
+    if (a === "p6") return pickXer("new");
     if (a === "example") return startNew(seedProject(), { example: true });
   });
 }
