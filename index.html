@@ -400,6 +400,39 @@ function curtainTag(it, st) {
   return st.days ? `${it.name} · ${sign}${d}d` : it.name;
 }
 
+/* ---------- progress: data date, % complete, baseline dates and the progress line ----------
+   Settings live in P.progress (absent until first used); each item may carry pct (0-100) and bStart/bEnd. */
+const PROG_DEFAULTS = { dataDate: "", line: true, bars: true, baseline: true, baselineName: "", baselineSet: "" };
+const prog = () => ({ ...PROG_DEFAULTS, ...((P && P.progress) || {}) });
+const BASE_GREY = "#8E9AAB", LINE_RED = "#C8102E";
+const pctOf = it => Math.max(0, Math.min(100, Math.round(+it.pct || 0)));
+const tracked = it => !isCurtain(P, it.style) && !isContainer(P, it);
+/* progress is reported to the end of the data date, so the line sits at the end of that day */
+const ddPoint = () => prog().dataDate ? toDays(prog().dataDate) + 1 : null;
+/* Where the progress line touches an item, in days from the epoch (fractional). Equal to dd when it's on time:
+   work done to date sits on the data date; less is behind (left of it), more is ahead (right of it). */
+function progressPoint(it, dd) {
+  const s = toDays(it.start), e = toDays(it.end) + 1, p = pctOf(it);
+  if (isMs(P, it.style)) { const m = s + .5; return p >= 100 ? Math.max(dd, m) : m < dd ? m : dd; }
+  if (p >= 100) return Math.max(dd, e);
+  if (p <= 0 && s >= dd) return dd;
+  return s + (e - s) * p / 100;
+}
+/* a summary's progress: its bars' progress weighted by duration */
+function rollupPct(c) {
+  const kids = containerChildren(P, c).filter(k => tracked(k) && !isMs(P, k.style));
+  const w = kids.reduce((n, k) => n + toDays(k.end) - toDays(k.start) + 1, 0);
+  return w ? Math.round(kids.reduce((n, k) => n + (toDays(k.end) - toDays(k.start) + 1) * pctOf(k), 0) / w) : 0;
+}
+/* how far behind (negative) or ahead (positive) each tracked item is at the data date, in days */
+function progressStatus() {
+  const dd = ddPoint(); if (dd == null) return null;
+  let behind = 0, ahead = 0;
+  for (const it of P.items) if (tracked(it)) { const v = progressPoint(it, dd) - dd; if (v < -.5) behind++; else if (v > .5) ahead++; }
+  return { behind, ahead };
+}
+const signedDays = n => n === 0 ? "on time" : `${Math.abs(n)} day${Math.abs(n) === 1 ? "" : "s"} ${n > 0 ? "late" : "early"}`;
+
 // Seed: rows from "Pxx-xxxx ProjectTitle PoaP_Shape_Data.xlsx" (ShapeID, Name, Style, Lane, Start, End, Status, Y_mm)
 const SEED_ROWS = [["MS0001","Date for Contract Award (Indicative)","ML_Diamond","Milestones","2026-11-03","2026-11-03","Active",542],["MS0002","Site Investigation Complete","ML_Square","Milestones","2026-01-22","2026-01-22","Active",null],["MS0003","Design IFC Issued","ML_Triangle","Milestones","2026-12-22","2026-12-22","Active",535],["MS0003","Site Establishment Complete","ML_Square","Milestones","2027-03-05","2027-03-05","Active",null],["MS0004","Retaining Wall Works Complete","ML_Square","Milestones","2027-04-13","2027-04-13","Active",540],["MS0005","Subgrade Complete","ML_Square","Milestones","2027-05-10","2027-05-10","Active",null],["MS0006","Underground Services Complete","ML_Square","Milestones","2027-06-03","2027-06-03","Active",null],["MS0007","Pavement Complete","ML_Square","Milestones","2027-06-25","2027-06-25","Active",null],["MS0008","Carpark Extension Complete","ML_Square","Milestones","2027-08-21","2027-08-21","Active",535],["MS0009","All Testing & Commissioning Complete","ML_Square","Milestones","2027-07-26","2027-07-26","Active",null],["MS0010","Deterministic Date of Construction Completion","ML_Circle","Milestones","2027-07-27","2027-07-27","Active",null],["MS0011","Forecast Date of Construction Completion","ML_Circle","Milestones","2027-07-30","2027-07-30","Active",null],["MS0012","Date for Construction Completion","ML_Diamond","Milestones","2027-07-30","2027-07-30","Active",542],["PRE001","Site Access Preconditions","BAR","Preconstruction","2026-11-04","2027-03-30","Active",437.3],["PRE002","Construction Preconditions","BAR","Preconstruction","2027-01-13","2027-03-05","Active",430.3],["PRE003","Management Plans","BAR","Preconstruction","2026-11-04","2027-02-11","Active",423.3],["DES001","Design Development 30%","BAR","Design","2026-11-11","2026-12-09","Active",411.3],["DES002","Design Development 60%","BAR","Design","2026-12-09","2027-01-06","Active",404.3],["DES003","Design Development 90%","BAR","Design","2027-01-06","2027-01-25","Active",397.3],["DES004","Design Development IFC","BAR","Design","2027-01-25","2027-02-15","Active",390.3],["PRO001","Key Package 21 Combined Civils, Structural & Finishes","BAR","Procurement","2027-01-06","2027-03-01","Active",378.3],["PRO002","Key Package 23 Electrical, Lighting and CCTV","BAR","Procurement","2027-01-04","2027-05-28","Active",371.3],["CON001","SI","BAR","Construction","2026-12-17","2026-12-22","Active",359.3],["CON002","Demolition & Retaining Wall Works","BAR","Construction","2027-03-01","2027-04-13","Active",352.3],["CON003","Bulk Earthworks & Drainage","BAR","Construction","2027-04-14","2027-05-10","Active",345.3],["CON004","Services & Foundations","BAR","Construction","2027-05-11","2027-06-03","Active",338.3],["CON005","Pavement Construction","BAR","Construction","2027-06-07","2027-06-25","Active",331.3],["CON006","Fit-Out & Finishing Works","BAR","Construction","2027-06-28","2027-07-21","Active",324.3],["CON007","Testing & Commissioning","BAR","Testing & Commissioning","2027-07-22","2027-07-26","Active",312.3],["CON008","Handover & Demobilisation","BAR","Handover & Demobilisation","2027-07-14","2027-07-27","Active",300.3]];
 
@@ -441,6 +474,8 @@ function projectFromRows(rows, laneRows, base) {
     if (r.parent) it.parent = r.parent;
     if (r.collapsed) it.collapsed = true;
     if (r.labelMode && r.labelMode !== "auto") it.labelMode = r.labelMode;
+    if (r.pct && !curtain) it.pct = r.pct;
+    if (r.bStart && !curtain) { it.bStart = r.bStart; it.bEnd = isMs(p, st.name) ? r.bStart : (r.bEnd || r.bStart); }
     p.items.push(it);
     if (it.row == null && Number.isFinite(r.y)) { (yGroups.get(lane.id) || yGroups.set(lane.id, []).get(lane.id)).push([it, r.y]); }
   }
@@ -668,8 +703,8 @@ function draw(svg, opts) {
   eachMonth(L, (x) => el("line", { x1: x, x2: x, y1: L.stripTop, y2: L.bodyBottom, stroke: BRAND.grid, "stroke-width": .7, "stroke-dasharray": "3 3" }, gg));
   L.lanes.forEach(ln => el("line", { x1: 0, x2: L.W, y1: ln.y + ln.h, y2: ln.y + ln.h, stroke: BRAND.navy, "stroke-width": .9 }, gg));
 
-  const today = todayISO();
-  if (toDays(today) >= L.t0 && toDays(today) < L.t1) {
+  const today = todayISO();   // a data date, when set, takes the today line's place
+  if (!prog().dataDate && toDays(today) >= L.t0 && toDays(today) < L.t1) {
     const x = L.x(today);
     el("line", { x1: x, x2: x, y1: L.bodyTop, y2: L.bodyBottom, stroke: "#C8102E", "stroke-width": 1, "stroke-dasharray": "5 3" }, gg);
   }
@@ -686,6 +721,7 @@ function draw(svg, opts) {
     const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln || hiddenByCollapse(P, it)) continue;
     drawItem(gi, it, ln, L, opts, F);
   }
+  drawProgressLine(svg, L, F);
   drawCurtainTags(svg, L, opts, F);
 
   // lane titles (vertical, in the swimlane colour)
@@ -704,12 +740,53 @@ function draw(svg, opts) {
   el("line", { x1: 0, x2: L.W, y1: L.stripTop, y2: L.stripTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   if (L.stripH) el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": .9, "pointer-events": "none" }, svg);
   el("line", { x1: 0, x2: L.W, y1: L.bodyBottom, y2: L.bodyBottom, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+  drawDataDatePointers(svg, L);
   drawFooter(svg, L, F);
   el("rect", { x: .9, y: .9, width: L.W - 1.8, height: L.H - 1.8, fill: "none", stroke: BRAND.navy, "stroke-width": 1.8, "pointer-events": "none" }, svg);
 
   // the PDF engine's fonts only have normal/bold
   if (opts.print) svg.querySelectorAll("[font-weight]").forEach(t => t.setAttribute("font-weight", +t.getAttribute("font-weight") >= 600 ? "bold" : "normal"));
   return L;
+}
+
+/* Data date line, and the progress line: down the sheet row by row, out to each activity's progress point
+   (left when behind, right when ahead) and back to the data date where a row has nothing late or early. */
+function drawProgressLine(svg, L, F) {
+  const pr = prog(); if (!pr.dataDate) return;
+  const dd = ddPoint(); if (dd <= L.t0 || dd > L.t1) return;
+  const X = d => G.headW + (Math.max(L.t0, Math.min(L.t1, d)) - L.t0) * L.ppd, xd = X(dd);
+  const g = el("g", { "pointer-events": "none" }, svg);
+  el("line", { x1: xd, x2: xd, y1: L.stripTop, y2: L.bodyBottom, stroke: BRAND.navy, "stroke-width": 1.2, "stroke-dasharray": "6 3" }, g);
+  if (pr.line) {
+    const pts = [[xd, L.bodyTop]], dots = [];
+    for (const ln of L.lanes) {
+      // the furthest-out point on each displayed row
+      const byRow = new Map();
+      for (const it of P.items) {
+        if (it.lane !== ln.l.id || !tracked(it) || hiddenByCollapse(P, it)) continue;
+        const v = ln.toView(it.row), p = progressPoint(it, dd);
+        if (Math.abs(p - dd) < .01) continue;
+        if (!byRow.has(v) || Math.abs(p - dd) > Math.abs(byRow.get(v) - dd)) byRow.set(v, p);
+      }
+      pts.push([xd, ln.y]);
+      for (const v of [...byRow.keys()].sort((a, b) => a - b)) {
+        const top = ln.y + G.pad + v * G.rowH, cy = top + G.rowH / 2, x = X(byRow.get(v));
+        if (!byRow.has(v - 1)) pts.push([xd, top]);
+        pts.push([x, cy]); dots.push([x, cy]);
+        if (!byRow.has(v + 1)) pts.push([xd, top + G.rowH]);
+      }
+      pts.push([xd, ln.y + ln.h]);
+    }
+    el("polyline", { points: pts.map(p => p.map(n => n.toFixed(2)).join(",")).join(" "), fill: "none", stroke: LINE_RED, "stroke-width": 1.5, "stroke-linejoin": "round" }, g);
+    dots.forEach(([x, y]) => el("circle", { cx: x, cy: y, r: 2.2, fill: LINE_RED }, g));
+  }
+}
+/* small pointers where the data date meets the timelines (the date itself is in the legend); drawn over the bands */
+function drawDataDatePointers(svg, L) {
+  const dd = ddPoint(); if (dd == null || dd <= L.t0 || dd > L.t1) return;
+  const xd = G.headW + (dd - L.t0) * L.ppd, a = 4.5, g = el("g", { "pointer-events": "none" }, svg);
+  el("polygon", { points: `${xd - a},${L.stripTop - a * 1.4} ${xd + a},${L.stripTop - a * 1.4} ${xd},${L.stripTop}`, fill: BRAND.navy, stroke: "#FFFFFF", "stroke-width": .8 }, g);
+  el("polygon", { points: `${xd - a},${L.bodyBottom + a * 1.4} ${xd + a},${L.bodyBottom + a * 1.4} ${xd},${L.bodyBottom}`, fill: BRAND.navy, stroke: "#FFFFFF", "stroke-width": .8 }, g);
 }
 
 function curtainColours(it) {
@@ -787,6 +864,12 @@ function footerPlan(L, keyList) {
   // milestone types, curtains, and bar types with their own colour (lane-coloured bars need no key)
   P.styles.filter(s => (s.behaviour !== "Stretch" || s.fill) && P.items.some(i => i.style === s.name))
     .forEach(s => { const icon = s.behaviour === "Move" ? 18 : 28; entries.push({ kind: "style", s, icon, w: icon + textW(s.notes || s.name, 9.5, 500) + 22 }); });
+  // progress symbols, when shown
+  const pr = prog(), extra = (what, label) => entries.push({ kind: "extra", what, label, icon: 28, w: 28 + textW(label, 9.5, 500) + 22 });
+  if (pr.baseline && P.items.some(i => i.bStart)) extra("baseline", pr.baselineName || "Baseline");
+  if (pr.bars && P.items.some(i => tracked(i) && pctOf(i) > 0)) extra("pct", "Progress");
+  if (pr.dataDate) extra("dd", `Data date ${fmt(pr.dataDate)}`);
+  if (pr.dataDate && pr.line) extra("line", "Progress line");
   if (keyList.length) {
     entries.push({ kind: "heading", text: "Key:", w: headW, newLine: true });   // the key always starts its own line
     keyList.forEach(k => entries.push({ kind: "key", k, w: 15 + textW(k.name, 9, 500) + 16 }));
@@ -820,6 +903,14 @@ function drawFooter(svg, L, F) {
     if (e.kind === "key") {
       keyBadge(g, x + 6, cy, e.k.n, F);
       el("text", { x: x + 15, y: cy + 3.3, fill: BRAND.ink, "font-size": 9, "font-weight": 500, "font-family": F.font }, g, e.k.name);
+      continue;
+    }
+    if (e.kind === "extra") {
+      if (e.what === "baseline") el("rect", { x, y: cy - 2, width: 22, height: 4, fill: BASE_GREY }, g);
+      if (e.what === "pct") { drawBarShape(g, "bar", x, cy - 6, 22, 12, laneBar(BRAND.navy), BRAND.navy); el("rect", { x, y: cy + 2, width: 13, height: 4, fill: BRAND.navy }, g); }
+      if (e.what === "dd") el("line", { x1: x + 11, x2: x + 11, y1: cy - 7, y2: cy + 7, stroke: BRAND.navy, "stroke-width": 1.2, "stroke-dasharray": "3 2" }, g);
+      if (e.what === "line") el("polyline", { points: `${x + 8},${cy - 7} ${x + 8},${cy - 4} ${x + 2},${cy} ${x + 8},${cy + 2} ${x + 16},${cy + 4} ${x + 8},${cy + 7}`, fill: "none", stroke: LINE_RED, "stroke-width": 1.4, "stroke-linejoin": "round" }, g);
+      el("text", { x: x + e.icon, y: cy + 3.5, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, e.label);
       continue;
     }
     const s = e.s;
@@ -977,6 +1068,7 @@ function drawContainer(g, it, ln, L, opts, F) {
     if (open && kids.length) el("rect", { x: x1, y: top + G.rowH - 1, width: w, height: bottom - top - G.rowH, fill: shade, "pointer-events": "none" }, grp);
     // bracket: thin bar with down-pointing end ticks
     const bh = Math.max(4, Math.round(G.barH * .42)), by = cy - bh / 2 - 1, tick = Math.min(6, w / 3), drop = bh + 4;
+    if (prog().baseline && it.bStart) drawBaseline(grp, it, L, cy + G.barH / 2);
     el("polygon", { points: `${x1},${by} ${x2},${by} ${x2},${by + drop} ${x2 - tick},${by + bh} ${x1 + tick},${by + bh} ${x1},${by + drop}`, fill: stroke, stroke, "stroke-width": .5, "pointer-events": "none" }, grp);
   }
   // collapsed: the group's milestones roll up onto the bracket
@@ -1016,9 +1108,13 @@ function drawItem(g, it, ln, L, opts, F) {
   const cy = ln.y + G.pad + ln.toView(it.row) * G.rowH + G.rowH / 2;
   const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
   const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
+  const pr = prog(), pct = pr.bars ? pctOf(it) : 0;
   if (st.behaviour === "Move") {
     const x = L.x(it.start) + L.ppd / 2, s = G.ms;
+    // baseline: a small grey marker where the milestone was planned, when it has moved
+    if (pr.baseline && it.bStart && it.bStart !== it.start) drawMarker(grp, st.shape, L.x(it.bStart) + L.ppd / 2, cy, s * .7, "#FFFFFF", BASE_GREY);
     drawMarker(grp, st.shape, x, cy, s, fill, stroke);
+    if (pct >= 100) el("polyline", { points: `${x - s * .3},${cy} ${x - s * .08},${cy + s * .24} ${x + s * .32},${cy - s * .26}`, fill: "none", stroke: "#FFFFFF", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "pointer-events": "none" }, grp);
     const tw = textW(it.name, 9, 500) + (inlineMsDate() ? textW("  " + fmt(it.start), 8.5, 400) : 0);
     const left = x + s * .8 + 4 + tw > L.W - 6;          // near the right edge: label goes left of the marker
     const lx = left ? x - s * .8 - 4 : x + s * .8 + 4, anchor = left ? "end" : "start";
@@ -1034,6 +1130,9 @@ function drawItem(g, it, ln, L, opts, F) {
   } else {
     const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(2, x2 - x1), h = G.barH, y = cy - h / 2;
     drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke);
+    if (pr.baseline && it.bStart) drawBaseline(grp, it, L, y + h);
+    // done so far: a dark strip along the bottom of the bar
+    if (pct > 0 && st.shape !== "summary") el("rect", { x: x1, y: y + h - Math.max(3, h * .26), width: w * pct / 100, height: Math.max(3, h * .26), fill: stroke, "pointer-events": "none" }, grp);
     const tw = textW(it.name, 9, 500), plan = L.labels?.get(it.id) || { mode: tw + 10 < w ? "inside" : "right" };
     const text = { fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font, "pointer-events": "none" };
     if (plan.mode === "inside") el("text", { x: x1 + w / 2, y: cy + 3.3, "text-anchor": "middle", ...text }, grp, it.name);
@@ -1051,6 +1150,12 @@ function drawItem(g, it, ln, L, opts, F) {
       if (plan.mode === "above") el("rect", { x: x1, y: y - 10, width: textW(it.name, ABOVE_FONT, 600) + 2, height: 9, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
     }
   }
+}
+/* the baseline: a thin grey bar just under the bar (overlapping its foot when rows are tight) */
+function drawBaseline(g, it, L, barBottom) {
+  const bx1 = L.x(it.bStart), bx2 = L.x(it.bEnd || it.bStart) + L.ppd;
+  const bh = Math.max(2.5, Math.min(4, (G.rowH - G.barH) / 2 - 1)), by = Math.min(barBottom + 1, barBottom + (G.rowH - G.barH) / 2 - bh);
+  el("rect", { x: bx1, y: by, width: Math.max(2, bx2 - bx1), height: bh, fill: BASE_GREY, "pointer-events": "none" }, g);
 }
 function drawMarker(g, shape, x, cy, s, fill, stroke) {
   const a = { fill, stroke, "stroke-width": .9 };
@@ -1428,12 +1533,13 @@ function renderSide() {
         <div class="f"><label for="iStatus">Status</label><select id="iStatus">${["Active","Complete","On hold"].map(s => `<option ${s === cur.status ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         <div class="f"><label for="iId">ShapeID</label><input id="iId" value="${esc(cur.id)}"></div>
       </div>
+      ${progressFields(cur)}
       ${itemExtras(cur)}
       <div class="actions">
         <button class="btn" id="iDup">Duplicate</button>
         <button class="btn danger" id="iDel">Delete</button>
       </div>`;
-    bindItemExtras(cur);
+    bindItemExtras(cur); bindProgressFields(cur);
     const upd = (f) => commit(p => f(p.items.find(i => i.id === cur.id)), true);
     $("iName").onchange = e => upd(x => x.name = e.target.value);
     $("iStart").onchange = e => { if (!e.target.value) return; upd(x => { const d = toDays(e.target.value) - toDays(x.start); x.start = e.target.value; x.end = isMs(P, x.style) ? x.start : (toDays(x.end) < toDays(x.start) ? addDays(x.end, d) : x.end); }); };
@@ -1442,7 +1548,7 @@ function renderSide() {
     $("iLane").onchange = e => upd(x => { x.lane = e.target.value; x.row = freeRow(P, x); });
     $("iFill").onchange = e => upd(x => x.fill = e.target.value.toUpperCase());
     $("iStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
-    $("iStatus").onchange = e => upd(x => x.status = e.target.value);
+    $("iStatus").onchange = e => upd(x => { x.status = e.target.value; if (x.status === "Complete") x.pct = 100; else if (pctOf(x) >= 100) delete x.pct; });
     $("iId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; } upd(x => x.id = v); sel.id = v; renderSide(); };
     if ($("iReset")) $("iReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; }); };
     $("iDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id) }; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
@@ -1520,6 +1626,7 @@ function renderSide() {
       <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
       <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${P.timeline.end}"></div>
     </div>
+    ${progressSection()}
     <h2>Milestone types</h2>
     <div class="types">${P.styles.filter(s => s.behaviour === "Move").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addMsType">+ Milestone type</button></div>
@@ -1556,10 +1663,117 @@ function renderSide() {
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
   if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
   side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
+  bindProgressSection();
   $("addMsType").onclick = () => addType("Move");
   $("addBarType").onclick = () => addType("Stretch");
   $("addCurtainType").onclick = () => addType("Curtain");
 }
+/* inspector: % complete (milestones: done or not), baseline dates and how far they've moved */
+function progressFields(cur) {
+  const ms = isMs(P, cur.style), dd = prog().dataDate;
+  if (isContainer(P, cur)) {
+    const kids = containerChildren(P, cur).filter(k => tracked(k) && !isMs(P, k.style));
+    return `<h2>Progress</h2>${kids.length ? `<p class="note">${rollupPct(cur)}% complete, from its ${kids.length} bar${kids.length === 1 ? "" : "s"} weighted by duration.</p>` : ""}${baselineFields(cur, false)}`;
+  }
+  const p = pctOf(cur);
+  let state = "";
+  if (dd) { const v = Math.round(progressPoint(cur, ddPoint()) - ddPoint()); state = v < 0 ? `${-v} day${v === -1 ? "" : "s"} behind at the data date` : v > 0 ? `${v} day${v === 1 ? "" : "s"} ahead at the data date` : "On track at the data date"; }
+  return `<h2>Progress</h2>
+    ${ms ? `<label class="check"><input type="checkbox" id="iDone" ${p >= 100 ? "checked" : ""}> Achieved</label>`
+      : `<div class="f"><label for="iPct">Complete: <span id="iPctVal">${p}</span>%</label>
+        <div style="display:flex;gap:8px;align-items:center"><input id="iPct" type="range" min="0" max="100" step="5" value="${p}" style="flex:1;accent-color:var(--accent-2)"><input id="iPctN" type="number" min="0" max="100" value="${p}" style="width:58px" aria-label="Percent complete"></div></div>`}
+    ${state ? `<p class="note">${state}.</p>` : ""}
+    ${baselineFields(cur, ms)}`;
+}
+function baselineFields(cur, ms) {
+  const has = !!cur.bStart;
+  const fin = has ? toDays(cur.end) - toDays(cur.bEnd || cur.bStart) : 0, st = has ? toDays(cur.start) - toDays(cur.bStart) : 0;
+  return `<div class="row2">
+      <div class="f"><label for="iBStart">${ms ? "Baseline date" : "Baseline start"}</label><input id="iBStart" type="date" value="${cur.bStart || ""}"></div>
+      ${ms ? "" : `<div class="f"><label for="iBEnd">Baseline finish</label><input id="iBEnd" type="date" value="${cur.bEnd || ""}"></div>`}
+    </div>
+    <p class="note">${has ? (ms ? `${signedDays(st)} against the baseline.` : `Starts ${signedDays(st)}, finishes ${signedDays(fin)} against the baseline.`) : "No baseline yet. Set one for the whole programme from the Progress section (click an empty part of the sheet)."}</p>`;
+}
+function bindProgressFields(cur) {
+  const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
+  const setPct = v => upd(x => { v = Math.max(0, Math.min(100, Math.round(+v || 0))); if (v) x.pct = v; else delete x.pct; if (v >= 100) x.status = "Complete"; else if (x.status === "Complete") x.status = "Active"; });
+  if ($("iPct")) {
+    $("iPct").oninput = e => { $("iPctVal").textContent = e.target.value; $("iPctN").value = e.target.value; };
+    $("iPct").onchange = e => setPct(e.target.value);
+    $("iPctN").onchange = e => setPct(e.target.value);
+  }
+  if ($("iDone")) $("iDone").onchange = e => setPct(e.target.checked ? 100 : 0);
+  if ($("iBStart")) $("iBStart").onchange = e => upd(x => {
+    const v = e.target.value; if (!v) { delete x.bStart; delete x.bEnd; return; }
+    if (isMs(P, x.style)) { x.bStart = x.bEnd = v; return; }
+    const d = x.bStart && x.bEnd ? toDays(x.bEnd) - toDays(x.bStart) : toDays(x.end) - toDays(x.start);
+    x.bStart = v; if (!x.bEnd || toDays(x.bEnd) < toDays(v)) x.bEnd = addDays(v, d);
+  });
+  if ($("iBEnd")) $("iBEnd").onchange = e => upd(x => { const v = e.target.value; if (!v) return; if (!x.bStart) x.bStart = x.start; x.bEnd = toDays(v) < toDays(x.bStart) ? x.bStart : v; });
+}
+
+/* programme panel: data date, what to show, and setting the baseline */
+function progressSection() {
+  const pr = prog(), n = P.items.filter(i => i.bStart).length, s = progressStatus();
+  return `<h2>Progress</h2>
+    <div class="row2">
+      <div class="f"><label for="prDate">Data date</label><input id="prDate" type="date" value="${pr.dataDate}"></div>
+      <div class="f"><label>&nbsp;</label><div class="actions" style="margin:0"><button class="btn" id="prToday">Today</button>${pr.dataDate ? `<button class="btn" id="prClear" title="Remove the data date and progress line">Clear</button>` : ""}</div></div>
+    </div>
+    ${s ? `<p class="note">${s.behind} behind and ${s.ahead} ahead of the data date.</p>` : `<p class="note">Set a data date to show the progress line. Set progress by selecting a bar or milestone.</p>`}
+    <label class="check"><input type="checkbox" id="prLine" ${pr.line ? "checked" : ""} ${pr.dataDate ? "" : "disabled"}> Progress line</label>
+    <label class="check"><input type="checkbox" id="prBars" ${pr.bars ? "checked" : ""}> Progress on bars and milestones</label>
+    <label class="check"><input type="checkbox" id="prBase" ${pr.baseline ? "checked" : ""}> Baseline bars</label>
+    <div class="f"><label for="prBName">Baseline</label><input id="prBName" placeholder="Baseline" value="${esc(pr.baselineName)}"></div>
+    <p class="note">${n ? `${n} item${n === 1 ? " has" : "s have"} baseline dates${pr.baselineSet ? `, set ${fmt(pr.baselineSet)}` : ""}.` : "No baseline yet."}</p>
+    <div class="actions">
+      <button class="btn" id="prSet">${n ? "Reset baseline to current dates" : "Set baseline from current dates"}</button>
+      <button class="btn" id="prLoad" title="Use the dates in another programme file or workbook as the baseline, matched by ShapeID">From a file…</button>
+      ${n ? `<button class="btn" id="prDrop">Clear baseline</button>` : ""}
+    </div>`;
+}
+function bindProgressSection() {
+  const setPr = f => commit(p => { p.progress = { ...prog(), ...(p.progress || {}) }; f(p.progress); }, true);
+  $("prDate").onchange = e => setPr(g => g.dataDate = e.target.value || "");
+  $("prToday").onclick = () => setPr(g => g.dataDate = todayISO());
+  if ($("prClear")) $("prClear").onclick = () => setPr(g => g.dataDate = "");
+  $("prLine").onchange = e => setPr(g => g.line = e.target.checked);
+  $("prBars").onchange = e => setPr(g => g.bars = e.target.checked);
+  $("prBase").onchange = e => setPr(g => g.baseline = e.target.checked);
+  $("prBName").onchange = e => setPr(g => g.baselineName = e.target.value.trim());
+  const capture = () => commit(p => {
+    p.items.forEach(i => { if (isCurtain(p, i.style)) return; i.bStart = i.start; i.bEnd = i.end; });
+    p.progress = { ...prog(), ...(p.progress || {}), baselineSet: todayISO(), baseline: true };
+  }, true);
+  $("prSet").onclick = () => {
+    if (!P.items.some(i => i.bStart)) { capture(); return toast("Baseline set from the current dates."); }
+    showModal(`<header><h3>Replace the baseline?</h3><p>Every bar and milestone's baseline becomes its current dates, so they'll all show as on time against it. Undo brings the old baseline back.</p></header>
+      <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="go">Replace baseline</button></footer>`,
+      { go: () => { capture(); toast("Baseline reset to the current dates."); } });
+  };
+  if ($("prDrop")) $("prDrop").onclick = () => { commit(p => p.items.forEach(i => { delete i.bStart; delete i.bEnd; }), true); toast("Baseline cleared. Undo brings it back."); };
+  $("prLoad").onclick = () => {
+    const inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,.xlsx,.xlsm,.xls";
+    inp.onchange = async () => { const f = inp.files[0]; if (f) try { await baselineFromFile(f); } catch (err) { toast("Couldn't read " + f.name + ": " + err.message, 6000); } };
+    inp.click();
+  };
+}
+/* another programme's dates (an earlier revision, say) become the baseline, matched by ShapeID */
+async function baselineFromFile(f) {
+  let rows;
+  if (/\.json$/i.test(f.name)) { const p = JSON.parse(await f.text()); if (p.format !== "poap/2") throw new Error("this file isn't a PoaP Builder project"); rows = p.items; }
+  else rows = parseWorkbook(await f.arrayBuffer()).rows;
+  const byId = new Map(rows.filter(r => r.id).map(r => [r.id, r]));
+  const hits = P.items.filter(i => !isCurtain(P, i.style) && byId.has(i.id));
+  if (!hits.length) return toast(`None of the ShapeIDs in ${f.name} match this programme, so no baseline was set.`, 6000);
+  commit(p => {
+    p.items.forEach(i => { const r = byId.get(i.id); if (!r || isCurtain(p, i.style)) return; i.bStart = r.start; i.bEnd = isMs(p, i.style) ? r.start : (r.end || r.start); });
+    p.progress = { ...prog(), ...(p.progress || {}), baseline: true, baselineSet: todayISO(), baselineName: prog().baselineName || f.name.replace(/\.(poap\.json|json|xlsx|xlsm|xls)$/i, "") };
+  }, true);
+  const missed = P.items.filter(i => !isCurtain(P, i.style)).length - hits.length;
+  toast(`Baseline set for ${hits.length} item${hits.length === 1 ? "" : "s"} from ${f.name}${missed ? `; ${missed} not in that file have no baseline` : ""}.`, 6000);
+}
+
 /* extra inspector controls: label position for bars; height and grouping for summary bars */
 function itemExtras(cur) {
   const groups = P.items.filter(i => isContainer(P, i) && i.lane === cur.lane && i !== cur);
@@ -2103,6 +2317,7 @@ async function openFromFile(f, handle) {
     const p = projectFromRows(parsed.rows, parsed.lanes, base);
     if (parsed.timeline) p.timeline = parsed.timeline;
     if (parsed.page) p.page = parsed.page;
+    if (parsed.progress && (parsed.progress.dataDate || parsed.progress.baselineName)) p.progress = { ...parsed.progress };
     loadDoc(p, null); if (!parsed.timeline) $("bFit").click();
     toast(`Opened ${parsed.rows.length} rows from ${f.name}`);
     promptFirstSave("This programme was built from a workbook and hasn't been saved yet.");
@@ -2149,13 +2364,14 @@ function buildExcelBlob() {
   const wb = XLSX.utils.book_new();
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
-  const prog = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed"]]
+  const rowsOut = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed","Progress","BaselineStart","BaselineFinish"]]
     .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke,
-      i.labelMode || "", i.parent || "", isContainer(P, i) ? (i.collapsed ? "Yes" : "No") : ""]));
-  const ws = XLSX.utils.aoa_to_sheet(prog, { cellDates: true });
-  for (let r = 1; r < prog.length; r++) for (const c of [4,5]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
-  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9].map(w => ({ wch: w }));
-  ws["!autofilter"] = { ref: `A1:N${prog.length}` };
+      i.labelMode || "", i.parent || "", isContainer(P, i) ? (i.collapsed ? "Yes" : "No") : "",
+      isCurtain(P, i.style) ? "" : isContainer(P, i) ? rollupPct(i) : pctOf(i), i.bStart ? xDate(i.bStart) : "", i.bStart ? xDate(i.bEnd || i.bStart) : ""]));
+  const ws = XLSX.utils.aoa_to_sheet(rowsOut, { cellDates: true });
+  for (let r = 1; r < rowsOut.length; r++) for (const c of [4,5,15,16]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
+  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13].map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: `A1:Q${rowsOut.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
@@ -2168,8 +2384,8 @@ function buildExcelBlob() {
   styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
-  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["RowHeightPx",P.page.rowH],["FillPage",P.page.fill !== false ? "Yes" : "No"],["Format","poap/2"]], { cellDates: true });
-  ["B9","B10"].forEach(a => { if (proj[a]) proj[a].z = "dd-mmm-yy"; });
+  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["RowHeightPx",P.page.rowH],["FillPage",P.page.fill !== false ? "Yes" : "No"],["DataDate",prog().dataDate ? xDate(prog().dataDate) : ""],["BaselineName",prog().baselineName],["Format","poap/2"]], { cellDates: true });
+  ["B9","B10","B16"].forEach(a => { if (proj[a] && proj[a].t !== "s") proj[a].z = "dd-mmm-yy"; });
   proj["!cols"] = [{ wch: 14 }, { wch: 44 }];
   XLSX.utils.book_append_sheet(wb, proj, "Project");
   const out = XLSX.write(wb, { bookType: "xlsx", type: "array", cellDates: true });
@@ -2197,7 +2413,10 @@ function parseWorkbook(buf) {
   if (hi < 0) throw new Error(`no "ShapeID" column found on sheet "${shName}"`);
   const H = aoa[hi].map(c => String(c ?? "").trim().toLowerCase().replace(/\s+/g, ""));
   const col = (...names) => H.findIndex(h => names.includes(h));
-  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), label: col("label","labelmode"), parent: col("parent","summary"), collapsed: col("collapsed") };
+  const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), label: col("label","labelmode"), parent: col("parent","summary"), collapsed: col("collapsed"),
+    pct: col("progress","%complete","percentcomplete","pct","complete"), bStart: col("baselinestart","blstart"), bEnd: col("baselinefinish","baselineend","blfinish") };
+  // progress as 45, "45%" or a percent-formatted 0.45; blank is 0. Undefined when the column isn't there.
+  const pctIn = v => { if (v == null || v === "") return 0; const n = parseFloat(String(v).replace("%", "")); if (!Number.isFinite(n)) return 0; return Math.max(0, Math.min(100, Math.round(typeof v === "number" && n > 0 && n < 1 ? n * 100 : n))); };
   const rows = [], problems = [];
   for (let r = hi + 1; r < aoa.length; r++) {
     const R = aoa[r], g = k => C[k] >= 0 ? R[C[k]] : null;
@@ -2206,6 +2425,8 @@ function parseWorkbook(buf) {
     if (!start) { problems.push(`Row ${r+1} (${g("id") || g("name")}): no valid start date, skipped`); continue; }
     rows.push({ xlRow: r + 1, id: String(g("id") ?? "").trim(), name: String(g("name") ?? "").trim(), style: String(g("style") ?? "BAR").trim() || "BAR", lane: String(g("lane") ?? "").trim(), start, end: toDays(end) < toDays(start) ? start : end, status: String(g("status") ?? "Active").trim() || "Active", row: g("row") === null || g("row") === "" ? NaN : Number(g("row")), y: Number(g("y")) || NaN, fill: hex(g("fill")), stroke: hex(g("stroke")),
       parent: C.parent >= 0 ? String(g("parent") ?? "").trim() : undefined,
+      pct: C.pct >= 0 ? pctIn(g("pct")) : undefined,
+      bStart: C.bStart >= 0 ? toISO(g("bStart")) || "" : undefined, bEnd: C.bEnd >= 0 ? toISO(g("bEnd")) || toISO(g("bStart")) || "" : undefined,
       collapsed: C.collapsed >= 0 && String(g("collapsed") ?? "").trim() !== "" ? /^(yes|y|true|1)$/i.test(String(g("collapsed")).trim()) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined });
   }
   let lanes = [];
@@ -2214,7 +2435,7 @@ function parseWorkbook(buf) {
     const la = XLSX.utils.sheet_to_json(lsh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
     lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0 }));
   }
-  let meta = {}, timeline = null, page = null, fromTool = false;
+  let meta = {}, timeline = null, page = null, fromTool = false, progress;
   const psh = wb.Sheets["Project"];
   if (psh) {
     const kv = Object.fromEntries(XLSX.utils.sheet_to_json(psh, { header: 1, raw: true }).slice(1).map(r => [String(r[0] ?? "").trim().toLowerCase(), r[1]]));
@@ -2222,6 +2443,7 @@ function parseWorkbook(buf) {
     meta = { program: kv.program, number: kv.number, title: kv.title, subtitle: kv.subtitle, client: kv.client, author: kv.author || kv.preparedby, revision: kv.revision };
     meta = Object.fromEntries(Object.entries(meta).filter(([,v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]));
     const a = toISO(kv.timelinestart), b = toISO(kv.timelineend); if (a && b) timeline = { start: a, end: b };
+    if ("datadate" in kv || "baselinename" in kv) progress = { dataDate: toISO(kv.datadate) || "", baselineName: String(kv.baselinename ?? "").trim() };
     const size = Object.keys(PAPER).find(k => k.toLowerCase() === String(kv.pagesize ?? "").trim().toLowerCase());
     if (size) page = { size, orient: /portrait/i.test(kv.orientation ?? "") ? "portrait" : "landscape", margin: [5, 7, 10, 15, 20].includes(+kv.marginmm) ? +kv.marginmm : 7,
       rowH: +kv.rowheightpx >= 14 && +kv.rowheightpx <= 40 ? +kv.rowheightpx : 26, fill: !/^no$/i.test(String(kv.fillpage ?? "").trim()) };
@@ -2250,7 +2472,7 @@ function parseWorkbook(buf) {
       return s;
     });
   }
-  return { rows, lanes, meta, timeline, page, problems, styles, fromTool };
+  return { rows, lanes, meta, timeline, page, problems, styles, fromTool, progress };
 }
 /* Types the workbook uses that this project doesn't have yet: from its StyleRegister sheet,
    or guessed from the Style column. Existing types are never overwritten. */
@@ -2287,8 +2509,17 @@ function previewImport(parsed, fname) {
     if (r.status && r.status !== cur.status) diffs.push(["Status", cur.status, r.status]);
     if (r.parent !== undefined && (r.parent || "") !== (cur.parent || "")) diffs.push(["Summary", cur.parent || "(none)", r.parent || "(none)"]);
     if (r.collapsed !== undefined && !!r.collapsed !== !!cur.collapsed) diffs.push(["Collapsed", cur.collapsed ? "Yes" : "No", r.collapsed ? "Yes" : "No"]);
+    // progress and baseline (a summary's progress is worked out from its bars, so it isn't read back)
+    const trackedRow = !isCurtain(lookup, st) && !/^container/.test(styleOf(lookup, st).shape);
+    if (trackedRow && r.pct !== undefined && r.pct !== pctOf(cur)) diffs.push(["Progress", pctOf(cur) + "%", r.pct + "%"]);
+    if (trackedRow && r.bStart !== undefined) {
+      const bEnd = r.bStart ? (ms ? r.bStart : r.bEnd || r.bStart) : "";
+      if ((r.bStart || "") !== (cur.bStart || "")) diffs.push([ms ? "Baseline date" : "Baseline start", cur.bStart ? fmt(cur.bStart) : "(none)", r.bStart ? fmt(r.bStart) : "(none)"]);
+      if (!ms && r.bStart && bEnd !== (cur.bEnd || "")) diffs.push(["Baseline finish", cur.bEnd ? fmt(cur.bEnd) : "(none)", fmt(bEnd)]);
+    }
     if (diffs.length) changes.push({ r, cur, diffs });
   }
+  const ddNew = parsed.progress ? parsed.progress.dataDate : undefined, ddChange = ddNew !== undefined && ddNew !== prog().dataDate;
   const missing = P.items.filter(i => !seen.has(i.id));
 
   // lanes: the Lanes sheet sets which lanes exist, their order and colour
@@ -2311,6 +2542,7 @@ function previewImport(parsed, fname) {
 
   const tr = (id, what, from, to) => `<tr><td>${esc(id)}</td><td>${esc(what)}</td><td>${from != null ? `<span class="old">${esc(from)}</span> → ` : ""}${esc(to)}</td></tr>`;
   const body = [
+    ...(ddChange ? [tr("", "Data date", prog().dataDate ? fmt(prog().dataDate) : "(none)", ddNew ? fmt(ddNew) : "(none)")] : []),
     ...newTypes.map(s => tr(s.name, `New ${s.behaviour === "Move" ? "milestone" : "bar"} type`, null, s.notes)),
     ...laneDiffs.map(d => tr(...d)),
     ...changes.flatMap(c => c.diffs.map((d, k) => tr(k ? "" : c.cur.id, d[0], d[1], d[2]))),
@@ -2320,7 +2552,7 @@ function previewImport(parsed, fname) {
     ...missing.map(m => tr(m.id, "Not in workbook", null, `${m.name}${m.lane ? " · " + laneName(m.lane) : ""}`)),
     ...parsed.problems.map(p => `<tr><td></td><td>Skipped</td><td>${esc(p)}</td></tr>`),
   ].join("");
-  const nothing = !changes.length && !adds.length && !dupes.length && !newTypes.length && !laneDiffs.length;
+  const nothing = !changes.length && !adds.length && !dupes.length && !newTypes.length && !laneDiffs.length && !ddChange;
   const removeLabel = [missing.length && `${missing.length} item${missing.length > 1 ? "s" : ""}`, lanesGone.length && `${lanesGone.length} lane${lanesGone.length > 1 ? "s" : ""}`].filter(Boolean).join(" and ");
   showModal(`
     <header><h3>Update from ${esc(fname)}</h3><p>Rows are matched to the programme by ShapeID. Positions and colours you set on the sheet are kept.</p></header>
@@ -2353,7 +2585,12 @@ function previewImport(parsed, fname) {
           if (r.parent !== undefined) { if (r.parent) it.parent = r.parent; else delete it.parent; }
           if (r.collapsed !== undefined) it.collapsed = r.collapsed;
           if (r.labelMode) { if (r.labelMode === "auto") delete it.labelMode; else it.labelMode = r.labelMode; }
+          if (tracked(it)) {
+            if (r.pct !== undefined) { if (r.pct) it.pct = r.pct; else delete it.pct; }
+            if (r.bStart !== undefined) { if (r.bStart) { it.bStart = r.bStart; it.bEnd = isMs(p, st) ? r.bStart : (r.bEnd || r.bStart); } else { delete it.bStart; delete it.bEnd; } }
+          }
         }
+        if (ddChange) p.progress = { ...prog(), ...(p.progress || {}), dataDate: ddNew };
         const reserved = new Set(parsed.rows.map(r => r.id).filter(Boolean));
         for (const r of [...adds, ...dupes]) {
           const st = styleOf(p, r.style).name;
@@ -2362,6 +2599,8 @@ function previewImport(parsed, fname) {
           const it = { id, name: r.name, style: st, lane: curtain ? "" : laneFor(r.lane || "Unassigned"), start: r.start, end: isMs(p, st) ? r.start : r.end, status: r.status, row: 0, fill: r.fill, stroke: r.stroke };
           if (r.parent) it.parent = r.parent;
           if (r.collapsed) it.collapsed = true;
+          if (!curtain && r.pct) it.pct = r.pct;
+          if (!curtain && r.bStart) { it.bStart = r.bStart; it.bEnd = isMs(p, st) ? r.bStart : (r.bEnd || r.bStart); }
           it.row = curtain ? 0 : Number.isFinite(r.row) ? r.row : freeRow(p, it);
           p.items.push(it);
         }
@@ -2737,8 +2976,8 @@ async function resolveConflict(path, name) {
 function merge3(base, mine, theirs) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const out = clone(theirs); let nMine = 0, nTheirs = 0, both = 0;
-  for (const part of ["meta", "timeline", "view"]) for (const k of new Set([...Object.keys(base[part] || {}), ...Object.keys(mine[part] || {})]))
-    if (!same(mine[part]?.[k], base[part]?.[k])) { out[part][k] = mine[part][k]; nMine++; }
+  for (const part of ["meta", "timeline", "view", "progress"]) for (const k of new Set([...Object.keys(base[part] || {}), ...Object.keys(mine[part] || {})]))
+    if (!same(mine[part]?.[k], base[part]?.[k])) { out[part] = out[part] || {}; out[part][k] = mine[part]?.[k]; nMine++; }
   const mergeList = (key, idOf) => {
     const map = arr => new Map((arr || []).map(x => [idOf(x), x]));
     const b = map(base[key]), m = map(mine[key]), t = map(theirs[key]);
