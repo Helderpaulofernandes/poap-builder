@@ -158,7 +158,12 @@ aside h2:first-child { margin-top: 0; }
 .seg button:hover { background: var(--hover); color: var(--fg); }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .seg button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
-#showGrp .seg { flex-wrap: nowrap; }
+.lkrow { display: grid; grid-template-columns: minmax(0, 1fr) 56px 54px auto; gap: 4px; align-items: center; margin-bottom: 4px; font-size: 12px; }
+.lkrow .lkname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lkrow select, .lkrow input { padding: 3px 4px; min-width: 0; }
+.lkrow .btn { padding: 2px 7px; }
+#showGrp .seg, #logicGrp .seg { flex-wrap: nowrap; }
+#logicGrp .seg button { flex: none; white-space: nowrap; padding: 5px 10px; }
 #showGrp .seg button { flex: none; white-space: nowrap; padding: 5px 10px; }
 .seg input[type=color] { width: 34px; flex: none; border: 0; padding: 0 3px; background: var(--bg); cursor: pointer; }
 .logo-editor { display: grid; gap: 12px; }
@@ -240,6 +245,10 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     </select>
     <span id="zoomBox"><input id="zoom" type="range" min="1" max="12" step="0.5" aria-label="Zoom"></span>
     <button class="btn" id="bFit" title="Set the timeline to cover all items">Fit dates</button>
+  </div>
+  <div class="grp" id="logicGrp">
+    <label>Logic</label>
+    <div class="seg" role="group" aria-label="Relationships and critical path"><button type="button" id="tgLinks" title="Show relationship arrows">Links</button><button type="button" id="tgCrit" title="Outline the critical path in red">Critical</button></div>
   </div>
   <div class="grp" id="showGrp" hidden>
     <label>Show</label>
@@ -466,6 +475,117 @@ function progressStatus() {
 }
 const signedDays = n => n === 0 ? "on time" : `${Math.abs(n)} day${Math.abs(n) === 1 ? "" : "s"} ${n > 0 ? "late" : "early"}`;
 
+/* ---------- logic: relationships between activities, and the critical path ----------
+   it.preds = [{ id, type: "FS" | "SS" | "FF" | "SF", lag }] on the successor; lags are calendar days.
+   Times are day points: a bar runs from the start of its first day (s) to the end of its last (f = end + 1);
+   a milestone is a point at the end of its day, so a bar and the milestone marking its finish share a date. */
+const LOGIC_DEFAULTS = { links: true, arrows: "all", critical: true, push: false, mode: "longest", nearDays: 0 };
+const logic = () => ({ ...LOGIC_DEFAULTS, ...((P && P.logic) || {}) });
+const REL_TYPES = ["FS", "SS", "FF", "SF"];
+const REL_NAMES = { FS: "Finish → start", SS: "Start → start", FF: "Finish → finish", SF: "Start → finish" };
+const LINK_GREY = "#6F7C8C", LINK_BROKEN = "#D97706";
+const linkable = it => !!it && !isCurtain(P, it.style) && !isContainer(P, it);
+function tpts(it) { const d = toDays(it.start); return isMs(P, it.style) ? { s: d + 1, f: d + 1 } : { s: d, f: toDays(it.end) + 1 }; }
+/* every relationship whose two ends exist: { from, to, type, lag } */
+function allLinks(p) {
+  p = p || P;
+  const byId = new Map(p.items.map(i => [i.id, i])), out = [];
+  for (const it of p.items) for (const r of it.preds || []) {
+    const a = byId.get(r.id);
+    if (a && a !== it && linkable(a) && linkable(it)) out.push({ from: a, to: it, type: REL_TYPES.includes(r.type) ? r.type : "FS", lag: +r.lag || 0 });
+  }
+  return out;
+}
+/* room left on a relationship in days: positive is slack, negative means the dates break it */
+function linkGap(l) {
+  const a = tpts(l.from), b = tpts(l.to);
+  return l.type === "FS" ? b.s - (a.f + l.lag) : l.type === "SS" ? b.s - (a.s + l.lag) : l.type === "FF" ? b.f - (a.f + l.lag) : b.f - (a.s + l.lag);
+}
+/* would linking from → to close a loop (to already leads to from)? */
+function makesLoop(fromId, toId) {
+  const succ = new Map(); allLinks().forEach(l => (succ.get(l.from.id) || succ.set(l.from.id, []).get(l.from.id)).push(l.to.id));
+  const seen = new Set(), stack = [toId];
+  while (stack.length) { const id = stack.pop(); if (id === fromId) return true; if (seen.has(id)) continue; seen.add(id); stack.push(...(succ.get(id) || [])); }
+  return false;
+}
+/* Critical path from the dates on the sheet: a backward pass from the programme finish gives each activity's
+   latest finish; total float is that minus its finish. Activities with no successor may float to the finish.
+   Critical = float within the near-critical allowance (finished work never is). */
+function criticalPath() {
+  const links = allLinks(); if (!links.length) return null;
+  const items = P.items.filter(linkable), T = new Map(items.map(i => [i.id, tpts(i)]));
+  // the programme finish is the end of the linked network: unlinked items (notes, key dates) don't set it
+  const inNet = new Set(links.flatMap(l => [l.from.id, l.to.id]));
+  const finish = Math.max(...items.filter(i => inNet.has(i.id)).map(i => T.get(i.id).f));
+  const succ = new Map(); links.forEach(l => (succ.get(l.from.id) || succ.set(l.from.id, []).get(l.from.id)).push(l));
+  const LF = new Map(), visiting = new Set(), loops = new Set();
+  const lateFinish = id => {
+    if (LF.has(id)) return LF.get(id);
+    if (visiting.has(id)) { loops.add(id); return finish; }
+    visiting.add(id);
+    const t = T.get(id), dur = t.f - t.s; let lf = finish;
+    for (const l of succ.get(id) || []) {
+      const j = T.get(l.to.id); if (!j) continue;
+      const lfj = lateFinish(l.to.id), lsj = lfj - (j.f - j.s);
+      lf = Math.min(lf, l.type === "FS" ? lsj - l.lag : l.type === "SS" ? lsj - l.lag + dur : l.type === "FF" ? lfj - l.lag : lfj - l.lag + dur);
+    }
+    visiting.delete(id); LF.set(id, lf); return lf;
+  };
+  const lg = logic(), near = +lg.nearDays || 0, float = new Map(), critical = new Set();
+  for (const it of items) {
+    if (!inNet.has(it.id)) continue;   // unlinked: no float to speak of
+    float.set(it.id, lateFinish(it.id) - T.get(it.id).f);
+  }
+  let driving;
+  if (lg.mode === "float") {
+    for (const [id, f] of float) if (f <= near && pctOf(P.items.find(i => i.id === id)) < 100) critical.add(id);
+    driving = new Set(links.filter(l => critical.has(l.from.id) && critical.has(l.to.id) && linkGap(l) <= near));
+  } else {
+    // longest path: from whatever finishes last, back through each activity's driving predecessor(s), the
+    // links with the least room; finished work ends the path (it no longer drives anything)
+    driving = new Set();
+    const preds = new Map(); links.forEach(l => (preds.get(l.to.id) || preds.set(l.to.id, []).get(l.to.id)).push(l));
+    const stack = items.filter(i => inNet.has(i.id) && T.get(i.id).f === finish).map(i => i.id);
+    while (stack.length) {
+      const id = stack.pop(); if (critical.has(id)) continue;
+      const it = P.items.find(i => i.id === id); if (pctOf(it) >= 100) continue;
+      critical.add(id);
+      const ls = preds.get(id) || []; if (!ls.length) continue;
+      const least = Math.min(...ls.map(linkGap));
+      ls.filter(l => linkGap(l) === least).forEach(l => { driving.add(l); stack.push(l.from.id); });
+    }
+  }
+  return { float, critical, finish, loops, links, driving, broken: links.filter(l => linkGap(l) < 0) };
+}
+/* keep successors after their predecessors: anything a change has pushed into breaking a link moves later
+   (never earlier). Finished activities stay where they are. Returns the ids moved. */
+function pushSuccessors(p) {
+  const moved = new Set();
+  for (let pass = 0; pass < 60; pass++) {
+    let any = false;
+    for (const l of allLinks(p)) {
+      if (pctOf(l.to) >= 100) continue;
+      const g = linkGap(l); if (g >= 0) continue;
+      const it = l.to; it.start = addDays(it.start, -g); it.end = isMs(p, it.style) ? it.start : addDays(it.end, -g);
+      moved.add(it.id); any = true;
+    }
+    if (!any) break;
+  }
+  return moved;
+}
+const predText = r => `${r.id}${r.type || "FS"}${+r.lag ? (+r.lag > 0 ? "+" : "") + (+r.lag) + "d" : ""}`;
+/* "CON001FS, CON002SS+2d, MS0004" → preds; ids are matched against the programme's (case-insensitive) */
+function parsePreds(raw, ids) {
+  const out = [], lower = new Map([...ids].map(i => [String(i).toLowerCase(), i]));
+  for (const tok of String(raw || "").split(/[,;\n]+/).map(s => s.trim()).filter(Boolean)) {
+    if (lower.has(tok.toLowerCase())) { out.push({ id: lower.get(tok.toLowerCase()), type: "FS", lag: 0 }); continue; }
+    const m = tok.match(/^(.*?)\s*(FS|SS|FF|SF)?\s*(?:([+-])\s*(\d+)\s*(?:d|days?)?)?$/i);
+    if (!m || !lower.has(m[1].toLowerCase())) continue;
+    out.push({ id: lower.get(m[1].toLowerCase()), type: (m[2] || "FS").toUpperCase(), lag: m[4] ? (m[3] === "-" ? -1 : 1) * +m[4] : 0 });
+  }
+  return out;
+}
+
 // Seed: rows from "Pxx-xxxx ProjectTitle PoaP_Shape_Data.xlsx" (ShapeID, Name, Style, Lane, Start, End, Status, Y_mm)
 const SEED_ROWS = [["MS0001","Date for Contract Award (Indicative)","ML_Diamond","Milestones","2026-11-03","2026-11-03","Active",542],["MS0002","Site Investigation Complete","ML_Square","Milestones","2026-01-22","2026-01-22","Active",null],["MS0003","Design IFC Issued","ML_Triangle","Milestones","2026-12-22","2026-12-22","Active",535],["MS0003","Site Establishment Complete","ML_Square","Milestones","2027-03-05","2027-03-05","Active",null],["MS0004","Retaining Wall Works Complete","ML_Square","Milestones","2027-04-13","2027-04-13","Active",540],["MS0005","Subgrade Complete","ML_Square","Milestones","2027-05-10","2027-05-10","Active",null],["MS0006","Underground Services Complete","ML_Square","Milestones","2027-06-03","2027-06-03","Active",null],["MS0007","Pavement Complete","ML_Square","Milestones","2027-06-25","2027-06-25","Active",null],["MS0008","Carpark Extension Complete","ML_Square","Milestones","2027-08-21","2027-08-21","Active",535],["MS0009","All Testing & Commissioning Complete","ML_Square","Milestones","2027-07-26","2027-07-26","Active",null],["MS0010","Deterministic Date of Construction Completion","ML_Circle","Milestones","2027-07-27","2027-07-27","Active",null],["MS0011","Forecast Date of Construction Completion","ML_Circle","Milestones","2027-07-30","2027-07-30","Active",null],["MS0012","Date for Construction Completion","ML_Diamond","Milestones","2027-07-30","2027-07-30","Active",542],["PRE001","Site Access Preconditions","BAR","Preconstruction","2026-11-04","2027-03-30","Active",437.3],["PRE002","Construction Preconditions","BAR","Preconstruction","2027-01-13","2027-03-05","Active",430.3],["PRE003","Management Plans","BAR","Preconstruction","2026-11-04","2027-02-11","Active",423.3],["DES001","Design Development 30%","BAR","Design","2026-11-11","2026-12-09","Active",411.3],["DES002","Design Development 60%","BAR","Design","2026-12-09","2027-01-06","Active",404.3],["DES003","Design Development 90%","BAR","Design","2027-01-06","2027-01-25","Active",397.3],["DES004","Design Development IFC","BAR","Design","2027-01-25","2027-02-15","Active",390.3],["PRO001","Key Package 21 Combined Civils, Structural & Finishes","BAR","Procurement","2027-01-06","2027-03-01","Active",378.3],["PRO002","Key Package 23 Electrical, Lighting and CCTV","BAR","Procurement","2027-01-04","2027-05-28","Active",371.3],["CON001","SI","BAR","Construction","2026-12-17","2026-12-22","Active",359.3],["CON002","Demolition & Retaining Wall Works","BAR","Construction","2027-03-01","2027-04-13","Active",352.3],["CON003","Bulk Earthworks & Drainage","BAR","Construction","2027-04-14","2027-05-10","Active",345.3],["CON004","Services & Foundations","BAR","Construction","2027-05-11","2027-06-03","Active",338.3],["CON005","Pavement Construction","BAR","Construction","2027-06-07","2027-06-25","Active",331.3],["CON006","Fit-Out & Finishing Works","BAR","Construction","2027-06-28","2027-07-21","Active",324.3],["CON007","Testing & Commissioning","BAR","Testing & Commissioning","2027-07-22","2027-07-26","Active",312.3],["CON008","Handover & Demobilisation","BAR","Handover & Demobilisation","2027-07-14","2027-07-27","Active",300.3]];
 
@@ -509,6 +629,7 @@ function projectFromRows(rows, laneRows, base) {
     if (r.labelMode && r.labelMode !== "auto") it.labelMode = r.labelMode;
     if (r.pct && !curtain) it.pct = r.pct;
     if (r.bStart && !curtain) { it.bStart = r.bStart; it.bEnd = isMs(p, st.name) ? r.bStart : (r.bEnd || r.bStart); }
+    if (r.predsRaw && !curtain) it._predsRaw = r.predsRaw;   // resolved once every item exists
     p.items.push(it);
     if (it.row == null && Number.isFinite(r.y)) { (yGroups.get(lane.id) || yGroups.set(lane.id, []).get(lane.id)).push([it, r.y]); }
   }
@@ -518,6 +639,8 @@ function projectFromRows(rows, laneRows, base) {
     list.forEach(([it, y]) => it.row = Math.max(0, Math.round((top - y) / 7)));
   }
   p.items.filter(i => i.row == null).forEach(i => i.row = freeRow(p, i));
+  const ids = new Set(p.items.map(i => i.id));
+  p.items.forEach(i => { if (i._predsRaw) { const pr = parsePreds(i._predsRaw, ids).filter(r => r.id !== i.id); if (pr.length) i.preds = pr; } delete i._predsRaw; });
   syncContainers(p);
   return p;
 }
@@ -573,8 +696,12 @@ function commit(mutator, keepSel) {
   if (!keepSel && sel && !findSel()) sel = null;
   changed();
 }
-function changed() {
+function changed(opts = {}) {
   touched = true;
+  if (!opts.undo && logic().push) {   // keep successors after their predecessors
+    const moved = pushSuccessors(P);
+    if (moved.size) toast(`Moved ${moved.size} successor${moved.size === 1 ? "" : "s"} later to keep ${moved.size === 1 ? "its" : "their"} links.`, 3500);
+  }
   syncContainers(P);
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   showStatus();
@@ -604,8 +731,8 @@ async function saveDoc(opts = {}) {
   try { return await (HOST ? librarySave(opts) : fileSave(opts)); }
   finally { saving = false; showStatus(); }
 }
-function undo() { if (!past.length) return; future.push(JSON.stringify(P)); P = JSON.parse(past.pop()); changed(); }
-function redo() { if (!future.length) return; past.push(JSON.stringify(P)); P = JSON.parse(future.pop()); changed(); }
+function undo() { if (!past.length) return; future.push(JSON.stringify(P)); P = JSON.parse(past.pop()); changed({ undo: true }); }
+function redo() { if (!future.length) return; past.push(JSON.stringify(P)); P = JSON.parse(future.pop()); changed({ undo: true }); }
 function findSel() {
   if (!sel) return null;
   if (sel.type === "item") return P.items.find(i => i.id === sel.id);
@@ -719,6 +846,7 @@ function draw(svg, opts) {
   const labels = planLabels(L), fh = footerPlan(L, labels.keyList).height;
   if (fh !== L.ftrH) L = layout({ ...opts, ftrH: fh });
   L.labels = labels;
+  const lg = logic(); L.cp = lg.critical || lg.links ? criticalPath() : null;
   svg.innerHTML = "";
   svg.setAttribute("width", L.W); svg.setAttribute("height", L.H);
   svg.setAttribute("viewBox", `0 0 ${L.W} ${L.H}`);
@@ -753,6 +881,8 @@ function draw(svg, opts) {
   const curtains = P.items.filter(it => isCurtain(P, it.style));
   drawCurtainShades(svg, curtains, L);
 
+  // relationship arrows sit behind the bars, so bars and labels stay clean
+  if (lg.links && L.cp) drawLinks(svg, L);
   // items
   const gi = el("g", {}, svg);
   // summary bars first so the bars inside them draw on top
@@ -819,6 +949,51 @@ function drawProgressLine(svg, L, F) {
     }
     el("polyline", { points: pts.map(p => p.map(n => n.toFixed(2)).join(",")).join(" "), fill: "none", stroke: LINE_RED, "stroke-width": 1.5, "stroke-linejoin": "round" }, g);
     dots.forEach(([x, y]) => el("circle", { cx: x, cy: y, r: 2.2, fill: LINE_RED }, g));
+  }
+}
+/* Relationship arrows, drawn the way scheduling tools do: finish-to-start leaves the end of the predecessor and
+   drops into the top (or rises into the bottom) of the successor near its start; start-to-start and
+   finish-to-finish run round the outside of the two ends. Red when the link drives the critical path,
+   dashed amber when the dates break it. */
+function drawLinks(svg, L) {
+  const g = el("g", { "pointer-events": "none" }, svg), cp = L.cp, crit = logic().critical;
+  const geo = it => {
+    const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln || hiddenByCollapse(P, it)) return null;
+    const cy = ln.y + G.pad + ln.toView(it.row) * G.rowH + G.rowH / 2;
+    if (isMs(P, it.style)) { const x = L.x(it.start) + L.ppd / 2, r = G.ms * .62; return { cy, xs: x - r, xf: x + r, mid: x, half: r, ms: true }; }
+    const xs = L.x(it.start), xf = L.x(it.end) + L.ppd;
+    return { cy, xs, xf, mid: xs + Math.min(6, (xf - xs) / 2), half: G.barH / 2 };
+  };
+  const head = (x, y, dir, colour) => {   // a small solid arrowhead with its tip at (x, y)
+    const a = 3.4, b = 2.3, pts = { down: [[x - b, y - a], [x + b, y - a]], up: [[x - b, y + a], [x + b, y + a]], right: [[x - a, y - b], [x - a, y + b]], left: [[x + a, y - b], [x + a, y + b]] }[dir];
+    el("polygon", { points: `${x},${y} ${pts[0].join(",")} ${pts[1].join(",")}`, fill: colour }, g);
+  };
+  const onlyCrit = logic().arrows === "critical";
+  for (const l of cp.links) {
+    if (onlyCrit && !cp.driving.has(l)) continue;
+    const a = geo(l.from), b = geo(l.to); if (!a || !b) continue;
+    const broken = linkGap(l) < 0, driving = crit && cp.driving.has(l);
+    const colour = broken ? LINK_BROKEN : driving ? LINE_RED : LINK_GREY;
+    const attrs = { fill: "none", stroke: colour, "stroke-width": driving ? 1.1 : .8, "stroke-linejoin": "round", "stroke-dasharray": broken ? "3 2" : null };
+    const down = b.cy >= a.cy, edgeY = down ? b.cy - b.half : b.cy + b.half, between = b.cy + (down ? -1 : 1) * G.rowH / 2;
+    let d, tip;
+    if (l.type === "FS") {
+      const x0 = a.xf, y0 = a.cy;
+      if (Math.abs(a.cy - b.cy) < 1) {   // same row: a straight run into the start
+        if (b.xs - x0 < 2) continue;
+        d = `M${x0},${y0} H${b.xs}`; tip = [b.xs, b.cy, "right"];
+      } else if (b.mid >= x0 + 3) { d = `M${x0},${y0} H${b.mid} V${edgeY}`; tip = [b.mid, edgeY, down ? "down" : "up"]; }
+      else { const xo = x0 + 5; d = `M${x0},${y0} H${xo} V${between} H${b.mid} V${edgeY}`; tip = [b.mid, edgeY, down ? "down" : "up"]; }
+    } else if (l.type === "SS") {
+      const xk = Math.min(a.xs, b.xs) - 6; d = `M${a.xs},${a.cy} H${xk} V${b.cy} H${b.xs}`; tip = [b.xs, b.cy, "right"];
+    } else if (l.type === "FF") {
+      const xk = Math.max(a.xf, b.xf) + 6; d = `M${a.xf},${a.cy} H${xk} V${b.cy} H${b.xf}`; tip = [b.xf, b.cy, "left"];
+    } else {   // SF
+      const x0 = a.xs - 6, x1 = b.xf + 6;
+      d = x1 <= x0 ? `M${a.xs},${a.cy} H${x1} V${b.cy} H${b.xf}` : `M${a.xs},${a.cy} H${x0} V${between} H${x1} V${b.cy} H${b.xf}`; tip = [b.xf, b.cy, "left"];
+    }
+    el("path", { d, ...attrs }, g);
+    head(...tip, colour);
   }
 }
 /* small pointers where the data date meets the timelines (the date itself is in the legend); drawn over the bands */
@@ -915,6 +1090,9 @@ function footerPlan(L, keyList) {
   if (pr.bars && P.items.some(i => tracked(i) && pctOf(i) > 0)) extra("pct", "Actual progress");
   if (pr.dataDate) extra("dd", `Data date ${fmt(pr.dataDate)}`);
   if (pr.dataDate && pr.line) extra("line", "Progress line");
+  const lg = logic(), cp = (lg.links || lg.critical) && allLinks().length ? (L.cp !== undefined ? L.cp : criticalPath()) : null;
+  if (cp && lg.critical && cp.critical.size) extra("crit", lg.mode === "float" && lg.nearDays ? `Critical (float ≤ ${lg.nearDays} d)` : "Critical path");
+  if (cp && lg.links) extra("link", "Relationship");
   if (keyList.length) {
     entries.push({ kind: "heading", text: "Key:", w: headW, newLine: true });   // the key always starts its own line
     keyList.forEach(k => entries.push({ kind: "key", k, w: 15 + textW(k.name, 9, 500) + 16 }));
@@ -954,6 +1132,8 @@ function drawFooter(svg, L, F) {
       if (e.what === "baseline") { drawBarShape(g, "bar", x, cy - 6, 22, 9, laneBar(BRAND.navy), BRAND.navy); el("rect", { x: x + 2, y: cy + 4, width: 18, height: 2.4, fill: BASE_GREY }, g); }
       if (e.what === "pct") { drawBarShape(g, "bar", x, cy - 6, 22, 12, laneBar(BRAND.navy), BRAND.navy); el("rect", { x, y: cy - 6, width: 13, height: 12, fill: tint(BRAND.navy, .45), stroke: BRAND.navy, "stroke-width": .9 }, g); }
       if (e.what === "dd") el("line", { x1: x + 11, x2: x + 11, y1: cy - 7, y2: cy + 7, stroke: BRAND.navy, "stroke-width": 1.2, "stroke-dasharray": "3 2" }, g);
+      if (e.what === "crit") drawBarShape(g, "bar", x, cy - 6, 22, 12, laneBar(BRAND.navy), BRAND.navy, { edge: LINE_RED, sw: 1.7 });
+      if (e.what === "link") { el("path", { d: `M${x},${cy - 4} H${x + 14} V${cy + 4}`, fill: "none", stroke: LINK_GREY, "stroke-width": .9 }, g); el("polygon", { points: `${x + 14},${cy + 7} ${x + 11.7},${cy + 3.6} ${x + 16.3},${cy + 3.6}`, fill: LINK_GREY }, g); }
       if (e.what === "line") el("polyline", { points: `${x + 8},${cy - 7} ${x + 8},${cy - 4} ${x + 2},${cy} ${x + 8},${cy + 2} ${x + 16},${cy + 4} ${x + 8},${cy + 7}`, fill: "none", stroke: LINE_RED, "stroke-width": 1.4, "stroke-linejoin": "round" }, g);
       el("text", { x: x + e.icon, y: cy + 3.5, fill: BRAND.ink, "font-size": 9.5, "font-weight": 500, "font-family": F.font }, g, e.label);
       continue;
@@ -1154,11 +1334,21 @@ function drawItem(g, it, ln, L, opts, F) {
   const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
   const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
   const pr = prog(), pct = pr.bars ? pctOf(it) : 0;
+  // critical: only the outline changes, to a slightly heavier red
+  const crit = !!(L.cp && logic().critical && L.cp.critical.has(it.id)), edge = crit ? LINE_RED : stroke, sw = crit ? 1.7 : .9;
+  // dots at the ends of the selected activity: drag one onto another activity to link them
+  const linkDots = (xs, xf) => {
+    if (opts.print || !selected || showMode() === "planned") return;
+    [["ls", xs, "Drag onto another activity to link from this start"], ["lf", xf, "Drag onto another activity to link from this finish"]].forEach(([part, cx, tip]) => {
+      const d = el("circle", { cx, cy, r: 3.6, fill: "#FFFFFF", stroke: BRAND.orange, "stroke-width": 1.4, "data-id": it.id, "data-part": part, style: "cursor:crosshair" }, grp);
+      el("title", {}, d, tip);
+    });
+  };
   if (st.behaviour === "Move") {
     const x = L.x(it.start) + L.ppd / 2, s = G.ms;
     // baseline: a small grey marker where the milestone was planned, when it has moved
     if (pr.baseline && it.bStart && it.bStart !== it.start) drawMarker(grp, st.shape, L.x(it.bStart) + L.ppd / 2, cy, s * .7, "#FFFFFF", BASE_GREY);
-    drawMarker(grp, st.shape, x, cy, s, fill, stroke);
+    drawMarker(grp, st.shape, x, cy, s, fill, edge, sw);
     if (pct >= 100) el("polyline", { points: `${x - s * .3},${cy} ${x - s * .08},${cy + s * .24} ${x + s * .32},${cy - s * .26}`, fill: "none", stroke: "#FFFFFF", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "pointer-events": "none" }, grp);
     const tw = textW(it.name, 9, 500) + (inlineMsDate() ? textW("  " + fmt(it.start), 8.5, 400) : 0);
     const left = x + s * .8 + 4 + tw > L.W - 6;          // near the right edge: label goes left of the marker
@@ -1172,12 +1362,13 @@ function drawItem(g, it, ln, L, opts, F) {
     }
     if (selected) el("rect", { x: x - s, y: cy - s, width: s * 2, height: s * 2, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6, rx: 2 }, grp);
     el("rect", { x: left ? x - s - tw - 10 : x - s, y: cy - s, width: s * 2 + tw + 10, height: s * 2, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+    linkDots(x - s - 4, x + s + 4);
   } else {
     const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(2, x2 - x1), h = G.barH, y = cy - h / 2;
-    drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke);
+    drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke, { edge: crit ? LINE_RED : null, sw });
     if (pr.baseline && it.bStart) drawBaseline(grp, it, L, y + h);
     // done so far: the bar filled to its full height in a stronger shade, from the start to the % complete
-    if (pct > 0 && st.shape !== "summary") el("rect", { x: x1, y, width: w * pct / 100, height: h, fill: progressColour(it, ln.l), stroke, "stroke-width": .9, "pointer-events": "none" }, grp);
+    if (pct > 0 && st.shape !== "summary") el("rect", { x: x1, y, width: w * pct / 100, height: h, fill: progressColour(it, ln.l), stroke: edge, "stroke-width": sw, "pointer-events": "none" }, grp);
     const tw = textW(it.name, 9, 500), plan = L.labels?.get(it.id) || { mode: tw + 10 < w ? "inside" : "right" };
     const text = { fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font, "pointer-events": "none" };
     if (plan.mode === "inside") el("text", { x: x1 + w / 2, y: cy + 3.3, "text-anchor": "middle", ...text }, grp, it.name);
@@ -1194,6 +1385,7 @@ function drawItem(g, it, ln, L, opts, F) {
       if (plan.mode === "left") el("rect", { x: x1 - tw - 8, y, width: tw + 6, height: h, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
       if (plan.mode === "above") el("rect", { x: x1, y: y - 10, width: textW(it.name, ABOVE_FONT, 600) + 2, height: 9, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
     }
+    linkDots(x1 - 8, x2 + 8);
   }
 }
 /* the completed part of a bar: the lane colour (or the bar's own colour, darkened) strong enough to stand
@@ -1208,8 +1400,8 @@ function drawBaseline(g, it, L, barBottom) {
   const bh = 2.4, by = Math.min(barBottom + 1, barBottom + (G.rowH - G.barH) / 2 - bh);   // very narrow, just under the bar
   el("rect", { x: bx1, y: by, width: Math.max(2, bx2 - bx1), height: bh, fill: BASE_GREY, "pointer-events": "none" }, g);
 }
-function drawMarker(g, shape, x, cy, s, fill, stroke) {
-  const a = { fill, stroke, "stroke-width": .9 };
+function drawMarker(g, shape, x, cy, s, fill, stroke, sw) {
+  const a = { fill, stroke, "stroke-width": sw || .9 };
   if (shape === "diamond") el("polygon", { points: `${x},${cy-s*.75} ${x+s*.75},${cy} ${x},${cy+s*.75} ${x-s*.75},${cy}`, ...a }, g);
   else if (shape === "triangle") el("polygon", { points: `${x},${cy-s*.72} ${x+s*.75},${cy+s*.58} ${x-s*.75},${cy+s*.58}`, ...a }, g);
   else if (shape === "invtriangle") el("polygon", { points: `${x},${cy+s*.72} ${x+s*.75},${cy-s*.58} ${x-s*.75},${cy-s*.58}`, ...a }, g);
@@ -1285,15 +1477,16 @@ function hiddenRows(p, laneId) {
   p.items.forEach(c => { if (c.lane === laneId && c.collapsed && isContainer(p, c)) for (let r = c.row + 1; r < c.row + spanOf(c); r++) out.add(r); });
   return out;
 }
-function drawBarShape(g, shape, x, y, w, h, fill, stroke) {
+/* o.edge: an outline colour of its own (critical), o.sw: its width; everything else keeps the bar's colours */
+function drawBarShape(g, shape, x, y, w, h, fill, stroke, o = {}) {
   if (shape === "summary") {   // thin bar with down-pointing ends, like a summary task
     const t = h * .38;
-    el("polygon", { points: `${x},${y} ${x+w},${y} ${x+w},${y+h*.85} ${x+w-Math.min(6,w/3)},${y+t} ${x+Math.min(6,w/3)},${y+t} ${x},${y+h*.85}`, fill: stroke, stroke, "stroke-width": .6 }, g);
+    el("polygon", { points: `${x},${y} ${x+w},${y} ${x+w},${y+h*.85} ${x+w-Math.min(6,w/3)},${y+t} ${x+Math.min(6,w/3)},${y+t} ${x},${y+h*.85}`, fill: stroke, stroke: o.edge || stroke, "stroke-width": o.edge ? o.sw : .6 }, g);
     return;
   }
-  const a = { x, y, width: w, height: h, fill, stroke, "stroke-width": .9 };
+  const a = { x, y, width: w, height: h, fill, stroke: o.edge || stroke, "stroke-width": o.sw || .9 };
   if (shape === "rounded") Object.assign(a, { rx: Math.min(h / 2, w / 2), ry: Math.min(h / 2, w / 2) });
-  if (shape === "dashed") Object.assign(a, { "stroke-dasharray": "4 2.5", "stroke-width": 1.1 });
+  if (shape === "dashed") Object.assign(a, { "stroke-dasharray": "4 2.5", "stroke-width": Math.max(1.1, o.sw || 0) });
   el("rect", a, g);
   if (shape === "poss") for (let hx = x + 4; hx < x + w; hx += 6) el("line", { x1: hx, y1: y + h, x2: Math.min(hx + h * .6, x + w), y2: y, stroke, "stroke-width": .4, opacity: .5 }, g);
 }
@@ -1344,6 +1537,9 @@ function render() {
   const logo = brandLogoSrc();
   if (logo) { $("brandLogo").src = logo; $("brandLogo").hidden = false; } else $("brandLogo").hidden = true;
   $("brandName").textContent = currentBrand().name;
+  const anyLinks = allLinks().length > 0;
+  $("tgLinks").setAttribute("aria-pressed", anyLinks && logic().links); $("tgCrit").setAttribute("aria-pressed", anyLinks && logic().critical);
+  $("tgLinks").title = anyLinks ? "Show relationship arrows" : "No relationships yet: press to find links automatically";
   // Show selector: only once there's a planned baseline to compare with
   $("showGrp").hidden = !hasPlan();
   if (hasPlan()) {
@@ -1412,6 +1608,10 @@ $("chart").addEventListener("pointerdown", e => {
     toast("This is the planned programme. Switch Show to Actual to move activities.", 3500);
     return;
   }
+  if (id && /^l[sf]$/.test(t.getAttribute("data-part") || "")) {   // a link dot: drag onto another activity
+    drag = { link: true, id, end: t.getAttribute("data-part") === "lf" ? "f" : "s", x0: +t.getAttribute("cx"), y0: +t.getAttribute("cy") };
+    e.preventDefault(); return;
+  }
   if (id) {
     const it = P.items.find(i => i.id === id);
     sel = { type: "item", id };
@@ -1424,8 +1624,50 @@ $("chart").addEventListener("pointerdown", e => {
   else sel = null;
   render(); renderSide();
 });
+/* link two activities (an existing link between them just changes type); refuses loops */
+function addLink(fromId, toId, type = "FS", lag = 0) {
+  if (fromId === toId) return false;
+  if (makesLoop(fromId, toId)) { toast("That link would make a loop (the second activity already leads to the first), so it wasn't added.", 5000); return false; }
+  const a = P.items.find(i => i.id === fromId), b = P.items.find(i => i.id === toId);
+  commit(p => {
+    const it = p.items.find(i => i.id === toId); it.preds = (it.preds || []).filter(r => r.id !== fromId);
+    it.preds.push({ id: fromId, type, lag });
+    const back = p.items.find(i => i.id === fromId); if (back.preds) back.preds = back.preds.filter(r => r.id !== toId);
+  }, true);
+  toast(`Linked ${a.name || a.id} → ${b.name || b.id} (${REL_NAMES[type]}).`, 3500);
+  return true;
+}
+/* the activity under the pointer while linking, and which end of it (start or finish half) */
+function linkTarget(e) {
+  // by geometry, generously: anywhere in the activity's row, a little past either end
+  const p = svgPt(e);
+  for (const it of P.items) {
+    if (!linkable(it) || it.id === drag.id || hiddenByCollapse(P, it)) continue;
+    const ln = LAY.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
+    const cy = rowCenter(it), ms = isMs(P, it.style);
+    const x1 = ms ? LAY.x(it.start) + LAY.ppd / 2 - G.ms : LAY.x(it.start), x2 = ms ? x1 + G.ms * 2 : LAY.x(it.end) + LAY.ppd;
+    if (p.x >= x1 - 5 && p.x <= x2 + 5 && Math.abs(p.y - cy) <= LAY.rowH / 2) return { it, end: ms || p.x < (x1 + x2) / 2 ? "s" : "f" };
+  }
+  return null;
+}
 window.addEventListener("pointermove", e => {
   if (!drag) return;
+  if (drag.link) {   // rubber-band line from the dot to the pointer; the target activity is outlined
+    const svg = $("chart"), p = svgPt(e), tg = linkTarget(e);
+    let ghost = svg.querySelector("#linkGhost"); if (!ghost) ghost = el("g", { id: "linkGhost", "pointer-events": "none" }, svg);
+    ghost.innerHTML = "";
+    el("line", { x1: drag.x0, y1: drag.y0, x2: p.x, y2: p.y, stroke: BRAND.orange, "stroke-width": 1.4, "stroke-dasharray": "4 3" }, ghost);
+    if (tg) {
+      const ln = LAY.lanes.find(x => x.l.id === tg.it.lane), cy = ln ? rowCenter(tg.it) : 0, x1 = LAY.x(tg.it.start), x2 = LAY.x(tg.it.end) + LAY.ppd;
+      const ms = isMs(P, tg.it.style), ex = tg.end === "s" ? (ms ? x1 + LAY.ppd / 2 : x1) : x2;
+      el("rect", { x: (ms ? x1 + LAY.ppd / 2 - G.ms : x1) - 2, y: cy - G.barH / 2 - 3, width: (ms ? G.ms * 2 : x2 - x1) + 4, height: G.barH + 6, fill: "none", stroke: BRAND.orange, "stroke-width": 1.4, rx: 2 }, ghost);
+      el("circle", { cx: ex, cy, r: 3.6, fill: BRAND.orange }, ghost);
+      const type = (drag.end === "f" ? "F" : "S") + (tg.end === "s" ? "S" : "F");
+      const label = `${type} · ${REL_NAMES[type]}`;
+      el("text", { x: p.x + 10, y: p.y - 8, fill: BRAND.navy, "font-size": 10, "font-weight": 700, "font-family": "Montserrat, Arial, sans-serif", stroke: "#FFFFFF", "stroke-width": 3, "paint-order": "stroke" }, ghost, label);
+    }
+    return;
+  }
   const p = svgPt(e), it = P.items.find(i => i.id === drag.id), o = drag.orig;
   const dd = Math.round((p.x - drag.x0) / LAY.ppd);
   if (!drag.moved && Math.abs(p.x - drag.x0) < 3 && Math.abs(p.y - drag.y0) < 3) return;
@@ -1460,8 +1702,14 @@ window.addEventListener("pointermove", e => {
   render();
 });
 function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + ln.toView(o.row) * LAY.rowH + LAY.rowH / 2 : 0; }
-window.addEventListener("pointerup", () => {
+window.addEventListener("pointerup", e => {
   if (!drag) return;
+  if (drag.link) {
+    const tg = linkTarget(e), from = drag.id, fromEnd = drag.end; drag = null;
+    $("chart").querySelector("#linkGhost")?.remove();
+    if (tg) addLink(from, tg.it.id, (fromEnd === "f" ? "F" : "S") + (tg.end === "s" ? "S" : "F"));
+    return;
+  }
   if (drag.moved) {
     // dropping a bar in a summary's rows puts it in that summary; dragging it out takes it out
     const it = P.items.find(i => i.id === drag.id);
@@ -1597,12 +1845,13 @@ function renderSide() {
         <div class="f"><label for="iId">ShapeID</label><input id="iId" value="${esc(cur.id)}"></div>
       </div>
       ${progressFields(cur)}
+      ${linkFields(cur)}
       ${itemExtras(cur)}
       <div class="actions">
         <button class="btn" id="iDup">Duplicate</button>
         <button class="btn danger" id="iDel">Delete</button>
       </div>`;
-    bindItemExtras(cur); bindProgressFields(cur);
+    bindItemExtras(cur); bindProgressFields(cur); bindLinkFields(cur);
     const upd = (f) => commit(p => f(p.items.find(i => i.id === cur.id)), true);
     $("iName").onchange = e => upd(x => x.name = e.target.value);
     $("iStart").onchange = e => { if (!e.target.value) return; upd(x => { const d = toDays(e.target.value) - toDays(x.start); x.start = e.target.value; x.end = isMs(P, x.style) ? x.start : (toDays(x.end) < toDays(x.start) ? addDays(x.end, d) : x.end); }); };
@@ -1612,10 +1861,14 @@ function renderSide() {
     $("iFill").onchange = e => upd(x => x.fill = e.target.value.toUpperCase());
     $("iStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
     $("iStatus").onchange = e => upd(x => { x.status = e.target.value; if (x.status === "Complete") x.pct = 100; else if (pctOf(x) >= 100) delete x.pct; });
-    $("iId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; } upd(x => x.id = v); sel.id = v; renderSide(); };
+    $("iId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; }
+      commit(p => {   // links and summary membership follow the new ShapeID
+        p.items.find(i => i.id === cur.id).id = v;
+        p.items.forEach(i => { if (i.parent === cur.id) i.parent = v; (i.preds || []).forEach(r => { if (r.id === cur.id) r.id = v; }); });
+      }, true); sel.id = v; renderSide(); };
     if ($("iReset")) $("iReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; }); };
-    $("iDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id) }; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
-    $("iDel").onclick = () => { commit(p => p.items = p.items.filter(i => i.id !== cur.id)); sel = null; renderSide(); };
+    $("iDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id) }; delete c.preds; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
+    $("iDel").onclick = () => { commit(p => { p.items = p.items.filter(i => i.id !== cur.id); p.items.forEach(i => { if (i.preds) i.preds = i.preds.filter(r => r.id !== cur.id); }); }); sel = null; renderSide(); };
     return;
   }
   if (sel && sel.type === "style" && cur) { renderTypeSide(side, cur); return; }
@@ -1690,6 +1943,7 @@ function renderSide() {
       <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${P.timeline.end}"></div>
     </div>
     ${progressSection()}
+    ${logicSection()}
     <h2>Milestone types</h2>
     <div class="types">${P.styles.filter(s => s.behaviour === "Move").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addMsType">+ Milestone type</button></div>
@@ -1726,7 +1980,7 @@ function renderSide() {
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
   if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
   side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
-  bindProgressSection();
+  bindProgressSection(); bindLogicSection();
   $("addMsType").onclick = () => addType("Move");
   $("addBarType").onclick = () => addType("Stretch");
   $("addCurtainType").onclick = () => addType("Curtain");
@@ -1773,6 +2027,128 @@ function bindProgressFields(cur) {
     x.bStart = v; if (!x.bEnd || toDays(x.bEnd) < toDays(v)) x.bEnd = addDays(v, d);
   });
   if ($("iBEnd")) $("iBEnd").onchange = e => upd(x => { const v = e.target.value; if (!v) return; if (!x.bStart) x.bStart = x.start; x.bEnd = toDays(v) < toDays(x.bStart) ? x.bStart : v; });
+}
+
+/* inspector: predecessors and successors (type and lag editable), and the activity's float */
+function linkFields(cur) {
+  if (!linkable(cur)) return "";
+  const name = id => { const i = P.items.find(x => x.id === id); return i ? `${esc(i.name || i.id)} <span class="note">${esc(i.id)}</span>` : esc(id); };
+  const preds = (cur.preds || []).filter(r => linkable(P.items.find(i => i.id === r.id)));
+  const succs = allLinks().filter(l => l.from === cur);
+  const row = (kind, id, type, lag) => `<div class="lkrow" data-kind="${kind}" data-other="${esc(id)}">
+      <span class="lkname">${name(id)}</span>
+      <select data-f="type" aria-label="Relationship type">${REL_TYPES.map(t => `<option value="${t}" ${t === type ? "selected" : ""} title="${REL_NAMES[t]}">${t}</option>`).join("")}</select>
+      <input data-f="lag" type="number" value="${+lag || 0}" aria-label="Lag in days" title="Lag (days); negative for a lead">
+      <button class="btn" data-f="x" title="Remove this link" aria-label="Remove this link">✕</button></div>`;
+  const opts = P.items.filter(i => linkable(i) && i !== cur)
+    .sort((a, b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || toDays(a.start) - toDays(b.start))
+    .map(i => `<option value="${esc(i.id)}">${esc(i.id)} · ${esc(i.name)}</option>`).join("");
+  const cp = criticalPath(), fl = cp ? cp.float.get(cur.id) : null;
+  const floatNote = cp && fl === undefined ? "Not linked, so it isn't part of the critical path."
+    : cp ? (cp.critical.has(cur.id) ? `<b style="color:${LINE_RED}">Critical</b> · total float ${fl} day${Math.abs(fl) === 1 ? "" : "s"}` : pctOf(cur) >= 100 ? "Finished" : `Total float ${fl} day${Math.abs(fl) === 1 ? "" : "s"}`) : "";
+  return `<h2>Relationships</h2>
+    ${floatNote ? `<p class="note">${floatNote}</p>` : ""}
+    <div class="f"><label>Predecessors</label>${preds.map(r => row("pred", r.id, r.type || "FS", r.lag)).join("") || `<p class="note">None</p>`}
+      <select id="lkAddPred"><option value="">+ Add predecessor…</option>${opts}</select></div>
+    <div class="f"><label>Successors</label>${succs.map(l => row("succ", l.to.id, l.type, l.lag)).join("") || `<p class="note">None</p>`}
+      <select id="lkAddSucc"><option value="">+ Add successor…</option>${opts}</select></div>
+    <p class="note">Or drag the dot at either end of the selected activity onto another one. FS finish → start, SS start → start, FF finish → finish, SF start → finish; lag in days.</p>`;
+}
+function bindLinkFields(cur) {
+  if (!$("lkAddPred")) return;
+  $("lkAddPred").onchange = e => { if (e.target.value) addLink(e.target.value, cur.id, "FS"); };
+  $("lkAddSucc").onchange = e => { if (e.target.value) addLink(cur.id, e.target.value, "FS"); };
+  $("side").querySelectorAll(".lkrow").forEach(rw => {
+    const other = rw.dataset.other, pred = rw.dataset.kind === "pred";
+    const [fromId, toId] = pred ? [other, cur.id] : [cur.id, other];
+    const edit = f => commit(p => { const it = p.items.find(i => i.id === toId), r = (it.preds || []).find(x => x.id === fromId); if (r) f(it, r); }, true);
+    rw.querySelector('[data-f="type"]').onchange = e => edit((it, r) => r.type = e.target.value);
+    rw.querySelector('[data-f="lag"]').onchange = e => edit((it, r) => r.lag = Math.round(+e.target.value || 0));
+    rw.querySelector('[data-f="x"]').onclick = () => edit(it => { it.preds = it.preds.filter(x => x.id !== fromId); if (!it.preds.length) delete it.preds; });
+  });
+}
+
+/* programme panel: show arrows / critical path, near-critical allowance, auto-push, find links */
+function logicSection() {
+  const lg = logic(), cp = criticalPath();
+  const stats = cp ? `${cp.links.length} relationship${cp.links.length === 1 ? "" : "s"} · ${cp.critical.size} critical · finish ${fmt(fromDays(cp.finish - 1))}`
+    + (cp.broken.length ? ` · <span style="color:${LINK_BROKEN}">${cp.broken.length} broken by the dates</span>` : "") + (cp.loops.size ? ` · <span style="color:var(--danger)">loop through ${[...cp.loops].join(", ")}</span>` : "")
+    : "No relationships yet. Use Find links, or select an activity and drag the dot at its end onto the next one.";
+  return `<h2>Relationships and critical path</h2>
+    <div class="actions"><button class="btn primary" id="lgFind">Find links automatically…</button>${cp ? `<button class="btn" id="lgClear">Remove all links</button>` : ""}</div>
+    <p class="note">${stats}</p>
+    <div class="f"><label>Relationship arrows</label><div class="seg" role="group" aria-label="Relationship arrows">${[["all", "All"], ["critical", "Critical path only"], ["off", "Off"]].map(([v, n]) => `<button type="button" data-arrows="${v}" aria-pressed="${(lg.links ? (lg.arrows === "critical" ? "critical" : "all") : "off") === v}">${n}</button>`).join("")}</div></div>
+    <label class="check"><input type="checkbox" id="lgCrit" ${lg.critical ? "checked" : ""}> Critical path (red outline)</label>
+    <div class="f"><label for="lgNear">Critical path</label><select id="lgNear">
+      <option value="longest" ${lg.mode !== "float" ? "selected" : ""}>Longest path: driving links back from the finish</option>
+      ${[0, 1, 2, 3, 5, 10, 20].map(v => `<option value="${v}" ${lg.mode === "float" && v === +lg.nearDays ? "selected" : ""}>Total float of ${v} day${v === 1 ? "" : "s"} or less${v ? " (near-critical)" : ""}</option>`).join("")}</select></div>
+    <label class="check"><input type="checkbox" id="lgPush" ${lg.push ? "checked" : ""}> Keep successors after their predecessors</label>
+    <p class="note">With this on, moving or lengthening an activity pushes the activities linked after it later as needed. They're never pulled earlier, and finished ones stay put.</p>`;
+}
+function bindLogicSection() {
+  const setLg = f => commit(p => { p.logic = { ...logic(), ...(p.logic || {}) }; f(p.logic); }, true);
+  $("side").querySelectorAll("[data-arrows]").forEach(b => b.onclick = () => setLg(g => { const v = b.dataset.arrows; g.links = v !== "off"; if (v !== "off") g.arrows = v; }));
+  $("lgCrit").onchange = e => setLg(g => g.critical = e.target.checked);
+  $("lgNear").onchange = e => setLg(g => { if (e.target.value === "longest") g.mode = "longest"; else { g.mode = "float"; g.nearDays = +e.target.value; } });
+  $("lgPush").onchange = e => setLg(g => g.push = e.target.checked);
+  $("lgFind").onclick = () => openFindLinks();
+  if ($("lgClear")) $("lgClear").onclick = () => { commit(p => p.items.forEach(i => delete i.preds), true); toast("All relationships removed. Undo brings them back."); };
+}
+/* Suggested links: for each activity, the activities that finish on (or within a few days before) its start.
+   The nearest finish wins; ones in the same lane, or touching exactly, are ticked to start with. */
+function suggestLinks(tol) {
+  const items = P.items.filter(i => linkable(i) && !hiddenByCollapse(P, i)), have = new Set(allLinks().flatMap(l => [l.from.id + ">" + l.to.id, l.to.id + ">" + l.from.id]));
+  const out = [];
+  for (const b of items) {
+    const bs = tpts(b).s;
+    const cands = items.filter(a => a !== b && !have.has(a.id + ">" + b.id) && tpts(a).f <= bs && bs - tpts(a).f <= tol
+      && !(isMs(P, a.style) && isMs(P, b.style) && a.start === b.start));
+    if (!cands.length) continue;
+    const best = Math.max(...cands.map(a => tpts(a).f));
+    for (const a of cands.filter(a => tpts(a).f === best)) {
+      if (makesLoop(a.id, b.id)) continue;
+      out.push({ a, b, gap: bs - best, tick: a.lane === b.lane || bs === best });
+    }
+  }
+  // a bar that ends at its completion milestone links through the milestone (bar → milestone → next),
+  // not straight to the next activity as well; existing links count as part of the chain too
+  const pairs = new Set([...out.map(s => s.a.id + ">" + s.b.id), ...allLinks().map(l => l.from.id + ">" + l.to.id)]);
+  const via = s => out.find(o => o.b === s.b && o !== s && isMs(P, o.a.style) && pairs.has(s.a.id + ">" + o.a.id));
+  const kept = out.filter(s => { const o = via(s); if (o && s.tick) o.tick = true; return !o; });   // the chain keeps the tick
+  out.length = 0; out.push(...kept);
+  const lane = id => P.lanes.findIndex(l => l.id === id);
+  return out.sort((x, y) => lane(x.b.lane) - lane(y.b.lane) || toDays(x.b.start) - toDays(y.b.start));
+}
+function openFindLinks() {
+  let tol = 1;
+  const m = showModal(`<header><h3>Find links automatically</h3><p>Proposes finish-to-start links wherever an activity starts as (or just after) another one finishes. Tick the ones that are real dependencies.</p></header>
+    <div class="body"><div class="f" style="max-width:280px"><label for="flTol">Allow a gap of up to</label><select id="flTol">${[0, 1, 3, 7, 14].map(v => `<option value="${v}" ${v === tol ? "selected" : ""}>${v ? `${v} day${v > 1 ? "s" : ""} (weekends, short breaks)` : "0 days: touching only"}</option>`).join("")}</select></div>
+      <div id="flList" style="margin-top:10px"></div></div>
+    <footer><button class="btn" id="flAll">Tick all</button><button class="btn" id="flNone">Untick all</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="apply" id="flApply">Add links</button></footer>`, {
+    apply: () => {
+      const picked = [...m.querySelectorAll("[data-sug]:checked")].map(c => list[+c.dataset.sug]);
+      if (!picked.length) return toast("Nothing ticked, so no links were added.");
+      commit(p => picked.forEach(s => { const it = p.items.find(i => i.id === s.b.id); it.preds = [...(it.preds || []).filter(r => r.id !== s.a.id), { id: s.a.id, type: "FS", lag: 0 }]; }), true);
+      const lg = logic(); if (!lg.links || !lg.critical) commit(p => { p.logic = { ...lg, links: true, critical: true }; }, true);
+      toast(`Added ${picked.length} link${picked.length === 1 ? "" : "s"}. The critical path is outlined in red.`, 5000);
+    },
+  });
+  let list = [];
+  const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
+  const fill = () => {
+    list = suggestLinks(tol);
+    m.querySelector("#flList").innerHTML = list.length ? `<table class="diff"><thead><tr><th></th><th>Predecessor</th><th></th><th>Successor</th><th>Gap</th></tr></thead><tbody>${list.map((s, k) => `<tr>
+        <td><input type="checkbox" data-sug="${k}" ${s.tick ? "checked" : ""} aria-label="Add this link"></td>
+        <td>${esc(s.a.name)}<div class="note">${esc(s.a.id)} · ${esc(laneName(s.a.lane))} · finishes ${fmt(s.a.end)}</div></td><td>→</td>
+        <td>${esc(s.b.name)}<div class="note">${esc(s.b.id)} · ${esc(laneName(s.b.lane))} · ${isMs(P, s.b.style) ? "on" : "starts"} ${fmt(s.b.start)}</div></td>
+        <td>${s.gap ? `${s.gap} d` : "touching"}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="note">No new links found with this gap. Try allowing a larger gap.</p>`;
+    m.querySelector("#flApply").disabled = !list.length;
+  };
+  m.querySelector("#flTol").onchange = e => { tol = +e.target.value; fill(); };
+  m.querySelector("#flAll").onclick = () => m.querySelectorAll("[data-sug]").forEach(c => c.checked = true);
+  m.querySelector("#flNone").onclick = () => m.querySelectorAll("[data-sug]").forEach(c => c.checked = false);
+  fill();
 }
 
 /* programme panel: data date, what to show, and setting the baseline */
@@ -2396,6 +2772,13 @@ function openBrandEditor(existing) {
   preview();
 }
 $("bBrand").onclick = openBrandMenu;
+/* Logic toggles: with no links yet, the first press offers to find them */
+const toggleLogic = key => {
+  if (!allLinks().length) return openFindLinks();
+  commit(p => { p.logic = { ...logic(), ...(p.logic || {}) }; p.logic[key] = !p.logic[key]; }, true);
+};
+$("tgLinks").onclick = () => toggleLogic("links");
+$("tgCrit").onclick = () => toggleLogic("critical");
 $("showGrp").querySelectorAll("[data-show]").forEach(b => b.onclick = () => commit(p => { p.progress = { ...prog(), ...(p.progress || {}), show: b.dataset.show }; }, true));
 
 /* =====================================================================
@@ -2493,14 +2876,14 @@ function buildExcelBlob() {
   const wb = XLSX.utils.book_new();
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
-  const rowsOut = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed","Progress","BaselineStart","BaselineFinish"]]
+  const rowsOut = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed","Progress","BaselineStart","BaselineFinish","Predecessors"]]
     .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke,
       i.labelMode || "", i.parent || "", isContainer(P, i) ? (i.collapsed ? "Yes" : "No") : "",
-      isCurtain(P, i.style) ? "" : isContainer(P, i) ? rollupPct(i) : pctOf(i), i.bStart ? xDate(i.bStart) : "", i.bStart ? xDate(i.bEnd || i.bStart) : ""]));
+      isCurtain(P, i.style) ? "" : isContainer(P, i) ? rollupPct(i) : pctOf(i), i.bStart ? xDate(i.bStart) : "", i.bStart ? xDate(i.bEnd || i.bStart) : "", (i.preds || []).map(predText).join(", ")]));
   const ws = XLSX.utils.aoa_to_sheet(rowsOut, { cellDates: true });
   for (let r = 1; r < rowsOut.length; r++) for (const c of [4,5,15,16]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
-  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13].map(w => ({ wch: w }));
-  ws["!autofilter"] = { ref: `A1:Q${rowsOut.length}` };
+  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13,24].map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: `A1:R${rowsOut.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
@@ -2543,7 +2926,7 @@ function parseWorkbook(buf) {
   const H = aoa[hi].map(c => String(c ?? "").trim().toLowerCase().replace(/\s+/g, ""));
   const col = (...names) => H.findIndex(h => names.includes(h));
   const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), label: col("label","labelmode"), parent: col("parent","summary"), collapsed: col("collapsed"),
-    pct: col("progress","%complete","percentcomplete","pct","complete"), bStart: col("baselinestart","blstart"), bEnd: col("baselinefinish","baselineend","blfinish") };
+    pct: col("progress","%complete","percentcomplete","pct","complete"), bStart: col("baselinestart","blstart"), bEnd: col("baselinefinish","baselineend","blfinish"), preds: col("predecessors","predecessor","preds") };
   // progress as 45, "45%" or a percent-formatted 0.45; blank is 0. Undefined when the column isn't there.
   const pctIn = v => { if (v == null || v === "") return 0; const n = parseFloat(String(v).replace("%", "")); if (!Number.isFinite(n)) return 0; return Math.max(0, Math.min(100, Math.round(typeof v === "number" && n > 0 && n < 1 ? n * 100 : n))); };
   const rows = [], problems = [];
@@ -2555,6 +2938,7 @@ function parseWorkbook(buf) {
     rows.push({ xlRow: r + 1, id: String(g("id") ?? "").trim(), name: String(g("name") ?? "").trim(), style: String(g("style") ?? "BAR").trim() || "BAR", lane: String(g("lane") ?? "").trim(), start, end: toDays(end) < toDays(start) ? start : end, status: String(g("status") ?? "Active").trim() || "Active", row: g("row") === null || g("row") === "" ? NaN : Number(g("row")), y: Number(g("y")) || NaN, fill: hex(g("fill")), stroke: hex(g("stroke")),
       parent: C.parent >= 0 ? String(g("parent") ?? "").trim() : undefined,
       pct: C.pct >= 0 ? pctIn(g("pct")) : undefined,
+      predsRaw: C.preds >= 0 ? String(g("preds") ?? "").trim() : undefined,
       bStart: C.bStart >= 0 ? toISO(g("bStart")) || "" : undefined, bEnd: C.bEnd >= 0 ? toISO(g("bEnd")) || toISO(g("bStart")) || "" : undefined,
       collapsed: C.collapsed >= 0 && String(g("collapsed") ?? "").trim() !== "" ? /^(yes|y|true|1)$/i.test(String(g("collapsed")).trim()) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined });
   }
@@ -2623,6 +3007,7 @@ function previewImport(parsed, fname) {
   const seen = new Set(), changes = [], adds = [], dupes = [];
   const newTypes = newTypesFrom(parsed, P.styles);
   const lookup = { styles: [...P.styles, ...newTypes] };   // resolve styles as they will be after the update
+  const allIds = new Set([...P.items.map(i => i.id), ...parsed.rows.map(r => r.id).filter(Boolean)]);   // predecessors may name new rows
   for (const r of parsed.rows) {
     if (r.id && seen.has(r.id)) { dupes.push(r); continue; }
     if (r.id) seen.add(r.id);
@@ -2645,6 +3030,11 @@ function previewImport(parsed, fname) {
       const bEnd = r.bStart ? (ms ? r.bStart : r.bEnd || r.bStart) : "";
       if ((r.bStart || "") !== (cur.bStart || "")) diffs.push([ms ? "Baseline date" : "Baseline start", cur.bStart ? fmt(cur.bStart) : "(none)", r.bStart ? fmt(r.bStart) : "(none)"]);
       if (!ms && r.bStart && bEnd !== (cur.bEnd || "")) diffs.push(["Baseline finish", cur.bEnd ? fmt(cur.bEnd) : "(none)", fmt(bEnd)]);
+    }
+    if (trackedRow && r.predsRaw !== undefined) {
+      r.preds = parsePreds(r.predsRaw, allIds).filter(x => x.id !== cur.id);
+      const was = (cur.preds || []).map(predText).join(", "), now = r.preds.map(predText).join(", ");
+      if (was !== now) diffs.push(["Predecessors", was || "(none)", now || "(none)"]);
     }
     if (diffs.length) changes.push({ r, cur, diffs });
   }
@@ -2717,6 +3107,7 @@ function previewImport(parsed, fname) {
           if (tracked(it)) {
             if (r.pct !== undefined) { if (r.pct) it.pct = r.pct; else delete it.pct; }
             if (r.bStart !== undefined) { if (r.bStart) { it.bStart = r.bStart; it.bEnd = isMs(p, st) ? r.bStart : (r.bEnd || r.bStart); } else { delete it.bStart; delete it.bEnd; } }
+            if (r.preds !== undefined) { if (r.preds.length) it.preds = r.preds; else delete it.preds; }
           }
         }
         if (ddChange) p.progress = { ...prog(), ...(p.progress || {}), dataDate: ddNew };
@@ -2730,6 +3121,7 @@ function previewImport(parsed, fname) {
           if (r.collapsed) it.collapsed = true;
           if (!curtain && r.pct) it.pct = r.pct;
           if (!curtain && r.bStart) { it.bStart = r.bStart; it.bEnd = isMs(p, st) ? r.bStart : (r.bEnd || r.bStart); }
+          if (!curtain && r.predsRaw) { const pr = parsePreds(r.predsRaw, allIds).filter(x => x.id !== id); if (pr.length) it.preds = pr; }
           it.row = curtain ? 0 : Number.isFinite(r.row) ? r.row : freeRow(p, it);
           p.items.push(it);
         }
@@ -3105,7 +3497,7 @@ async function resolveConflict(path, name) {
 function merge3(base, mine, theirs) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const out = clone(theirs); let nMine = 0, nTheirs = 0, both = 0;
-  for (const part of ["meta", "timeline", "view", "progress"]) for (const k of new Set([...Object.keys(base[part] || {}), ...Object.keys(mine[part] || {})]))
+  for (const part of ["meta", "timeline", "view", "progress", "logic"]) for (const k of new Set([...Object.keys(base[part] || {}), ...Object.keys(mine[part] || {})]))
     if (!same(mine[part]?.[k], base[part]?.[k])) { out[part] = out[part] || {}; out[part][k] = mine[part]?.[k]; nMine++; }
   const mergeList = (key, idOf) => {
     const map = arr => new Map((arr || []).map(x => [idOf(x), x]));
