@@ -71,6 +71,9 @@ const HELPERS = () => {
 };
 
 const TESTS = {
+  "Starts on a first visit (nothing saved yet)": () => {
+    T.ok(window.POAP_READY === true, "the app stopped part-way through starting");
+  },
   "Date helpers": () => {
     T.eq(addDays("2027-01-30", 3), "2027-02-02");
     T.eq(fromDays(toDays("2028-02-29")), "2028-02-29");
@@ -278,6 +281,8 @@ async function run() {
   document.getElementById("again").hidden = true; list.innerHTML = ""; sum.textContent = "Running…";
   // the app shares this site's storage: keep the user's own draft and settings safe
   const saved = Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)]));
+  // a first visit: nothing saved in this browser (the app builds the example as it starts)
+  localStorage.clear();
   await new Promise(res => { frame.onload = res; frame.src = "index.html?test=" + Date.now(); });
   await new Promise(r => setTimeout(r, 300));
   inApp(HELPERS);

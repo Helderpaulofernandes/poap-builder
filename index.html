@@ -1928,7 +1928,7 @@ function groupFreeRow(p, c, it) {
   return c.row + 1;
 }
 /* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
-let PPD_HINT = null;   // the scale a programme being built will be drawn at, before it has been laid out
+var PPD_HINT = null;   // the scale a programme being built will be drawn at, before it has been laid out (var: the example is built before this line runs)
 function freeRow(p, it) {
   // days an item occupies on its row, including a label drawn beside it
   let laid = null; try { laid = LAY; } catch (e) {}   // not laid out yet while the page is starting up
@@ -4215,6 +4215,7 @@ if (HOST) {
 document.fonts?.ready.then(() => { render(); });
 render(); renderSide(); showStatus();
 showStartScreen();
+window.POAP_READY = true;   // the whole script ran (the tests check this)
 </script>
 </body>
 </html>
