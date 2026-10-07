@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoaP Builder tests</title>
+<style>
+  :root { --bg: #F5F7FA; --fg: #14263D; --muted: #5A6A7E; --line: #D5DCE5; --ok: #1F7A4D; --bad: #C8102E; --panel: #FFFFFF; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0F1722; --fg: #E6ECF3; --muted: #9AA8B8; --line: #2A3647; --ok: #4CC38A; --bad: #FF6B7A; --panel: #172232; } }
+  :root[data-theme="dark"] { --bg: #0F1722; --fg: #E6ECF3; --muted: #9AA8B8; --line: #2A3647; --ok: #4CC38A; --bad: #FF6B7A; --panel: #172232; }
+  body { margin: 0; padding: 20px 16px; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sum { margin: 0 0 14px; color: var(--muted); }
+  .sum b.ok { color: var(--ok); } .sum b.bad { color: var(--bad); }
+  ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; max-width: 900px; }
+  li { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; }
+  li .t { color: var(--muted); font-size: 12px; }
+  li.ok .i { color: var(--ok); } li.bad .i { color: var(--bad); } li.bad { border-color: var(--bad); }
+  li pre { grid-column: 2 / -1; margin: 4px 0 0; white-space: pre-wrap; font-size: 12px; color: var(--bad); }
+  button { font: inherit; padding: 5px 12px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; margin-bottom: 12px; }
+  iframe { position: absolute; left: -10000px; top: 0; width: 1400px; height: 900px; border: 0; }
+</style>
+</head>
+<body>
+<h1>PoaP Builder tests</h1>
+<p class="sum" id="sum">Loading the app…</p>
+<button id="again" hidden>Run again</button>
+<ol id="list"></ol>
+<iframe id="app" title="App under test"></iframe>
+<script>
+"use strict";
+/* Each test is an ordinary function whose source runs inside the app's own page (so it can use P, loadDoc,
+   criticalPath… directly). T.ok / T.eq assert; T.mini builds a small programme on one lane. */
+const HELPERS = () => {
+  window.T = {
+    ok(c, m) { if (!c) throw new Error(m || "assertion failed"); },
+    eq(a, b, m) { const A = JSON.stringify(a), B = JSON.stringify(b); if (A !== B) throw new Error(`${m ? m + ": " : ""}expected ${B}, got ${A}`); },
+    clean() { document.querySelectorAll(".modal, .startscreen").forEach(x => x.remove()); sel = null; },
+    // rows: [id, start, end, style?, extra?]; style defaults to the plain bar
+    mini(rows) {
+      const p = blankProject(); p.timeline = { start: "2027-01-01", end: "2027-06-30" };
+      const l = newLane(p, "Work");
+      rows.forEach((r, k) => p.items.push({ id: r[0], name: r[0], style: r[3] || "BAR", lane: l.id, start: r[1], end: r[2] || r[1], status: "Active", row: k, fill: "", stroke: "", ...(r[4] || {}) }));
+      loadDoc(p, null); return P;
+    },
+    item: id => P.items.find(i => i.id === id),
+  };
+};
+
+const TESTS = {
+  "Date helpers": () => {
+    T.eq(addDays("2027-01-30", 3), "2027-02-02");
+    T.eq(fromDays(toDays("2028-02-29")), "2028-02-29");
+    T.eq(nextRevision("A"), "B"); T.eq(nextRevision("Z"), "AA"); T.eq(nextRevision("3"), "4"); T.eq(nextRevision("P1"), "P2");
+  },
+  "Example programme draws": () => {
+    loadDoc(seedProject(), null);
+    T.ok(document.querySelectorAll("#chart [data-id]").length > 25, "items drawn");
+    T.ok(document.querySelector("#side .sidetabs"), "side tabs shown");
+  },
+  "Excel round trip changes nothing": async () => {
+    const p = seedProject(); loadDoc(p, null);
+    commit(q => { const c = q.items.find(i => i.id === "CON003"); c.pct = 40; c.bStart = "2027-04-10"; c.bEnd = "2027-05-05"; c.preds = [{ id: "CON002", type: "FS", lag: 0 }]; q.progress = { dataDate: "2027-04-20" }; }, true);
+    const parsed = parseWorkbook(await buildExcelBlob().arrayBuffer());
+    previewImport(parsed, "t.xlsx");
+    const text = document.querySelector(".modal").innerText;
+    T.ok(/matches the programme/.test(text), "expected no changes, got: " + text.slice(0, 300));
+  },
+  "Excel update applies dates, progress and links": async () => {
+    loadDoc(seedProject(), null);
+    const parsed = parseWorkbook(await buildExcelBlob().arrayBuffer());
+    const r = parsed.rows.find(x => x.id === "CON004");
+    r.start = "2027-05-20"; r.end = "2027-06-10"; r.pct = 25; r.predsRaw = "CON003FS+2d";
+    previewImport(parsed, "t.xlsx");
+    document.querySelector(".modal [data-act=apply]").click();
+    const c = T.item("CON004");
+    T.eq([c.start, c.end, c.pct, c.preds], ["2027-05-20", "2027-06-10", 25, [{ id: "CON003", type: "FS", lag: 2 }]]);
+  },
+  "Predecessor text is read": () => {
+    T.eq(parsePreds("a, BSS+2d; cff-1, nope", new Set(["A", "B", "C"])), [{ id: "A", type: "FS", lag: 0 }, { id: "B", type: "SS", lag: 2 }, { id: "C", type: "FF", lag: -1 }]);
+  },
+  "Progress point against the data date": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["M", "2027-01-03", "2027-01-03", "ML_Square"]]);
+    const dd = toDays("2027-01-05") + 1;
+    T.item("A").pct = 50; T.eq(progressPoint(T.item("A"), dd) - dd, 0, "50% at day 5 is on time");
+    T.item("A").pct = 20; T.eq(progressPoint(T.item("A"), dd) - dd, -3, "20% is 3 days behind");
+    T.eq(progressPoint(T.item("M"), dd) < dd, true, "an unachieved past milestone is behind");
+    T.item("M").pct = 100; T.eq(progressPoint(T.item("M"), dd), dd, "achieved milestone is on time");
+  },
+  "Link gaps for each type": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-11", "2027-01-20"]]);
+    const l = t => ({ from: T.item("A"), to: T.item("B"), type: t, lag: 0 });
+    T.eq([linkGap(l("FS")), linkGap(l("SS")), linkGap(l("FF")), linkGap(l("SF"))], [0, 10, 10, 20]);
+  },
+  "Critical path: longest path and float": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-11", "2027-01-20", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }], ["C", "2027-01-11", "2027-01-15", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }], ["X", "2027-03-01", "2027-03-30"]]);
+    let cp = criticalPath();
+    T.eq([...cp.critical].sort(), ["A", "B"], "longest path");
+    T.eq(cp.float.get("C"), 5, "C has 5 days float");
+    T.ok(!cp.float.has("X"), "unlinked X has no float and doesn't set the finish");
+    commit(p => p.logic = { mode: "float", nearDays: 5 }, true);
+    cp = criticalPath(); T.eq([...cp.critical].sort(), ["A", "B", "C"], "near-critical within 5 days");
+  },
+  "Finished work is not critical": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10", "BAR", { pct: 100 }], ["B", "2027-01-11", "2027-01-20", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }]]);
+    T.eq([...criticalPath().critical], ["B"]);
+  },
+  "Successors are pushed, and undo puts them back": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-11", "2027-01-20", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }]]);
+    commit(p => p.logic = { push: true }, true);
+    commit(p => p.items.find(i => i.id === "A").end = "2027-01-15", true);
+    T.eq([T.item("B").start, T.item("B").end], ["2027-01-16", "2027-01-25"]);
+    undo(); T.eq(T.item("B").start, "2027-01-11");
+  },
+  "Loops are refused": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-11", "2027-01-20", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }]]);
+    T.eq(addLink("B", "A", "FS"), false);
+    T.eq(T.item("A").preds, undefined);
+  },
+  "Renaming a ShapeID keeps its links": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-11", "2027-01-20", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }]]);
+    sel = { type: "item", id: "A" }; render(); renderSide();
+    const f = document.getElementById("iId"); f.value = "A2"; f.dispatchEvent(new Event("change"));
+    T.eq(T.item("B").preds[0].id, "A2");
+  },
+  "Deleting an activity removes its links": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-11", "2027-01-20", "BAR", { preds: [{ id: "A", type: "FS", lag: 0 }] }]]);
+    sel = { type: "item", id: "A" }; render(); renderSide();
+    document.getElementById("iDel").click();
+    T.eq(T.item("B").preds, []);
+  },
+  "Find links goes through completion milestones": () => {
+    loadDoc(seedProject(), null);
+    const s = suggestLinks(3).map(x => x.a.id + ">" + x.b.id);
+    T.ok(s.includes("CON002>MS0004") && s.includes("MS0004>CON003"), "bar → milestone → next");
+    T.ok(!s.includes("CON002>CON003"), "no direct bar → next as well");
+  },
+  "Summary follows its bars": () => {
+    T.mini([]);
+    const box = P.styles.find(s => s.shape === "container").name;
+    commit(p => {
+      const l = p.lanes[0].id;
+      p.items.push({ id: "S", name: "S", style: box, lane: l, start: "2027-01-01", end: "2027-01-02", status: "Active", row: 0, span: 3, fill: "", stroke: "" });
+      p.items.push({ id: "K1", name: "K1", style: "BAR", lane: l, start: "2027-02-01", end: "2027-02-10", status: "Active", row: 1, parent: "S", fill: "", stroke: "" });
+      p.items.push({ id: "K2", name: "K2", style: "BAR", lane: l, start: "2027-02-05", end: "2027-03-01", status: "Active", row: 2, parent: "S", fill: "", stroke: "" });
+    }, true);
+    T.eq([T.item("S").start, T.item("S").end], ["2027-02-01", "2027-03-01"]);
+  },
+  "Undo and redo": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"]]);
+    commit(p => p.items[0].name = "Changed", true);
+    undo(); T.eq(T.item("A").name, "A"); redo(); T.eq(T.item("A").name, "Changed");
+  },
+  "Merging two people's changes": () => {
+    const base = seedProject();
+    const mine = clone(base), theirs = clone(base);
+    mine.items.find(i => i.id === "CON003").name = "Mine";
+    theirs.items.find(i => i.id === "CON004").start = "2027-05-15";
+    const m = merge3(base, mine, theirs).project;
+    T.eq([m.items.find(i => i.id === "CON003").name, m.items.find(i => i.id === "CON004").start], ["Mine", "2027-05-15"]);
+  },
+  "Planned view uses the baseline": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10", "BAR", { bStart: "2027-01-05", bEnd: "2027-01-12", pct: 30 }], ["NEW", "2027-02-01", "2027-02-05"]]);
+    const q = plannedCopy(P);
+    T.eq(q.items.map(i => [i.id, i.start, i.end, i.pct]), [["A", "2027-01-05", "2027-01-12", undefined]], "baseline dates, no progress, new work left out");
+    commit(p => p.progress = { show: "planned" }, true);
+    T.ok(!document.querySelector('#chart [data-id="NEW"]'), "added work isn't drawn in the planned view");
+  },
+  "Multi-select: shift-click, bulk move, link in sequence": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-05", "2027-01-20"], ["C", "2027-02-01", "2027-02-10"]]);
+    const click = (id, mod) => { const t = document.querySelector(`#chart [data-id="${id}"][data-part="body"]`), r = t.getBoundingClientRect(); t.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, shiftKey: !!mod })); window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); };
+    click("A"); click("C", true);
+    T.eq([...MULTI].sort(), ["A", "C"], "shift-click adds");
+    T.ok(document.querySelector("#side .seltab").textContent.includes("2 items"), "selection tab says 2 items");
+    const tabs = document.querySelector("#side .sidetabs");
+    T.ok(tabs.scrollWidth <= tabs.clientWidth + 1, "all side tabs fit without scrolling");
+    document.getElementById("mxLater").click();   // 7 days by default
+    T.eq([T.item("A").start, T.item("C").start, T.item("B").start], ["2027-01-08", "2027-02-08", "2027-01-05"]);
+    click("B", true); document.getElementById("mxChain").click();
+    // after the move B (5 Jan) starts before A (8 Jan), so the chain is B → A → C
+    T.eq([T.item("A").preds, T.item("C").preds, T.item("B").preds], [[{ id: "B", type: "FS", lag: 0 }], [{ id: "A", type: "FS", lag: 0 }], undefined], "chained in date order");
+    click("B", true); T.eq([...MULTI].sort(), ["A", "C"], "shift-click again takes it out");
+  },
+  "Multi-select: box select, group drag, delete": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["B", "2027-01-05", "2027-01-20"], ["C", "2027-05-01", "2027-05-10"]]);
+    const svgRect = document.getElementById("chart").getBoundingClientRect(), k = svgRect.width / LAY.W;
+    const at = (x, y) => ({ clientX: svgRect.x + x * k, clientY: svgRect.y + y * k, bubbles: true });
+    const lane = document.querySelector("#chart [data-lane]");
+    // a box from before A to after B, across their rows
+    const y0 = rowCenter(T.item("A")) - 10, y1 = rowCenter(T.item("B")) + 10, x0 = LAY.x("2026-12-28"), x1 = LAY.x("2027-01-25");
+    lane.dispatchEvent(new PointerEvent("pointerdown", at(x0, y0)));
+    window.dispatchEvent(new PointerEvent("pointermove", at(x1, y1)));
+    window.dispatchEvent(new PointerEvent("pointerup", at(x1, y1)));
+    T.eq([...MULTI].sort(), ["A", "B"], "box selects what it touches");
+    // drag A by 10 days: B comes along
+    const a = document.querySelector('#chart [data-id="A"][data-part="body"]'), ax = LAY.x("2027-01-03"), ay = rowCenter(T.item("A"));
+    a.dispatchEvent(new PointerEvent("pointerdown", at(ax, ay)));
+    window.dispatchEvent(new PointerEvent("pointermove", at(ax + 10 * LAY.ppd, ay)));
+    window.dispatchEvent(new PointerEvent("pointerup", at(ax + 10 * LAY.ppd, ay)));
+    T.eq([T.item("A").start, T.item("B").start, T.item("C").start], ["2027-01-11", "2027-01-15", "2027-05-01"]);
+    commit(p => p.items.find(i => i.id === "C").preds = [{ id: "A", type: "FS", lag: 0 }], true);
+    selectItems(["A", "B"]); document.getElementById("mxDel").click();
+    T.eq([P.items.map(i => i.id), T.item("C").preds], [["C"], []], "deleted, and links to them removed");
+    undo(); T.eq(P.items.length, 3, "undo brings them back");
+  },
+  "Help opens with ? and lists the shortcuts": () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
+    const m = document.querySelector(".modal");
+    T.ok(m && /keyboard|Ctrl/i.test(m.innerText) && /side panel/i.test(m.innerText), "help shown");
+  },
+  "Start screen offers the choices": async () => {
+    await showStartScreen();
+    const acts = [...document.querySelectorAll(".startscreen [data-start]")].map(b => b.dataset.start);
+    ["new", "open", "excel", "example", "brand"].forEach(a => T.ok(acts.includes(a), "missing " + a));
+  },
+  "PDF builds": async () => {
+    loadDoc(seedProject(), null);
+    const r = await buildPdfBlob();
+    T.ok(r.blob.size > 50000, "PDF size " + r.blob.size);
+  },
+};
+
+const frame = document.getElementById("app"), list = document.getElementById("list"), sum = document.getElementById("sum");
+const inApp = (fn) => frame.contentWindow.eval(`(${fn.toString()})()`);
+async function run() {
+  document.getElementById("again").hidden = true; list.innerHTML = ""; sum.textContent = "Running…";
+  // the app shares this site's storage: keep the user's own draft and settings safe
+  const saved = Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)]));
+  await new Promise(res => { frame.onload = res; frame.src = "index.html?test=" + Date.now(); });
+  await new Promise(r => setTimeout(r, 300));
+  inApp(HELPERS);
+  let pass = 0, fail = 0;
+  for (const [name, fn] of Object.entries(TESTS)) {
+    const li = document.createElement("li"), t0 = performance.now();
+    try {
+      frame.contentWindow.eval("T.clean()");
+      await inApp(fn);
+      li.className = "ok"; li.innerHTML = `<span class="i">✓</span><span></span><span class="t"></span>`; pass++;
+    } catch (e) {
+      li.className = "bad"; li.innerHTML = `<span class="i">✗</span><span></span><span class="t"></span><pre></pre>`; li.querySelector("pre").textContent = e && e.stack ? e.message + "\n" + e.stack.split("\n").slice(1, 3).join("\n") : String(e); fail++;
+    }
+    li.children[1].textContent = name; li.querySelector(".t").textContent = Math.round(performance.now() - t0) + " ms";
+    list.appendChild(li);
+  }
+  try { frame.contentWindow.eval("T.clean()"); } catch (e) {}
+  localStorage.clear(); Object.entries(saved).forEach(([k, v]) => localStorage.setItem(k, v));
+  sum.innerHTML = `<b class="${fail ? "bad" : "ok"}">${pass} passed${fail ? `, ${fail} failed` : ""}</b> of ${pass + fail}`;
+  document.title = (fail ? "✗ " : "✓ ") + "PoaP Builder tests";
+  window.RESULT = { pass, fail };
+  document.getElementById("again").hidden = false;
+}
+document.getElementById("again").onclick = run;
+run();
+</script>
+</body>
+</html>

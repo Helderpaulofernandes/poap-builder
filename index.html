@@ -66,9 +66,14 @@ button, input, select { font: inherit; color: inherit; }
 .menu button { display: grid; gap: 1px; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 3px; cursor: pointer; }
 .menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
 .menu button b { font-weight: 600; font-size: 12.5px; }
+#bHelp { width: 30px; padding-left: 0; padding-right: 0; font-weight: 700; border-radius: 50%; }
+.helpbody h4 { margin: 14px 0 4px; font-size: 13px; color: var(--accent); }
+.helpbody ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.helpbody th { width: 120px; color: var(--fg); text-transform: none; letter-spacing: 0; font-size: 12px; }
+.helpbody kbd { font: 11px var(--font-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: var(--bg); }
 /* side panel tabs */
-.sidetabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 0 -16px 2px; padding: 4px 12px 0; position: sticky; top: 0; background: var(--panel); z-index: 2; flex: none; }
-.sidetabs button { border: 0; background: none; padding: 9px 7px 7px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.sidetabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin: 0 -16px 2px; padding: 4px 8px 0; position: sticky; top: 0; background: var(--panel); z-index: 2; flex: none; }
+.sidetabs button { border: 0; background: none; padding: 9px 6px 7px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
 .sidetabs button:hover { color: var(--fg); }
 .sidetabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent-2); }
 .sidetabs button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
@@ -258,6 +263,9 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
   <div class="status" id="saveStatus" data-state="none" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="saved"></span><button class="btn" id="bSaveNow" hidden>Save now</button></div>
   <div class="spacer"></div>
   <div class="grp">
+    <button class="btn" id="bHelp" title="How it works, and keyboard shortcuts (?)" aria-label="Help">?</button>
+  </div>
+  <div class="grp">
     <button class="btn" id="bNew" title="Start a new programme, open one, or continue the last">New</button>
     <button class="btn" id="bOpen" title="Open a saved project (.json) or a programme workbook (.xlsx)">Open…</button>
     <button class="btn" id="bSave" title="Save the project file (.json)">Save</button>
@@ -314,7 +322,7 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
   <div class="stage" id="stage">
     <div class="pageinfo" id="pageInfo"><span id="pageLabel"></span><span class="pagewarn" id="pageWarn" hidden></span></div>
     <div class="paper" id="paper"><div class="sheet" id="sheet"><svg id="chart" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg></div></div>
-    <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour; click the title block, timeline or legend to edit them. <kbd>Del</kbd> deletes, <kbd>Ctrl+D</kbd> duplicates, <kbd>←</kbd>/<kbd>→</kbd> nudge 1 day (<kbd>Shift</kbd> = 1 week).</p>
+    <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour; click the title block, timeline or legend to edit them. <kbd>Shift</kbd>-click or drag a box to select several. Press <kbd>?</kbd> for all shortcuts.</p>
   </div>
   <aside id="side"></aside>
 </main>
@@ -724,6 +732,9 @@ function itemColours(it, lane) {
 const STORE = (HOST && HOST.storeKey) || "poap-builder-draft-v2";
 let DOC = null;   // with a host: the library file this programme was opened from { path, name, etag, base }
 let P, sel = null, past = [], future = [];
+let MULTI = new Set();   // ids when several items are selected (sel then holds the last one clicked)
+const isSel = id => MULTI.size > 1 ? MULTI.has(id) : !!(sel && sel.type === "item" && sel.id === id);
+const selectedIds = () => MULTI.size > 1 ? [...MULTI] : sel && sel.type === "item" ? [sel.id] : [];
 let hadDraft = false;   // unsaved work from an earlier visit, offered on the start screen
 try { const s = localStorage.getItem(STORE); if (s) { P = JSON.parse(s); hadDraft = true; } } catch (e) {}
 if (!P || P.format !== "poap/2") P = seedProject();
@@ -1076,7 +1087,7 @@ function drawCurtainShades(svg, curtains, L) {
 function drawCurtainTags(svg, L, opts, F) {
   const g = el("g", {}, svg), top = L.stripTop, h = L.bodyBottom - L.stripTop;
   for (const t of L.tags) {
-    const { it, f, sz } = t, selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+    const { it, f, sz } = t, selected = !opts.print && isSel(it.id);
     const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
     const box = { x: t.x, y: t.y, width: t.w, height: t.h, rx: f.tagStyle === "pill" ? t.h / 2 : 3, "data-id": it.id, "data-part": "body" };
     if (f.tagStyle === "pill") el("rect", { ...box, fill: f.fillColour }, grp);
@@ -1330,7 +1341,7 @@ function drawContainer(g, it, ln, L, opts, F) {
   const vr = ln.toView(it.row), top = ln.y + G.pad + vr * G.rowH, cy = top + G.rowH / 2;
   const kids = containerChildren(P, it), open = !it.collapsed;
   const rowsShown = open ? spanOf(it) : 1, bottom = top + rowsShown * G.rowH;
-  const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+  const selected = !opts.print && isSel(it.id);
   const grp = el("g", { "data-id": it.id }, g);
   const titleSide = L.labels?.get(it.id)?.titleSide || "right";
   if (box) {
@@ -1378,14 +1389,14 @@ function drawItem(g, it, ln, L, opts, F) {
   const st = styleOf(P, it.style);
   const { fill, stroke } = itemColours(it, ln.l);
   const cy = ln.y + G.pad + ln.toView(it.row) * G.rowH + G.rowH / 2;
-  const selected = !opts.print && sel && sel.type === "item" && sel.id === it.id;
+  const selected = !opts.print && isSel(it.id);
   const grp = el("g", { "data-id": it.id, style: opts.print ? null : "cursor:grab" }, g);
   const pr = prog(), pct = pr.bars ? pctOf(it) : 0;
   // critical: only the outline changes, to a slightly heavier red
   const crit = !!(L.cp && logic().critical && L.cp.critical.has(it.id)), edge = crit ? LINE_RED : stroke, sw = crit ? 1.7 : .9;
   // dots at the ends of the selected activity: drag one onto another activity to link them
   const linkDots = (xs, xf) => {
-    if (opts.print || !selected || showMode() === "planned") return;
+    if (opts.print || !selected || MULTI.size > 1 || showMode() === "planned") return;
     [["ls", xs, "Drag onto another activity to link from this start"], ["lf", xf, "Drag onto another activity to link from this finish"]].forEach(([part, cx, tip]) => {
       const d = el("circle", { cx, cy, r: 3.6, fill: "#FFFFFF", stroke: BRAND.orange, "stroke-width": 1.4, "data-id": it.id, "data-part": part, style: "cursor:crosshair" }, grp);
       el("title", {}, d, tip);
@@ -1659,22 +1670,49 @@ $("chart").addEventListener("pointerdown", e => {
     drag = { link: true, id, end: t.getAttribute("data-part") === "lf" ? "f" : "s", x0: +t.getAttribute("cx"), y0: +t.getAttribute("cy") };
     e.preventDefault(); return;
   }
+  if (id && (e.shiftKey || e.ctrlKey || e.metaKey)) {   // add to / take out of the selection
+    const ids = selectedIds(); const i = ids.indexOf(id);
+    if (i >= 0) ids.splice(i, 1); else ids.push(id);
+    return selectItems(ids);
+  }
   if (id) {
     const it = P.items.find(i => i.id === id);
+    const group = MULTI.size > 1 && MULTI.has(id);   // dragging one of several selected: they all move
+    if (!group) MULTI.clear();
     sel = { type: "item", id };
     drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false };
     // a summary bar carries the bars inside it
     if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
     if (drag.part === "b") drag.parents = new Map(P.items.map(i => [i.id, i.parent]));   // membership before this drag
-  } else if (head) sel = { type: "lane", id: head };
+    if (group && drag.part === "body") {
+      const skip = new Set([id, ...(drag.kids || []).map(k => k.id)]);
+      drag.group = withChildren([...MULTI]).filter(g => !skip.has(g)).map(g => ({ id: g, orig: clone(P.items.find(i => i.id === g)) }));
+    }
+  } else if (head) { sel = { type: "lane", id: head }; MULTI.clear(); }
   else if (t.getAttribute("data-zone")) {   // title block, timeline or legend: open where it's edited
     const [tab, field] = t.getAttribute("data-zone").split(":");
-    return openSideTab(tab, field);
+    MULTI.clear(); return openSideTab(tab, field);
   }
-  else { sel = null; lastLane = t.getAttribute("data-lane") || lastLane; }   // empty space (in a lane too): back to the programme settings; + Bar still goes to that lane
+  else {   // empty space: drag a box to select what's inside; a plain click goes back to the programme settings
+    lastLane = t.getAttribute("data-lane") || lastLane;   // + Bar still goes to the lane clicked in
+    drag = { box: true, x0: p.x, y0: p.y, add: e.shiftKey || e.ctrlKey || e.metaKey, moved: false };
+    return;
+  }
   wantSelTab = !!sel;
   render(); renderSide();
 });
+/* the items whose shapes touch a box on the sheet (svg coordinates) */
+function itemsInBox(x1, y1, x2, y2) {
+  const out = [];
+  for (const it of P.items) {
+    if (isCurtain(P, it.style) || hiddenByCollapse(P, it) || !LAY.lanes.some(l => l.l.id === it.lane)) continue;
+    const cy = rowCenter(it), ms = isMs(P, it.style);
+    const a = ms ? LAY.x(it.start) + LAY.ppd / 2 - G.ms : LAY.x(it.start), b = ms ? a + G.ms * 2 : LAY.x(it.end) + LAY.ppd;
+    const h = isContainer(P, it) ? LAY.rowH / 2 : ms ? G.ms : G.barH / 2;
+    if (a <= x2 && b >= x1 && cy - h <= y2 && cy + h >= y1) out.push(it.id);
+  }
+  return out;
+}
 /* link two activities (an existing link between them just changes type); refuses loops */
 function addLink(fromId, toId, type = "FS", lag = 0) {
   if (fromId === toId) return false;
@@ -1703,6 +1741,22 @@ function linkTarget(e) {
 }
 window.addEventListener("pointermove", e => {
   if (!drag) return;
+  if (drag.box) {   // selection box, with what it touches outlined as you go
+    const p = svgPt(e);
+    if (!drag.moved && Math.abs(p.x - drag.x0) < 4 && Math.abs(p.y - drag.y0) < 4) return;
+    drag.moved = true;
+    const svg = $("chart"); let ghost = svg.querySelector("#boxGhost"); if (!ghost) ghost = el("g", { id: "boxGhost", "pointer-events": "none" }, svg);
+    ghost.innerHTML = "";
+    const x1 = Math.min(p.x, drag.x0), y1 = Math.min(p.y, drag.y0), x2 = Math.max(p.x, drag.x0), y2 = Math.max(p.y, drag.y0);
+    el("rect", { x: x1, y: y1, width: x2 - x1, height: y2 - y1, fill: "rgba(244,121,32,.08)", stroke: BRAND.orange, "stroke-width": 1, "stroke-dasharray": "4 3" }, ghost);
+    drag.hits = itemsInBox(x1, y1, x2, y2);
+    for (const id of drag.hits) {
+      const it = P.items.find(i => i.id === id), cy = rowCenter(it), ms = isMs(P, it.style);
+      const a = ms ? LAY.x(it.start) + LAY.ppd / 2 - G.ms : LAY.x(it.start), b = ms ? a + G.ms * 2 : LAY.x(it.end) + LAY.ppd, h = ms ? G.ms : G.barH / 2;
+      el("rect", { x: a - 2, y: cy - h - 2, width: b - a + 4, height: h * 2 + 4, fill: "none", stroke: BRAND.orange, "stroke-width": 1.4 }, ghost);
+    }
+    return;
+  }
   if (drag.link) {   // rubber-band line from the dot to the pointer; the target activity is outlined
     const svg = $("chart"), p = svgPt(e), tg = linkTarget(e);
     let ghost = svg.querySelector("#linkGhost"); if (!ghost) ghost = el("g", { id: "linkGhost", "pointer-events": "none" }, svg);
@@ -1748,13 +1802,24 @@ window.addEventListener("pointermove", e => {
       kid.start = addDays(k.orig.start, dd); kid.end = addDays(k.orig.end, dd);
       kid.lane = it.lane; kid.row = Math.max(0, k.orig.row + (it.row - o.row));
     }
+    // the rest of a multiple selection: the same shift in time, and the same row move for those in its lane
+    for (const g of drag.group || []) {
+      const x = P.items.find(i => i.id === g.id); if (!x) continue;
+      x.start = addDays(g.orig.start, dd); x.end = isMs(P, x.style) ? x.start : addDays(g.orig.end, dd);
+      if (!isCurtain(P, x.style) && g.orig.lane === o.lane) { x.lane = it.lane; x.row = Math.max(0, g.orig.row + (it.row - o.row)); }
+    }
   }
-  if (it.parent) syncContainers(P);   // the summary's bracket follows its bars while dragging
+  if (it.parent || drag.group) syncContainers(P);   // the summary's bracket follows its bars while dragging
   render();
 });
 function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + ln.toView(o.row) * LAY.rowH + LAY.rowH / 2 : 0; }
 window.addEventListener("pointerup", e => {
   if (!drag) return;
+  if (drag.box) {
+    const d = drag; drag = null; $("chart").querySelector("#boxGhost")?.remove();
+    if (!d.moved) { if (!d.add) { sel = null; MULTI.clear(); wantSelTab = false; render(); renderSide(); } return; }
+    return selectItems([...(d.add ? selectedIds() : []), ...(d.hits || [])]);
+  }
   if (drag.link) {
     const tg = linkTarget(e), from = drag.id, fromEnd = drag.end; drag = null;
     $("chart").querySelector("#linkGhost")?.remove();
@@ -1848,21 +1913,91 @@ function freeRow(p, it) {
 }
 
 document.addEventListener("keydown", e => {
-  if (e.target.closest("input,select,textarea")) return;
+  if (e.target.closest && e.target.closest("input,select,textarea,.modal")) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "s") { e.preventDefault(); saveDoc(); return; }
-  if (e.key === "Escape") { sel = null; render(); renderSide(); return; }
-  if (!sel || sel.type !== "item") return;
-  const it = P.items.find(i => i.id === sel.id); if (!it) return;
-  if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); commit(p => p.items = p.items.filter(i => i.id !== it.id)); sel = null; renderSide(); }
-  if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); const c = { ...clone(it), id: nextId(P, it.style, it.id) }; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); }
-  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-    e.preventDefault(); const n = (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 7 : 1);
-    commit(p => { const x = p.items.find(i => i.id === it.id); x.start = addDays(x.start, n); x.end = addDays(x.end, n); }, true);
-  }
+  if (e.key === "Escape") { sel = null; MULTI.clear(); render(); renderSide(); return; }
+  if (e.key === "?") { e.preventDefault(); openHelp(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectItems(P.items.filter(i => !hiddenByCollapse(P, i)).map(i => i.id)); return; }
+  const ids = selectedIds(); if (!ids.length) return;
+  if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteItems(ids); }
+  if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); duplicateItems(ids); }
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); shiftItems(ids, (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 7 : 1)); }
 });
+
+/* ---------- help: the essentials on one page ---------- */
+function openHelp() {
+  const k = s => `<kbd>${s}</kbd>`;
+  const rows = [
+    ["Select", "Click a bar or milestone. " + k("Shift") + " or " + k("Ctrl") + "-click to add more; drag a box on empty space to select several"],
+    ["Move", "Drag it (several selected move together), or " + k("←") + " " + k("→") + " for a day, with " + k("Shift") + " for a week"],
+    ["Change dates", "Drag either end of a bar, or type them in the side panel"],
+    ["Add", "Double-click empty space in a lane, or use + Bar, + Milestone, + Lane, + Curtain"],
+    ["Duplicate / delete", k("Ctrl") + " " + k("D") + " / " + k("Del")],
+    ["Link", "Select an activity and drag the dot at either end onto another one, or Logic ▸ Find links automatically"],
+    ["Undo / redo", k("Ctrl") + " " + k("Z") + " / " + k("Ctrl") + " " + k("Y")],
+    ["Save", k("Ctrl") + " " + k("S") + ". After the first save, changes save themselves"],
+    ["Select all / none", k("Ctrl") + " " + k("A") + " / " + k("Esc")],
+  ];
+  showModal(`<header><h3>How PoaP Builder works</h3><p>Draw on the sheet; everything else is in the side panel. What you see is what prints.</p></header>
+    <div class="body helpbody">
+      <table class="diff"><tbody>${rows.map(([a, b]) => `<tr><th scope="row">${a}</th><td>${b}</td></tr>`).join("")}</tbody></table>
+      <h4>The side panel</h4>
+      <ul>
+        <li><b>Sheet</b>: title block, page size, row spacing and the timeline. Click the title block or timeline on the sheet to get there.</li>
+        <li><b>Progress</b>: data date, baseline, and <i>New progress update</i>, which starts next month's revision with this one as its plan.</li>
+        <li><b>Logic</b>: relationships, the critical path (red outlines) and keeping successors after their predecessors.</li>
+        <li><b>Types</b>: milestone, bar and curtain types as they appear in the legend. Click the legend to get there.</li>
+        <li>Whatever you select gets its own tab in front. ✕ or ${k("Esc")} puts it away.</li>
+      </ul>
+      <h4>Getting data in and out</h4>
+      <ul>
+        <li><b>Excel ▾</b>: export the programme, edit it in Excel, and update the drawing from it with a preview of every change (matched by ShapeID).</li>
+        <li><b>Export PDF</b>: the sheet exactly as shown, on the page size chosen in Sheet.</li>
+        <li><b>Branding</b>: the logo button at the top left switches between Martinus, joint venture and alliance brands.</li>
+      </ul>
+    </div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn primary" data-act="close">Got it</button></footer>`, {});
+}
+$("bHelp").onclick = openHelp;
+
+/* ---------- acting on the selection (one item or several) ---------- */
+function selectItems(ids) {
+  ids = [...new Set(ids)].filter(id => P.items.some(i => i.id === id));
+  MULTI = new Set(ids.length > 1 ? ids : []);
+  sel = ids.length ? { type: "item", id: ids[ids.length - 1] } : null;
+  wantSelTab = !!ids.length; render(); renderSide();
+}
+/* summaries take the bars inside them along */
+function withChildren(ids) {
+  const out = new Set(ids);
+  ids.forEach(id => { const c = P.items.find(i => i.id === id); if (c && isContainer(P, c)) containerChildren(P, c).forEach(k => out.add(k.id)); });
+  return [...out];
+}
+function deleteItems(ids) {
+  const gone = new Set(ids);
+  commit(p => {
+    p.items = p.items.filter(i => !gone.has(i.id));
+    p.items.forEach(i => { if (i.preds) i.preds = i.preds.filter(r => !gone.has(r.id)); if (i.parent && gone.has(i.parent)) delete i.parent; });
+  });
+  sel = null; MULTI.clear(); render(); renderSide();
+  if (ids.length > 1) toast(`Deleted ${ids.length} items. Undo brings them back.`);
+}
+function duplicateItems(ids) {
+  const made = [];
+  commit(p => ids.forEach(id => {
+    const it = p.items.find(i => i.id === id); if (!it) return;
+    const c = { ...clone(it), id: nextId(p, it.style, it.id) }; delete c.preds; delete c.bStart; delete c.bEnd;
+    c.row = 999; c.row = freeRow(p, c); p.items.push(c); made.push(c.id);
+  }));
+  selectItems(made);
+}
+function shiftItems(ids, n) {
+  const all = withChildren(ids);
+  commit(p => all.forEach(id => { const x = p.items.find(i => i.id === id); if (x) { x.start = addDays(x.start, n); x.end = addDays(x.end, n); } }), true);
+}
 
 /* =====================================================================
    Inspector
@@ -1905,7 +2040,10 @@ function tabify(host, panes, top) {
 }
 function renderSide() {
   const side = $("side"), scroll = side.scrollTop, before = side.dataset.view;
-  const cur = findSel(), selKey = cur ? sel.type + ":" + sel.id : null;
+  [...MULTI].forEach(id => { if (!P.items.some(i => i.id === id)) MULTI.delete(id); });   // after undo or a delete
+  if (MULTI.size === 1) { sel = { type: "item", id: [...MULTI][0] }; MULTI.clear(); }
+  const multi = MULTI.size > 1;
+  const cur = multi || findSel(), selKey = multi ? "multi:" + [...MULTI].sort().join(",") : cur ? sel.type + ":" + sel.id : null;
   if (selKey && (selKey !== lastSelKey || wantSelTab)) sideTop = "sel";   // a new click on the sheet shows what was clicked
   if (!selKey && sideTop === "sel") sideTop = null;
   if (!sideTop) sideTop = SIDE_TAB.prog;
@@ -1914,8 +2052,8 @@ function renderSide() {
   const keep = sel; sel = null; renderSideInner(); sel = keep;
   const prog = document.createDocumentFragment(); [...side.childNodes].forEach(n => prog.appendChild(n));
   if (cur) {
-    renderSideInner();
-    const pane = document.createElement("section"); pane.className = "pane"; pane.dataset.pane = "sel"; pane.dataset.label = selLabel(cur);
+    if (multi) renderMultiSide(side); else renderSideInner();
+    const pane = document.createElement("section"); pane.className = "pane"; pane.dataset.pane = "sel"; pane.dataset.label = multi ? `${MULTI.size} items` : selLabel(cur);
     while (side.firstChild) pane.appendChild(side.firstChild);
     const sub = [...pane.querySelectorAll(":scope > .pane")]; if (sub.length > 1) tabify(pane, sub, false);
     side.appendChild(pane);
@@ -1927,10 +2065,69 @@ function renderSide() {
 }
 /* open a programme tab from the sheet (title block, timeline, legend), optionally focusing a field */
 function openSideTab(tab, focusId) {
-  sel = null; SIDE_TAB.prog = tab; sideTop = tab; saveSideTabs();
+  sel = null; MULTI.clear(); SIDE_TAB.prog = tab; sideTop = tab; saveSideTabs();
   render(); renderSide();
   const f = focusId && $(focusId);
   if (f) { f.scrollIntoView({ block: "center" }); f.focus({ preventScroll: true }); }
+}
+/* several items selected: what they are, and changes that apply to all of them at once */
+function renderMultiSide(side) {
+  const its = [...MULTI].map(id => P.items.find(i => i.id === id)).filter(Boolean);
+  const bars = its.filter(i => !isMs(P, i.style) && !isCurtain(P, i.style) && !isContainer(P, i)), mss = its.filter(i => isMs(P, i.style));
+  const other = its.length - bars.length - mss.length;
+  const s0 = Math.min(...its.map(i => toDays(i.start))), s1 = Math.max(...its.map(i => toDays(i.end)));
+  const count = (n, w) => n ? `${n} ${w}${n === 1 ? "" : "s"}` : "";
+  const pcts = new Set(its.filter(tracked).map(pctOf)), pctVal = pcts.size === 1 ? [...pcts][0] : "";
+  side.innerHTML = `
+    <h2>${its.length} selected</h2>
+    <p class="note">${[count(bars.length, "bar"), count(mss.length, "milestone"), count(other, "other item")].filter(Boolean).join(", ")} · ${fmt(fromDays(s0))} to ${fmt(fromDays(s1))}.<br>Shift- or Ctrl-click to add or remove; drag any of them to move them all.</p>
+    <div class="f"><label for="mxDays">Move them by</label>
+      <div style="display:flex;gap:6px;align-items:center"><input id="mxDays" type="number" min="1" value="7" style="width:70px" aria-label="Days"><span class="note">days</span>
+      <button class="btn" id="mxEarlier">◀ Earlier</button><button class="btn" id="mxLater">Later ▶</button></div></div>
+    <div class="row2">
+      <div class="f"><label for="mxLane">Lane</label><select id="mxLane"><option value="">(as they are)</option>${P.lanes.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("")}</select></div>
+      ${bars.length ? `<div class="f"><label for="mxStyle">Bar type</label><select id="mxStyle"><option value="">(as they are)</option>${P.styles.filter(s => s.behaviour === "Stretch" && !/^container/.test(s.shape)).map(s => `<option value="${esc(s.name)}">${esc(s.notes || s.name)}</option>`).join("")}</select></div>` : ""}
+    </div>
+    ${bars.length ? `<div class="f"><label>Labels</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-mxlabel="${v}">${n}</button>`).join("")}</div></div>` : ""}
+    <div class="row2">
+      <div class="f"><label for="mxFill">Fill</label><input id="mxFill" type="color" value="${itemColours(its[0], P.lanes.find(l => l.id === its[0].lane)).fill}"></div>
+      <div class="f"><label>&nbsp;</label><button class="btn" id="mxReset" title="Back to the lane and type colours">Default colours</button></div>
+    </div>
+    <h2>Progress</h2>
+    <div class="row2">
+      <div class="f"><label for="mxPct">% complete</label><input id="mxPct" type="number" min="0" max="100" value="${pctVal}" placeholder="mixed"></div>
+      <div class="f"><label>&nbsp;</label><button class="btn" id="mxBase" title="Their baseline becomes their current dates">Set baseline</button></div>
+    </div>
+    <h2>Links</h2>
+    <div class="actions"><button class="btn" id="mxChain" title="Finish-to-start links between them, in date order">Link in sequence</button><button class="btn" id="mxUnlink">Unlink them</button></div>
+    <p class="note">Link in sequence chains them finish → start in date order. Unlink removes the links between them (links to other activities stay).</p>
+    <div class="actions"><button class="btn" id="mxDup">Duplicate</button><button class="btn danger" id="mxDel">Delete ${its.length}</button></div>`;
+  const ids = its.map(i => i.id), each = f => commit(p => ids.forEach(id => { const x = p.items.find(i => i.id === id); if (x) f(x, p); }), true);
+  const days = () => Math.max(1, Math.round(+$("mxDays").value || 0));
+  $("mxEarlier").onclick = () => shiftItems(ids, -days());
+  $("mxLater").onclick = () => shiftItems(ids, days());
+  $("mxLane").onchange = e => { const l = e.target.value; if (!l) return; each(x => { if (isCurtain(P, x.style) || x.lane === l) return; x.lane = l; delete x.parent; x.row = 999; x.row = freeRow(P, x); }); };
+  if ($("mxStyle")) $("mxStyle").onchange = e => { const s = e.target.value; if (s) each(x => { if (bars.some(b => b.id === x.id)) x.style = s; }); };
+  side.querySelectorAll("[data-mxlabel]").forEach(b => b.onclick = () => each(x => { if (!bars.some(y => y.id === x.id)) return; if (b.dataset.mxlabel === "auto") delete x.labelMode; else x.labelMode = b.dataset.mxlabel; }));
+  $("mxFill").onchange = e => each(x => { x.fill = e.target.value.toUpperCase(); });
+  $("mxReset").onclick = () => each(x => { x.fill = ""; x.stroke = ""; });
+  $("mxPct").onchange = e => { const v = Math.max(0, Math.min(100, Math.round(+e.target.value || 0))); each(x => { if (!tracked(x)) return; if (v) x.pct = v; else delete x.pct; if (v >= 100) x.status = "Complete"; else if (x.status === "Complete") x.status = "Active"; }); };
+  $("mxBase").onclick = () => { each(x => { if (isCurtain(P, x.style)) return; x.bStart = x.start; x.bEnd = x.end; }); toast(`Baseline set for ${ids.length} items.`); };
+  $("mxChain").onclick = () => {
+    const seq = its.filter(linkable).sort((a, b) => toDays(a.start) - toDays(b.start) || toDays(a.end) - toDays(b.end));
+    if (seq.length < 2) return toast("Select two or more bars or milestones to link.");
+    let n = 0, skipped = 0;
+    commit(p => { for (let k = 1; k < seq.length; k++) {
+      const a = seq[k - 1].id, b = p.items.find(i => i.id === seq[k].id);
+      if ((b.preds || []).some(r => r.id === a)) continue;
+      if (makesLoop(a, b.id)) { skipped++; continue; }
+      b.preds = [...(b.preds || []), { id: a, type: "FS", lag: 0 }]; n++;
+    } }, true);
+    toast(`Linked ${n} in sequence${skipped ? `; ${skipped} skipped to avoid a loop` : ""}.`);
+  };
+  $("mxUnlink").onclick = () => { const g = new Set(ids); each(x => { if (x.preds) { x.preds = x.preds.filter(r => !g.has(r.id)); if (!x.preds.length) delete x.preds; } }); };
+  $("mxDup").onclick = () => duplicateItems(ids);
+  $("mxDel").onclick = () => deleteItems(ids);
 }
 function renderSideInner() {
   const side = $("side"), cur = findSel();
@@ -1982,9 +2179,10 @@ function renderSideInner() {
     $("iStroke").onchange = e => upd(x => x.stroke = e.target.value.toUpperCase());
     $("iStatus").onchange = e => upd(x => { x.status = e.target.value; if (x.status === "Complete") x.pct = 100; else if (pctOf(x) >= 100) delete x.pct; });
     $("iId").onchange = e => { const v = e.target.value.trim(); if (!v || P.items.some(i => i.id === v)) { toast(v ? `${v} is already used. ShapeIDs must be unique.` : "ShapeID can't be empty."); renderSide(); return; }
+      const old = cur.id;
       commit(p => {   // links and summary membership follow the new ShapeID
-        p.items.find(i => i.id === cur.id).id = v;
-        p.items.forEach(i => { if (i.parent === cur.id) i.parent = v; (i.preds || []).forEach(r => { if (r.id === cur.id) r.id = v; }); });
+        p.items.find(i => i.id === old).id = v;
+        p.items.forEach(i => { if (i.parent === old) i.parent = v; (i.preds || []).forEach(r => { if (r.id === old) r.id = v; }); });
       }, true); sel.id = v; renderSide(); };
     if ($("iReset")) $("iReset").onclick = e => { e.preventDefault(); upd(x => { x.fill = ""; x.stroke = ""; }); };
     $("iDup").onclick = () => { const c = { ...clone(cur), id: nextId(P, cur.style, cur.id) }; delete c.preds; c.row = freeRow(P, c); commit(p => p.items.push(c)); sel = { type: "item", id: c.id }; render(); renderSide(); };
