@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
 <script src="brand-logo.js"></script>
+<script src="channel.js"></script>
 <style>
 /* Layout: app shell. Branded toolbar on top, the A3 sheet in the middle, inspector on the right.
    Brand: Martinus navy + orange. The sheet stays paper-white in both themes because it is what gets issued. */
@@ -262,6 +263,11 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
 .choice.primary svg, .choice.primary .note { color: inherit; opacity: .85; }
 .choice.primary:hover { filter: brightness(1.12); background: var(--accent); }
 .warnnote { margin-top: 12px; }
+.chancard { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent-2); border-radius: 5px; display: grid; gap: 6px; font-size: 12.5px; }
+.chancard ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.chancard .btn { justify-self: start; text-decoration: none; color: inherit; }
+.chancard.beta { border-left-color: var(--warn); }
+.betatag { font: 700 10px/1 var(--font-ui, system-ui); letter-spacing: .08em; color: #FFFFFF; background: #F47920; padding: 3px 6px; border-radius: 3px; text-decoration: none; }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 3px; font-size: 12px; z-index: 20; }
 
 @media (max-width: 860px) {
@@ -4015,6 +4021,23 @@ async function reconnectFile(last) {
   } catch (err) { toast("Couldn't reconnect: " + err.message + ". Use Open to pick the file.", 6000); idbSet("doc", null); }
 }
 
+/* ---------- the standard version and the beta: each says on its start screen that the other exists ---------- */
+const CHANNEL = (!HOST && window.POAP_CHANNEL) || null;   // from channel.js; inside SharePoint there's no beta
+function channelCard() {
+  if (!CHANNEL || !CHANNEL.betaUrl) return "";
+  const beta = CHANNEL.channel === "beta";
+  return `<div class="chancard${beta ? " beta" : ""}">
+    <b>${beta ? `You're on the beta: ${esc(CHANNEL.title)}` : `A beta is available: ${esc(CHANNEL.title)}`}</b>
+    <ul>${(CHANNEL.notes || []).map(n => `<li>${esc(n)}</li>`).join("")}</ul>
+    <p class="note">Programmes kept in the browser stay with each version. To move one across, save it to a file and open it in the other.</p>
+    <a class="btn" href="${esc(beta ? CHANNEL.stableUrl : CHANNEL.betaUrl)}">${beta ? "Back to the standard version" : "Open the beta"}</a>
+  </div>`;
+}
+if (CHANNEL && CHANNEL.channel === "beta") {   // a small BETA tag by the name, back to the standard version
+  const tag = document.createElement("a"); tag.className = "betatag"; tag.href = CHANNEL.stableUrl; tag.textContent = "BETA"; tag.title = "You're on the beta. Click for the standard version.";
+  ROOT.querySelector(".brand b")?.after(tag);
+}
+
 /* ---------- start screen: what to work on, over a blurred view of the sheet ---------- */
 const START_ICONS = {
   new: '<path d="M12 5v14M5 12h14"/>',
@@ -4052,6 +4075,7 @@ async function showStartScreen() {
       ${choice("example", "example", "Explore the example", "A sample programme to try things out. Nothing is saved until you choose to.")}
     </div>
     ${!HOST && !canPickFiles ? `<p class="note warnnote">This browser can't save to a file automatically; Save downloads a copy instead. Use Microsoft Edge or Google Chrome for auto-save.</p>` : ""}
+    ${channelCard()}
   </div>`;
   ROOT.appendChild(s);
   const close = () => s.remove();
