@@ -182,6 +182,23 @@ table.diff td, table.diff th { text-align: left; padding: 4px 6px; border-bottom
 table.diff th { font-weight: 700; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
 table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; }
 .old { color: var(--muted); text-decoration: line-through; }
+/* ---------- start screen: sits under modals (z 10) so branding and save dialogs open over it ---------- */
+.startscreen { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: 16px; background: rgba(8,14,24,.28); backdrop-filter: blur(7px) saturate(.8); -webkit-backdrop-filter: blur(7px) saturate(.8); overflow: auto; }
+.startcard { background: var(--panel); border-radius: 6px; width: min(560px, 100%); box-shadow: 0 18px 60px rgba(0,0,0,.35); border-top: 4px solid var(--accent-2); padding: 20px 22px 18px; }
+.starthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.starthead h2 { margin: 0 0 2px; font-size: 20px; font-weight: 700; color: var(--accent); }
+.startcard .brandpick .logo { background: #FFFFFF; border-radius: 3px; padding: 3px 5px; display: flex; }
+.startcard .brandpick .logo img { height: 18px; max-width: 150px; object-fit: contain; display: block; }
+.choices { display: grid; gap: 8px; }
+.choice { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 11px 14px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); cursor: pointer; }
+.choice svg { flex: none; color: var(--accent); }
+.choice b { display: block; font-size: 13.5px; }
+.choice:hover { background: var(--hover); border-color: var(--accent-2); }
+.choice:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.choice.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.choice.primary svg, .choice.primary .note { color: inherit; opacity: .85; }
+.choice.primary:hover { filter: brightness(1.12); background: var(--accent); }
+.warnnote { margin-top: 12px; }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 3px; font-size: 12px; z-index: 20; }
 
 @media (max-width: 860px) {
@@ -477,7 +494,8 @@ function itemColours(it, lane) {
 const STORE = (HOST && HOST.storeKey) || "poap-builder-draft-v2";
 let DOC = null;   // with a host: the library file this programme was opened from { path, name, etag, base }
 let P, sel = null, past = [], future = [];
-try { const s = localStorage.getItem(STORE); if (s) P = JSON.parse(s); } catch (e) {}
+let hadDraft = false;   // unsaved work from an earlier visit, offered on the start screen
+try { const s = localStorage.getItem(STORE); if (s) { P = JSON.parse(s); hadDraft = true; } } catch (e) {}
 if (!P || P.format !== "poap/2") P = seedProject();
 upgradeProject(P);
 
@@ -1170,6 +1188,7 @@ function render() {
   const logo = brandLogoSrc();
   if (logo) { $("brandLogo").src = logo; $("brandLogo").hidden = false; } else $("brandLogo").hidden = true;
   $("brandName").textContent = currentBrand().name;
+  ROOT.querySelectorAll(".startscreen .brandpick").forEach(k => { k.querySelector("img").src = logo; k.querySelector(".bname").textContent = currentBrand().name; });
   if (mode === "free") { PLAN = null; applySpacing(); LAY = draw($("chart"), { ppd: P.view.zoom, spare: true }); }
   else { PLAN = drawPage($("chart")); LAY = PLAN.L; }
   placePaper(mode);
@@ -2060,9 +2079,7 @@ $("bFit").onclick = () => {
   const s = new Date(a*DAY), e = new Date(b*DAY);
   commit(p => { p.timeline.start = fromDays(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1)/DAY); p.timeline.end = fromDays(Date.UTC(e.getUTCFullYear(), e.getUTCMonth()+2, 0)/DAY); }, true);
 };
-$("bNew").onclick = () => guardUnsaved(() => showModal(`<header><h3>Start a new programme</h3><p>You'll be asked where to save it, so every change is kept from the start.</p></header>
-  <footer><button class="btn primary" data-act="blank">Blank programme</button><button class="btn" data-act="sample">Load the example</button><span class="spacer"></span><button class="btn" data-act="close">Cancel</button></footer>`,
-  { blank: () => startNew(blankProject()), sample: () => startNew(seedProject()) }));
+$("bNew").onclick = () => guardUnsaved(() => { hadDraft = false; showStartScreen(); });
 const fileBase = () => `${P.meta.number} ${P.meta.title} PoaP Rev${P.meta.revision}`.replace(/[\\/:*?"<>|]+/g, "-").trim();
 $("bSave").onclick = () => saveDoc();
 $("bSaveNow").onclick = () => saveDoc();
@@ -2091,7 +2108,12 @@ async function openFromFile(f, handle) {
     promptFirstSave("This programme was built from a workbook and hasn't been saved yet.");
   }
 }
-function startNew(project) { if (P.brand) { remapBrandColours(project, DEFAULT_BRAND, P.brand); project.brand = clone(P.brand); } loadDoc(project, null); promptFirstSave("Your new programme hasn't been saved yet."); }
+function startNew(project, opts = {}) {
+  if (P.brand) { remapBrandColours(project, DEFAULT_BRAND, P.brand); project.brand = clone(P.brand); }
+  loadDoc(project, null);
+  if (opts.example) toast("This is the example programme. Press Save if you want to keep a copy.", 5000);
+  else saveDoc();   // a new programme goes straight to choosing where to save, so auto-save covers it from the start
+}
 $("bImport").onclick = () => $("fImport").click();
 $("fImport").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -2562,56 +2584,97 @@ function rememberFile() {
   if (!("indexedDB" in window)) return;
   idbSet("doc", DOC?.kind === "file" ? { handle: DOC.handle, name: DOC.name, lastMod: DOC.lastMod, base: DOC.base, savedAt: DOC.savedAt, titleKey: DOC.titleKey } : null);
 }
-/* SharePoint: after a reload, carry on with the programme from the library */
-async function offerLibraryReconnect() {
-  let last = null; try { last = JSON.parse(localStorage.getItem(STORE + ":doc")); } catch (e) {}
-  if (!last) return promptFirstSave(touched || P.items.length ? "This programme isn't saved to the library yet." : "Nothing is saved yet.");
+/* SharePoint: carry on with the programme last used from the library (this browser's draft wins if newer) */
+async function reconnectLibrary(last) {
   const unsaved = JSON.stringify(P) !== last.base;
-  showModal(`<header><h3>Continue with ${esc(last.name.replace(/\.poap\.json$/i, ""))}?</h3><p>From the “${esc(HOST.libraryTitle)}” library${unsaved ? ". This browser also has changes that weren't saved yet; they'll be saved now" : ""}.</p></header>
-    <footer><button class="btn" data-act="open">Open another…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Not now</button><button class="btn primary" data-act="go">Continue</button></footer>`, {
-    open: () => { $("bOpen").click(); },
-    go: async () => {
-      try {
-        const r = await HOST.read(last.path);
-        DOC = { ...last };
-        if (r.etag !== last.etag && !unsaved) { const t = JSON.parse(r.text); loadDoc(t, { ...last, etag: r.etag, base: JSON.stringify(t), savedAt: r.modified }); }
-        else { showStatus(); if (unsaved || r.etag !== last.etag) saveDoc(); }   // a changed etag ends in the merge prompt
-        toast("Continuing with " + last.name);
-      } catch (err) { toast("Couldn't load it from the library: " + err.message, 6000); try { localStorage.removeItem(STORE + ":doc"); } catch (e) {} }
-    },
+  try {
+    const r = await HOST.read(last.path);
+    DOC = { ...last };
+    if (r.etag !== last.etag && !unsaved) { const t = JSON.parse(r.text); loadDoc(t, { ...last, etag: r.etag, base: JSON.stringify(t), savedAt: r.modified }); }
+    else { showStatus(); if (unsaved || r.etag !== last.etag) saveDoc(); }   // a changed etag ends in the merge prompt
+    toast("Continuing with " + last.name);
+  } catch (err) { toast("Couldn't load it from the library: " + err.message, 6000); try { localStorage.removeItem(STORE + ":doc"); } catch (e) {} }
+}
+/* this computer: reconnect to the file last saved, so changes keep saving to it */
+async function reconnectFile(last) {
+  const unsaved = JSON.stringify(P) !== last.base;
+  try {
+    if ((await last.handle.requestPermission({ mode: "readwrite" })) !== "granted") return toast("Permission to the file wasn't given, so changes won't save to it.", 5000);
+    DOC = { kind: "file", handle: last.handle, name: last.name, lastMod: last.lastMod, base: last.base, savedAt: last.savedAt, titleKey: last.titleKey || fileBase() };
+    const f = await last.handle.getFile();
+    if (f.lastModified > last.lastMod + 1500 && !unsaved) {          // changed elsewhere, nothing new here: just load it
+      const t = JSON.parse(await f.text()); loadDoc(t, { ...DOC, base: JSON.stringify(t), lastMod: f.lastModified, savedAt: new Date(f.lastModified).toISOString() });
+    } else { showStatus(); if (unsaved || f.lastModified > last.lastMod + 1500) saveDoc(); }
+    toast("Connected to " + last.name);
+  } catch (err) { toast("Couldn't reconnect: " + err.message + ". Use Open to pick the file.", 6000); idbSet("doc", null); }
+}
+
+/* ---------- start screen: what to work on, over a blurred view of the sheet ---------- */
+const START_ICONS = {
+  new: '<path d="M12 5v14M5 12h14"/>',
+  open: '<path d="M3 7h6l2 2h10v10H3z"/>',
+  continue: '<path d="M8 5l11 7-11 7z"/>',
+  excel: '<path d="M4 4h16v16H4zM4 10h16M10 4v16"/>',
+  example: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+};
+async function showStartScreen() {
+  ROOT.querySelectorAll(".startscreen").forEach(s => s.remove());
+  // what can be continued: the library file, the file on this computer, or an unsaved draft in this browser
+  let last = null, lastKind = null;
+  if (HOST) { try { last = JSON.parse(localStorage.getItem(STORE + ":doc")); if (last) lastKind = "library"; } catch (e) {} }
+  else if (canPickFiles) { const f = await idbGet("doc"); if (f && f.handle) { last = f; lastKind = "file"; } }
+  const draft = !last && hadDraft && P.items.length;
+  const name = s => esc(String(s || "").replace(/\.poap\.json$/i, ""));
+  const choice = (act, icon, title, sub, primary) => `<button type="button" class="choice${primary ? " primary" : ""}" data-start="${act}">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${START_ICONS[icon]}</svg>
+      <span><b>${title}</b><span class="note">${sub}</span></span></button>`;
+  const where = HOST ? `the “${esc(HOST.libraryTitle)}” library` : canPickFiles ? "a file you choose (e.g. a OneDrive or SharePoint folder)" : "your downloads";
+  const s = document.createElement("div");
+  s.className = "startscreen"; s.setAttribute("role", "dialog"); s.setAttribute("aria-modal", "true"); s.setAttribute("aria-label", "Start");
+  s.innerHTML = `<div class="startcard">
+    <div class="starthead">
+      <div><h2>PoaP Builder</h2><p class="note">Program of Activities and Possessions, ready to print on A3.</p></div>
+      <button type="button" class="brandpick" data-start="brand" title="Change branding"><span class="logo"><img src="${brandLogoSrc()}" alt=""></span><span class="bname">${esc(currentBrand().name)}</span><span class="caret" aria-hidden="true">▾</span></button>
+    </div>
+    <div class="choices">
+      ${last ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, true) : ""}
+      ${draft ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", true) : ""}
+      ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft)}
+      ${choice("open", "open", "Open a saved programme…", HOST ? `From ${esc(HOST.libraryTitle)} or your computer.` : "A .poap.json file.")}
+      ${choice("excel", "excel", "Start from an Excel workbook…", "A programme exported from PoaP Builder, or the older Visio workbook.")}
+      ${choice("example", "example", "Explore the example", "A sample programme to try things out. Nothing is saved until you choose to.")}
+    </div>
+    ${!HOST && !canPickFiles ? `<p class="note warnnote">This browser can't save to a file automatically; Save downloads a copy instead. Use Microsoft Edge or Google Chrome for auto-save.</p>` : ""}
+  </div>`;
+  ROOT.appendChild(s);
+  const close = () => s.remove();
+  s.querySelector('[data-start]').focus();
+  s.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  s.querySelectorAll("[data-start]").forEach(b => b.onclick = () => {
+    const a = b.dataset.start;
+    if (a === "brand") return openBrandMenu();
+    close();
+    if (a === "continue") return lastKind === "library" ? reconnectLibrary(last) : reconnectFile(last);
+    if (a === "draft") return toast("This programme isn't saved yet. Press Save to keep it in a file.", 5000);
+    if (a === "new") return startNew(blankProject());
+    if (a === "open") return HOST ? libraryOpen() : fileOpen();
+    if (a === "excel") return $("fOpen").click();
+    if (a === "example") return startNew(seedProject(), { example: true });
   });
 }
-async function offerReconnect() {
-  if (HOST) return offerLibraryReconnect();
-  const last = canPickFiles ? await idbGet("doc") : null;
-  if (!last || !last.handle) {
-    if (touched || P.items.length) promptFirstSave("This programme isn't saved to a file yet.");
-    return;
-  }
-  const unsaved = JSON.stringify(P) !== last.base;
-  showModal(`<header><h3>Continue with ${esc(last.name.replace(/\.poap\.json$/i, ""))}?</h3><p>Last saved ${esc(timeAgo(last.savedAt))}${unsaved ? ". This browser also has newer changes that weren't saved to the file; they'll be saved now" : ""}. Continuing reconnects the file so changes keep saving automatically.</p></header>
-    <footer><button class="btn" data-act="close">Not now</button><span class="spacer" style="flex:1"></span><button class="btn primary" data-act="go">Continue</button></footer>`, {
-    go: async () => {
-      try {
-        if ((await last.handle.requestPermission({ mode: "readwrite" })) !== "granted") return toast("Permission to the file wasn't given, so changes won't save to it.", 5000);
-        DOC = { kind: "file", handle: last.handle, name: last.name, lastMod: last.lastMod, base: last.base, savedAt: last.savedAt, titleKey: last.titleKey || fileBase() };
-        const f = await last.handle.getFile();
-        if (f.lastModified > last.lastMod + 1500 && !unsaved) {          // changed elsewhere, nothing new here: just load it
-          const t = JSON.parse(await f.text()); loadDoc(t, { ...DOC, base: JSON.stringify(t), lastMod: f.lastModified, savedAt: new Date(f.lastModified).toISOString() });
-        } else { showStatus(); if (unsaved || f.lastModified > last.lastMod + 1500) saveDoc(); }
-        toast("Connected to " + last.name);
-      } catch (err) { toast("Couldn't reconnect: " + err.message + ". Use Open to pick the file.", 6000); idbSet("doc", null); }
-    },
-  });
+
+/* the library is created on first use, then `then` carries on with whatever needed it */
+function offerCreateLibrary(then) {
+  return showModal(`<header><h3>No “${esc(HOST.libraryTitle)}” library yet</h3><p>Programmes are saved in a document library on this site. Create it now? Site owners and members with edit rights can do this.</p></header>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="create">Create library</button></footer>`,
+    { create: () => { HOST.createLibrary().then(() => { toast("Library created."); then(); }, e => toast("Couldn't create the library: " + e.message, 6000)); } });
 }
 
 async function libraryOpen() {
   let files;
   try { files = await HOST.list(); }
   catch (err) {
-    if (err.missingLibrary) return showModal(`<header><h3>No “${esc(HOST.libraryTitle)}” library yet</h3><p>Programmes are saved in a document library on this site. Create it now? Site owners and members with edit rights can do this.</p></header>
-      <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="create">Create library</button></footer>`,
-      { create: () => { HOST.createLibrary().then(() => { toast("Library created."); libraryOpen(); }, e => toast("Couldn't create the library: " + e.message, 6000)); } });
+    if (err.missingLibrary) return offerCreateLibrary(libraryOpen);
     return toast("Couldn't read the library: " + err.message, 6000);
   }
   const rows = files.map((f, i) => `<tr data-open="${i}" style="cursor:pointer"><td>${esc(f.name.replace(/\.poap\.json$/i, ""))}</td><td>${esc(f.by || "")}</td><td>${esc(timeAgo(f.modified))}</td></tr>`).join("");
@@ -2656,7 +2719,10 @@ async function librarySave(opts = {}) {
     rememberFile();
     showStatus(); if (!opts.auto) toast("Saved " + name);
     return true;
-  } catch (err) { toast((opts.auto ? "Auto-save failed: " : "Couldn't save: ") + err.message + (opts.auto ? ". Your changes are kept; press Save to retry." : ""), 6000); return false; }
+  } catch (err) {
+    if (err.missingLibrary && !opts.auto) { offerCreateLibrary(() => saveDoc(opts)); return false; }
+    toast((opts.auto ? "Auto-save failed: " : "Couldn't save: ") + err.message + (opts.auto ? ". Your changes are kept; press Save to retry." : ""), 6000); return false;
+  }
 }
 
 /* Someone saved since we opened: merge their version and ours against the version we opened. */
@@ -2716,7 +2782,7 @@ if (HOST) {
 /* ===================================================================== */
 document.fonts?.ready.then(() => { render(); });
 render(); renderSide(); showStatus();
-offerReconnect();
+showStartScreen();
 </script>
 </body>
 </html>
