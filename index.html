@@ -67,15 +67,26 @@ button, input, select { font: inherit; color: inherit; }
 .menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
 .menu button b { font-weight: 600; font-size: 12.5px; }
 /* side panel tabs */
-.sidetabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 0 -16px 2px; padding: 0 12px; position: sticky; top: -14px; background: var(--panel); z-index: 2; }
-.sidetabs button { border: 0; background: none; padding: 9px 9px 7px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.sidetabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 0 -16px 2px; padding: 4px 12px 0; position: sticky; top: 0; background: var(--panel); z-index: 2; flex: none; }
+.sidetabs button { border: 0; background: none; padding: 9px 7px 7px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
 .sidetabs button:hover { color: var(--fg); }
 .sidetabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent-2); }
 .sidetabs button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+.sidetabs { overflow-x: auto; scrollbar-width: none; }
+.sidetabs .seltab { display: flex; align-items: center; gap: 5px; color: var(--accent); }
+.sidetabs .seltab i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }
+.sidetabs .seltab .x { margin-left: 2px; padding: 0 3px; border-radius: 3px; font-size: 10px; color: var(--muted); }
+.sidetabs .seltab .x:hover { background: var(--hover); color: var(--fg); }
+/* a selection's own sections: small pills under its heading */
+.subtabs { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.subtabs button { flex: 1; border: 0; border-right: 1px solid var(--line); background: var(--bg); padding: 5px 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.subtabs button:last-child { border-right: 0; }
+.subtabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-fg); }
 .pane { display: flex; flex-direction: column; gap: 12px; }
 .pane[hidden] { display: none; }
-.backlink { align-self: flex-start; border: 0; background: none; padding: 0; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; }
-.backlink:hover { text-decoration: underline; }
+/* parts of the sheet that open their settings when clicked */
+#chart .zone { fill: transparent; cursor: pointer; }
+#chart .zone:hover { fill: rgba(244, 121, 32, .07); stroke: rgba(244, 121, 32, .45); stroke-width: 1; stroke-dasharray: 4 3; }
 .brand { display: flex; align-items: center; gap: 10px; margin-right: 4px; }
 .brand .logo { background: #FFFFFF; border-radius: 3px; padding: 3px 5px; display: flex; }
 .brand .logo img { height: 15px; max-width: 170px; object-fit: contain; display: block; }
@@ -127,7 +138,7 @@ button, input, select { font: inherit; color: inherit; }
 @keyframes pulse { 50% { opacity: .3; } }
 
 /* ---------- main ---------- */
-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 300px; }
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 320px; }
 .stage { overflow: auto; padding: 16px; min-width: 0; }
 .sheet { background: var(--paper); box-shadow: 0 1px 4px rgba(10,20,40,.2); display: inline-block; }
 /* page view: the sheet sits on a sheet of paper at the printed size and margins */
@@ -143,7 +154,7 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1f
 .hint { margin: 10px 2px 0; color: var(--muted); font-size: 12px; max-width: 900px; }
 .hint kbd { font: 11px var(--font-mono); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; background: var(--panel); }
 
-aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 0 16px 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 aside h2 { margin: 6px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 8px; }
 aside h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 aside h2:first-child { margin-top: 0; }
@@ -303,7 +314,7 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
   <div class="stage" id="stage">
     <div class="pageinfo" id="pageInfo"><span id="pageLabel"></span><span class="pagewarn" id="pageWarn" hidden></span></div>
     <div class="paper" id="paper"><div class="sheet" id="sheet"><svg id="chart" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg></div></div>
-    <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour. <kbd>Del</kbd> deletes, <kbd>Ctrl+D</kbd> duplicates, <kbd>←</kbd>/<kbd>→</kbd> nudge 1 day (<kbd>Shift</kbd> = 1 week).</p>
+    <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour; click the title block, timeline or legend to edit them. <kbd>Del</kbd> deletes, <kbd>Ctrl+D</kbd> duplicates, <kbd>←</kbd>/<kbd>→</kbd> nudge 1 day (<kbd>Shift</kbd> = 1 week).</p>
   </div>
   <aside id="side"></aside>
 </main>
@@ -940,6 +951,14 @@ function draw(svg, opts) {
   el("line", { x1: 0, x2: L.W, y1: L.bodyBottom, y2: L.bodyBottom, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   drawDataDatePointers(svg, L);
   drawFooter(svg, L, F);
+  if (!opts.print) {   // on screen, the title block, timelines and legend open their settings when clicked
+    const gz = el("g", {}, svg), zone = (x, y, w, h, z, tip) => el("title", {}, el("rect", { x, y, width: w, height: h, class: "zone", "data-zone": z }, gz), tip);
+    zone(0, 0, L.W, G.hdrH, "sheet:mProg", "Edit the title block");
+    zone(G.headW, L.bandTop, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
+    zone(G.headW, L.bodyBottom, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
+    zone(0, L.H - L.ftrH, L.W - FOOTER_BOX_W, L.ftrH, "types", "Legend: edit the milestone, bar and curtain types");
+    zone(L.W - FOOTER_BOX_W, L.H - L.ftrH, FOOTER_BOX_W, L.ftrH, "sheet:mAuthor", "Edit the author and revision");
+  }
   el("rect", { x: .9, y: .9, width: L.W - 1.8, height: L.H - 1.8, fill: "none", stroke: BRAND.navy, "stroke-width": 1.8, "pointer-events": "none" }, svg);
 
   // the PDF engine's fonts only have normal/bold
@@ -1648,8 +1667,12 @@ $("chart").addEventListener("pointerdown", e => {
     if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
     if (drag.part === "b") drag.parents = new Map(P.items.map(i => [i.id, i.parent]));   // membership before this drag
   } else if (head) sel = { type: "lane", id: head };
-  else if (t.getAttribute("data-lane")) sel = { type: "lane", id: t.getAttribute("data-lane") };
-  else sel = null;
+  else if (t.getAttribute("data-zone")) {   // title block, timeline or legend: open where it's edited
+    const [tab, field] = t.getAttribute("data-zone").split(":");
+    return openSideTab(tab, field);
+  }
+  else { sel = null; lastLane = t.getAttribute("data-lane") || lastLane; }   // empty space (in a lane too): back to the programme settings; + Bar still goes to that lane
+  wantSelTab = !!sel;
   render(); renderSide();
 });
 /* link two activities (an existing link between them just changes type); refuses loops */
@@ -1757,10 +1780,12 @@ $("chart").addEventListener("dblclick", e => {
   addItem(defaultStyle("Stretch"), s.lane, dayAt(p.x), s.row);
 });
 
+let lastLane = null;   // the lane last clicked on (empty space), for + Bar / + Milestone
 function addItem(styleName, laneId, start, row) {
   if (!P.lanes.length) { toast("Add a swimlane first."); return; }
   const ms = isMs(P, styleName), curtain = isCurtain(P, styleName);
-  laneId = curtain ? "" : laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null) || P.lanes[0].id;
+  laneId = curtain ? "" : laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null)
+    || (P.lanes.some(l => l.id === lastLane) ? lastLane : null) || P.lanes[0].id;
   if (!start) start = visibleCentreDay();
   const name = ms ? "New milestone" : curtain ? styleOf(P, styleName).notes : "New activity";
   const it = { id: nextId(P, styleName), name, style: styleName, lane: laneId, start, end: ms ? start : addDays(start, curtain ? 9 : 13), status: "Active", row: 0, fill: "", stroke: "" };
@@ -1848,33 +1873,64 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt
 const SIDE_TAB_KEY = "poap-builder-sidetab";
 const SIDE_TAB = { prog: "sheet", item: "activity" };
 try { Object.assign(SIDE_TAB, JSON.parse(localStorage.getItem(SIDE_TAB_KEY)) || {}); } catch (e) {}
+/* The programme tabs (Sheet, Progress, Logic, Types) are always there; a selection adds its own tab in front,
+   opened when something is clicked, with ✕ to deselect. The selection's own sections are sub-tabs. */
+let sideTop = null, lastSelKey = null, wantSelTab = false;
+const saveSideTabs = () => { try { localStorage.setItem(SIDE_TAB_KEY, JSON.stringify(SIDE_TAB)); } catch (err) {} };
+function selLabel(cur) {
+  if (sel.type === "lane") return "Lane";
+  if (sel.type === "style") return "Type";
+  return isCurtain(P, cur.style) ? "Curtain" : isMs(P, cur.style) ? "Milestone" : isContainer(P, cur) ? "Summary" : "Bar";
+}
+function tabify(host, panes, top) {
+  let active = top ? sideTop : SIDE_TAB.item;
+  if (!panes.some(p => p.dataset.pane === active)) active = panes[0].dataset.pane;
+  const bar = document.createElement("div"); bar.className = top ? "sidetabs" : "subtabs"; bar.setAttribute("role", "tablist");
+  bar.innerHTML = panes.map(p => p.dataset.pane === "sel"
+    ? `<button type="button" role="tab" data-tab="sel" class="seltab"><i aria-hidden="true"></i>${esc(p.dataset.label)}<span class="x" data-close title="Deselect (Esc)" aria-label="Deselect">✕</span></button>`
+    : `<button type="button" role="tab" data-tab="${esc(p.dataset.pane)}">${esc(p.dataset.label)}</button>`).join("");
+  panes[0].before(bar);
+  const show = id => {
+    panes.forEach(p => p.hidden = p.dataset.pane !== id);
+    bar.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === id));
+    if (top) sideTop = id;
+  };
+  show(active);
+  bar.onclick = e => {
+    if (e.target.closest("[data-close]")) { sel = null; render(); renderSide(); return; }
+    const b = e.target.closest("[data-tab]"); if (!b) return;
+    if (top) { if (b.dataset.tab !== "sel") SIDE_TAB.prog = b.dataset.tab; } else SIDE_TAB.item = b.dataset.tab;
+    saveSideTabs(); show(b.dataset.tab); $("side").scrollTop = 0;
+  };
+}
 function renderSide() {
-  const side = $("side"), scroll = side.scrollTop, kind = sel && findSel() ? "item" : "prog", wasTab = side.dataset.tab;
-  renderSideInner();
-  const panes = [...side.querySelectorAll(":scope > .pane")];
-  if (panes.length > 1) {
-    let active = SIDE_TAB[kind]; if (!panes.some(p => p.dataset.pane === active)) active = panes[0].dataset.pane;
-    const bar = document.createElement("div"); bar.className = "sidetabs"; bar.setAttribute("role", "tablist");
-    bar.innerHTML = panes.map(p => `<button type="button" role="tab" data-tab="${esc(p.dataset.pane)}">${esc(p.dataset.label)}</button>`).join("");
-    panes[0].before(bar);
-    const show = id => {
-      panes.forEach(p => p.hidden = p.dataset.pane !== id);
-      bar.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === id));
-      side.dataset.tab = kind + ":" + id;
-    };
-    show(active);
-    bar.onclick = e => {
-      const b = e.target.closest("[data-tab]"); if (!b) return;
-      SIDE_TAB[kind] = b.dataset.tab; try { localStorage.setItem(SIDE_TAB_KEY, JSON.stringify(SIDE_TAB)); } catch (err) {}
-      show(b.dataset.tab); side.scrollTop = 0;
-    };
-  } else delete side.dataset.tab;
-  if (side.dataset.tab && side.dataset.tab === wasTab) side.scrollTop = scroll;   // re-rendered after an edit: stay put
-  if (kind === "item") {   // back to the programme settings
-    const b = document.createElement("button"); b.type = "button"; b.className = "backlink"; b.textContent = "‹ Programme settings";
-    b.onclick = () => { sel = null; render(); renderSide(); };
-    side.prepend(b);
+  const side = $("side"), scroll = side.scrollTop, before = side.dataset.view;
+  const cur = findSel(), selKey = cur ? sel.type + ":" + sel.id : null;
+  if (selKey && (selKey !== lastSelKey || wantSelTab)) sideTop = "sel";   // a new click on the sheet shows what was clicked
+  if (!selKey && sideTop === "sel") sideTop = null;
+  if (!sideTop) sideTop = SIDE_TAB.prog;
+  lastSelKey = selKey; wantSelTab = false;
+  // programme settings, kept aside (their handlers stay bound) while the selection's panel is built
+  const keep = sel; sel = null; renderSideInner(); sel = keep;
+  const prog = document.createDocumentFragment(); [...side.childNodes].forEach(n => prog.appendChild(n));
+  if (cur) {
+    renderSideInner();
+    const pane = document.createElement("section"); pane.className = "pane"; pane.dataset.pane = "sel"; pane.dataset.label = selLabel(cur);
+    while (side.firstChild) pane.appendChild(side.firstChild);
+    const sub = [...pane.querySelectorAll(":scope > .pane")]; if (sub.length > 1) tabify(pane, sub, false);
+    side.appendChild(pane);
   }
+  side.appendChild(prog);
+  tabify(side, [...side.querySelectorAll(":scope > .pane")], true);
+  side.dataset.view = sideTop + "|" + (selKey || "");
+  if (side.dataset.view === before) side.scrollTop = scroll;   // re-rendered after an edit: stay put
+}
+/* open a programme tab from the sheet (title block, timeline, legend), optionally focusing a field */
+function openSideTab(tab, focusId) {
+  sel = null; SIDE_TAB.prog = tab; sideTop = tab; saveSideTabs();
+  render(); renderSide();
+  const f = focusId && $(focusId);
+  if (f) { f.scrollIntoView({ block: "center" }); f.focus({ preventScroll: true }); }
 }
 function renderSideInner() {
   const side = $("side"), cur = findSel();
