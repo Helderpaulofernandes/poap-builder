@@ -55,7 +55,27 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 500 12.5px/1.4 
 button, input, select { font: inherit; color: inherit; }
 
 /* ---------- toolbar ---------- */
-.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 16px; background: var(--panel); border-bottom: 3px solid var(--accent-2); }
+/* two rows: the document (name, save state, file and export actions), then the sheet's tools */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 7px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.bar.tools { padding: 5px 16px; border-bottom: 3px solid var(--accent-2); font-size: 12.5px; }
+.bar.tools .btn { padding: 4px 9px; }
+.bar.tools .grp > label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.menuwrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 8; min-width: 270px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 8px 28px rgba(0,0,0,.22); padding: 4px; display: grid; }
+.menu[hidden] { display: none; }
+.menu button { display: grid; gap: 1px; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 3px; cursor: pointer; }
+.menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
+.menu button b { font-weight: 600; font-size: 12.5px; }
+/* side panel tabs */
+.sidetabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 0 -16px 2px; padding: 0 12px; position: sticky; top: -14px; background: var(--panel); z-index: 2; }
+.sidetabs button { border: 0; background: none; padding: 9px 9px 7px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.sidetabs button:hover { color: var(--fg); }
+.sidetabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent-2); }
+.sidetabs button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+.pane { display: flex; flex-direction: column; gap: 12px; }
+.pane[hidden] { display: none; }
+.backlink { align-self: flex-start; border: 0; background: none; padding: 0; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; }
+.backlink:hover { text-decoration: underline; }
 .brand { display: flex; align-items: center; gap: 10px; margin-right: 4px; }
 .brand .logo { background: #FFFFFF; border-radius: 3px; padding: 3px 5px; display: flex; }
 .brand .logo img { height: 15px; max-width: 170px; object-fit: contain; display: block; }
@@ -225,6 +245,28 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <b>PoaP Builder</b><span id="docName"></span>
   </div>
   <div class="status" id="saveStatus" data-state="none" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="saved"></span><button class="btn" id="bSaveNow" hidden>Save now</button></div>
+  <div class="spacer"></div>
+  <div class="grp">
+    <button class="btn" id="bNew" title="Start a new programme, open one, or continue the last">New</button>
+    <button class="btn" id="bOpen" title="Open a saved project (.json) or a programme workbook (.xlsx)">Open…</button>
+    <button class="btn" id="bSave" title="Save the project file (.json)">Save</button>
+  </div>
+  <div class="grp">
+    <div class="menuwrap">
+      <button class="btn" id="bExcel" aria-haspopup="menu" aria-expanded="false" title="Export the programme to Excel, or update it from an edited workbook">Excel <span aria-hidden="true">▾</span></button>
+      <div class="menu" id="mExcel" role="menu" hidden>
+        <button type="button" role="menuitem" id="bExport"><b>Export to Excel</b><span class="note">Every activity, lane and type, to edit or share</span></button>
+        <button type="button" role="menuitem" id="bImport"><b>Update from Excel…</b><span class="note">Apply an edited workbook, with a preview of every change</span></button>
+      </div>
+    </div>
+    <button class="btn primary" id="bPdf">Export PDF</button>
+    <button class="btn" id="bIssue" title="Save this revision's PDF and Excel to the Issued folder in the library" hidden>Issue</button>
+  </div>
+  <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls" hidden>
+  <input type="file" id="fImport" accept=".xlsx,.xlsm,.xls" hidden>
+  <input type="file" id="fLogo" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+</div>
+<div class="bar tools">
   <div class="grp">
     <button class="btn" id="bLane" title="Add a swimlane">+ Lane</button>
     <button class="btn" id="bBar" title="Add a bar to the selected lane">+ Bar</button>
@@ -232,8 +274,8 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <button class="btn" id="bCurtain" title="Add a shaded date range across all lanes: contingency, saving or allowance">+ Curtain</button>
   </div>
   <div class="grp">
-    <button class="btn" id="bUndo" title="Undo (Ctrl+Z)">Undo</button>
-    <button class="btn" id="bRedo" title="Redo (Ctrl+Y)">Redo</button>
+    <button class="btn" id="bUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶ Undo</button>
+    <button class="btn" id="bRedo" title="Redo (Ctrl+Y)" aria-label="Redo">↷ Redo</button>
   </div>
   <div class="grp zoom">
     <label for="viewMode">View</label>
@@ -246,6 +288,7 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <span id="zoomBox"><input id="zoom" type="range" min="1" max="12" step="0.5" aria-label="Zoom"></span>
     <button class="btn" id="bFit" title="Set the timeline to cover all items">Fit dates</button>
   </div>
+  <div class="spacer"></div>
   <div class="grp" id="logicGrp">
     <label>Logic</label>
     <div class="seg" role="group" aria-label="Relationships and critical path"><button type="button" id="tgLinks" title="Show relationship arrows">Links</button><button type="button" id="tgCrit" title="Outline the critical path in red">Critical</button></div>
@@ -254,21 +297,6 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <label>Show</label>
     <div class="seg" role="group" aria-label="Programme shown"><button type="button" data-show="planned"></button><button type="button" data-show="actual"></button><button type="button" data-show="both">Planned vs actual</button></div>
   </div>
-  <div class="spacer"></div>
-  <div class="grp">
-    <button class="btn" id="bNew">New</button>
-    <button class="btn" id="bOpen" title="Open a saved project (.json) or a programme workbook (.xlsx)">Open…</button>
-    <button class="btn" id="bSave" title="Save the project file (.json)">Save</button>
-  </div>
-  <div class="grp">
-    <button class="btn" id="bImport" title="Update dates from an edited Excel workbook">Update from Excel…</button>
-    <button class="btn" id="bExport">Export Excel</button>
-    <button class="btn primary" id="bPdf">Export PDF</button>
-    <button class="btn" id="bIssue" title="Save this revision's PDF and Excel to the Issued folder in the library" hidden>Issue</button>
-  </div>
-  <input type="file" id="fOpen" accept=".json,.xlsx,.xlsm,.xls" hidden>
-  <input type="file" id="fImport" accept=".xlsx,.xlsm,.xls" hidden>
-  <input type="file" id="fLogo" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
 </div>
 
 <main>
@@ -1815,7 +1843,40 @@ document.addEventListener("keydown", e => {
    Inspector
    ===================================================================== */
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+/* The side panel: programme settings in tabs when nothing is selected; the selected item's settings
+   (also in tabs, with a way back) otherwise. The last tab used is remembered for each. */
+const SIDE_TAB_KEY = "poap-builder-sidetab";
+const SIDE_TAB = { prog: "sheet", item: "activity" };
+try { Object.assign(SIDE_TAB, JSON.parse(localStorage.getItem(SIDE_TAB_KEY)) || {}); } catch (e) {}
 function renderSide() {
+  const side = $("side"), scroll = side.scrollTop, kind = sel && findSel() ? "item" : "prog", wasTab = side.dataset.tab;
+  renderSideInner();
+  const panes = [...side.querySelectorAll(":scope > .pane")];
+  if (panes.length > 1) {
+    let active = SIDE_TAB[kind]; if (!panes.some(p => p.dataset.pane === active)) active = panes[0].dataset.pane;
+    const bar = document.createElement("div"); bar.className = "sidetabs"; bar.setAttribute("role", "tablist");
+    bar.innerHTML = panes.map(p => `<button type="button" role="tab" data-tab="${esc(p.dataset.pane)}">${esc(p.dataset.label)}</button>`).join("");
+    panes[0].before(bar);
+    const show = id => {
+      panes.forEach(p => p.hidden = p.dataset.pane !== id);
+      bar.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === id));
+      side.dataset.tab = kind + ":" + id;
+    };
+    show(active);
+    bar.onclick = e => {
+      const b = e.target.closest("[data-tab]"); if (!b) return;
+      SIDE_TAB[kind] = b.dataset.tab; try { localStorage.setItem(SIDE_TAB_KEY, JSON.stringify(SIDE_TAB)); } catch (err) {}
+      show(b.dataset.tab); side.scrollTop = 0;
+    };
+  } else delete side.dataset.tab;
+  if (side.dataset.tab && side.dataset.tab === wasTab) side.scrollTop = scroll;   // re-rendered after an edit: stay put
+  if (kind === "item") {   // back to the programme settings
+    const b = document.createElement("button"); b.type = "button"; b.className = "backlink"; b.textContent = "‹ Programme settings";
+    b.onclick = () => { sel = null; render(); renderSide(); };
+    side.prepend(b);
+  }
+}
+function renderSideInner() {
   const side = $("side"), cur = findSel();
   if (sel && sel.type === "item" && cur && isCurtain(P, cur.style)) { renderCurtainSide(side, cur); return; }
   if (sel && sel.type === "item" && cur) {
@@ -1823,8 +1884,10 @@ function renderSide() {
     const lane = P.lanes.find(l => l.id === cur.lane), eff = itemColours(cur, lane);
     const dur = toDays(cur.end) - toDays(cur.start) + 1;
     const colourNote = cur.fill ? "Custom colour" : ms ? `${st.notes} colour` : "Follows the lane colour";
+    const nLinks = (cur.preds || []).length + P.items.filter(i => (i.preds || []).some(r => r.id === cur.id)).length;
     side.innerHTML = `
       <h2>${ms ? "Milestone" : isContainer(P, cur) ? "Summary bar" : "Bar"} <span class="idtag">${esc(cur.id)}</span></h2>
+      <section class="pane" data-pane="activity" data-label="${ms ? "Milestone" : isContainer(P, cur) ? "Summary" : "Activity"}">
       <div class="f"><label for="iName">Name</label><input id="iName" value="${esc(cur.name)}"></div>
       <div class="row2">
         <div class="f"><label for="iStart">${ms ? "Date" : "Start"}</label><input id="iStart" type="date" value="${cur.start}"></div>
@@ -1844,13 +1907,14 @@ function renderSide() {
         <div class="f"><label for="iStatus">Status</label><select id="iStatus">${["Active","Complete","On hold"].map(s => `<option ${s === cur.status ? "selected" : ""}>${s}</option>`).join("")}</select></div>
         <div class="f"><label for="iId">ShapeID</label><input id="iId" value="${esc(cur.id)}"></div>
       </div>
-      ${progressFields(cur)}
-      ${linkFields(cur)}
       ${itemExtras(cur)}
       <div class="actions">
         <button class="btn" id="iDup">Duplicate</button>
         <button class="btn danger" id="iDel">Delete</button>
-      </div>`;
+      </div>
+      </section>
+      <section class="pane" data-pane="progress" data-label="Progress">${progressFields(cur)}</section>
+      ${linkable(cur) ? `<section class="pane" data-pane="links" data-label="Links${nLinks ? ` (${nLinks})` : ""}">${linkFields(cur)}</section>` : ""}`;
     bindItemExtras(cur); bindProgressFields(cur); bindLinkFields(cur);
     const upd = (f) => commit(p => f(p.items.find(i => i.id === cur.id)), true);
     $("iName").onchange = e => upd(x => x.name = e.target.value);
@@ -1910,6 +1974,7 @@ function renderSide() {
   }
   const m = P.meta, dupes = dupCheck();
   side.innerHTML = `
+    <section class="pane" data-pane="sheet" data-label="Sheet">
     <h2>Title block</h2>
     <div class="f"><label for="mProg">Program</label><input id="mProg" value="${esc(m.program)}"></div>
     <div class="row2">
@@ -1942,8 +2007,12 @@ function renderSide() {
       <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
       <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${P.timeline.end}"></div>
     </div>
-    ${progressSection()}
-    ${logicSection()}
+    ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${dupes.join(", ")}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
+    <p class="note">${P.items.length} items in ${P.lanes.length} lanes. Select a bar or lane title to edit it.</p>
+    </section>
+    <section class="pane" data-pane="progress" data-label="Progress">${progressSection()}</section>
+    <section class="pane" data-pane="logic" data-label="Logic">${logicSection()}</section>
+    <section class="pane" data-pane="types" data-label="Types">
     <h2>Milestone types</h2>
     <div class="types">${P.styles.filter(s => s.behaviour === "Move").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addMsType">+ Milestone type</button></div>
@@ -1954,8 +2023,7 @@ function renderSide() {
     <div class="types">${P.styles.filter(s => s.behaviour === "Curtain").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addCurtainType">+ Curtain type</button></div>
     <p class="note">Click a type to rename it or change its shape, colour or shading. Names appear in the sheet legend.</p>
-    ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${dupes.join(", ")}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
-    <p class="note">${P.items.length} items in ${P.lanes.length} lanes. Select a bar or lane title to edit it.</p>`;
+    </section>`;
   const um = (k, f) => $(k).onchange = e => commit(p => f(p, e.target.value), true);
   um("mProg", (p,v) => p.meta.program = v); um("mNum", (p,v) => p.meta.number = v); um("mRev", (p,v) => p.meta.revision = v);
   um("mTitle", (p,v) => p.meta.title = v); um("mSub", (p,v) => p.meta.subtitle = v);
@@ -1990,16 +2058,16 @@ function progressFields(cur) {
   const ms = isMs(P, cur.style), dd = prog().dataDate;
   if (isContainer(P, cur)) {
     const kids = containerChildren(P, cur).filter(k => tracked(k) && !isMs(P, k.style));
-    return `<h2>Progress</h2>${kids.length ? `<p class="note">${rollupPct(cur)}% complete, from its ${kids.length} bar${kids.length === 1 ? "" : "s"} weighted by duration.</p>` : ""}${baselineFields(cur, false)}`;
+    return `${kids.length ? `<p class="note">${rollupPct(cur)}% complete, from its ${kids.length} bar${kids.length === 1 ? "" : "s"} weighted by duration.</p>` : ""}${baselineFields(cur, false)}`;
   }
   const p = pctOf(cur);
   let state = "";
   if (dd) { const v = Math.round(progressPoint(cur, ddPoint()) - ddPoint()); state = v < 0 ? `${-v} day${v === -1 ? "" : "s"} behind at the data date` : v > 0 ? `${v} day${v === 1 ? "" : "s"} ahead at the data date` : "On track at the data date"; }
-  return `<h2>Progress</h2>
-    ${ms ? `<label class="check"><input type="checkbox" id="iDone" ${p >= 100 ? "checked" : ""}> Achieved</label>`
+  return `${ms ? `<label class="check"><input type="checkbox" id="iDone" ${p >= 100 ? "checked" : ""}> Achieved</label>`
       : `<div class="f"><label for="iPct">Complete: <span id="iPctVal">${p}</span>%</label>
         <div style="display:flex;gap:8px;align-items:center"><input id="iPct" type="range" min="0" max="100" step="5" value="${p}" style="flex:1;accent-color:var(--accent-2)"><input id="iPctN" type="number" min="0" max="100" value="${p}" style="width:58px" aria-label="Percent complete"></div></div>`}
     ${state ? `<p class="note">${state}.</p>` : ""}
+    <h2>Baseline</h2>
     ${baselineFields(cur, ms)}`;
 }
 function baselineFields(cur, ms) {
@@ -2046,8 +2114,7 @@ function linkFields(cur) {
   const cp = criticalPath(), fl = cp ? cp.float.get(cur.id) : null;
   const floatNote = cp && fl === undefined ? "Not linked, so it isn't part of the critical path."
     : cp ? (cp.critical.has(cur.id) ? `<b style="color:${LINE_RED}">Critical</b> · total float ${fl} day${Math.abs(fl) === 1 ? "" : "s"}` : pctOf(cur) >= 100 ? "Finished" : `Total float ${fl} day${Math.abs(fl) === 1 ? "" : "s"}`) : "";
-  return `<h2>Relationships</h2>
-    ${floatNote ? `<p class="note">${floatNote}</p>` : ""}
+  return `${floatNote ? `<p class="note">${floatNote}</p>` : ""}
     <div class="f"><label>Predecessors</label>${preds.map(r => row("pred", r.id, r.type || "FS", r.lag)).join("") || `<p class="note">None</p>`}
       <select id="lkAddPred"><option value="">+ Add predecessor…</option>${opts}</select></div>
     <div class="f"><label>Successors</label>${succs.map(l => row("succ", l.to.id, l.type, l.lag)).join("") || `<p class="note">None</p>`}
@@ -2074,14 +2141,16 @@ function logicSection() {
   const stats = cp ? `${cp.links.length} relationship${cp.links.length === 1 ? "" : "s"} · ${cp.critical.size} critical · finish ${fmt(fromDays(cp.finish - 1))}`
     + (cp.broken.length ? ` · <span style="color:${LINK_BROKEN}">${cp.broken.length} broken by the dates</span>` : "") + (cp.loops.size ? ` · <span style="color:var(--danger)">loop through ${[...cp.loops].join(", ")}</span>` : "")
     : "No relationships yet. Use Find links, or select an activity and drag the dot at its end onto the next one.";
-  return `<h2>Relationships and critical path</h2>
+  return `<h2>Relationships</h2>
     <div class="actions"><button class="btn primary" id="lgFind">Find links automatically…</button>${cp ? `<button class="btn" id="lgClear">Remove all links</button>` : ""}</div>
     <p class="note">${stats}</p>
     <div class="f"><label>Relationship arrows</label><div class="seg" role="group" aria-label="Relationship arrows">${[["all", "All"], ["critical", "Critical path only"], ["off", "Off"]].map(([v, n]) => `<button type="button" data-arrows="${v}" aria-pressed="${(lg.links ? (lg.arrows === "critical" ? "critical" : "all") : "off") === v}">${n}</button>`).join("")}</div></div>
-    <label class="check"><input type="checkbox" id="lgCrit" ${lg.critical ? "checked" : ""}> Critical path (red outline)</label>
-    <div class="f"><label for="lgNear">Critical path</label><select id="lgNear">
+    <h2>Critical path</h2>
+    <label class="check"><input type="checkbox" id="lgCrit" ${lg.critical ? "checked" : ""}> Outline the critical path in red</label>
+    <div class="f"><label for="lgNear">Worked out as</label><select id="lgNear">
       <option value="longest" ${lg.mode !== "float" ? "selected" : ""}>Longest path: driving links back from the finish</option>
       ${[0, 1, 2, 3, 5, 10, 20].map(v => `<option value="${v}" ${lg.mode === "float" && v === +lg.nearDays ? "selected" : ""}>Total float of ${v} day${v === 1 ? "" : "s"} or less${v ? " (near-critical)" : ""}</option>`).join("")}</select></div>
+    <h2>Scheduling</h2>
     <label class="check"><input type="checkbox" id="lgPush" ${lg.push ? "checked" : ""}> Keep successors after their predecessors</label>
     <p class="note">With this on, moving or lengthening an activity pushes the activities linked after it later as needed. They're never pulled earlier, and finished ones stay put.</p>`;
 }
@@ -2154,9 +2223,10 @@ function openFindLinks() {
 /* programme panel: data date, what to show, and setting the baseline */
 function progressSection() {
   const pr = prog(), n = P.items.filter(i => i.bStart).length, s = progressStatus();
-  return `<h2>Progress</h2>
+  return `<h2>Progress update</h2>
     <div class="actions"><button class="btn primary" id="prUpdate" title="Copy this programme as the next revision, with these dates as its planned baseline">New progress update…</button></div>
     <p class="note">Makes this programme the plan (baseline) of a new revision that you progress as the actual.</p>
+    <h2>Data date</h2>
     <div class="row2">
       <div class="f"><label for="prDate">Data date</label><input id="prDate" type="date" value="${pr.dataDate}"></div>
       <div class="f"><label>&nbsp;</label><div class="actions" style="margin:0"><button class="btn" id="prToday">Today</button>${pr.dataDate ? `<button class="btn" id="prClear" title="Remove the data date and progress line">Clear</button>` : ""}</div></div>
@@ -2165,7 +2235,8 @@ function progressSection() {
     <label class="check"><input type="checkbox" id="prLine" ${pr.line ? "checked" : ""} ${pr.dataDate ? "" : "disabled"}> Progress line</label>
     <label class="check"><input type="checkbox" id="prBars" ${pr.bars ? "checked" : ""}> Progress on bars and milestones</label>
     <label class="check"><input type="checkbox" id="prBase" ${pr.baseline ? "checked" : ""}> Baseline bars</label>
-    <div class="f"><label for="prBName">Baseline</label><input id="prBName" placeholder="Baseline" value="${esc(pr.baselineName)}"></div>
+    <h2>Baseline</h2>
+    <div class="f"><label for="prBName">Name in the legend</label><input id="prBName" placeholder="Baseline" value="${esc(pr.baselineName)}"></div>
     <p class="note">${n ? `${n} item${n === 1 ? " has" : "s have"} baseline dates${pr.baselineSet ? `, set ${fmt(pr.baselineSet)}` : ""}.` : "No baseline yet."}</p>
     <div class="actions">
       <button class="btn" id="prSet">${n ? "Reset baseline to current dates" : "Set baseline from current dates"}</button>
@@ -2772,6 +2843,19 @@ function openBrandEditor(existing) {
   preview();
 }
 $("bBrand").onclick = openBrandMenu;
+/* Excel menu: opens under its button; any choice, a click elsewhere or Esc closes it */
+(() => {
+  const btn = $("bExcel"), menu = $("mExcel");
+  const set = open => { menu.hidden = !open; btn.setAttribute("aria-expanded", open); if (open) menu.querySelector("button").focus(); };
+  btn.onclick = e => { e.stopPropagation(); set(menu.hidden); };
+  menu.addEventListener("click", () => set(false));
+  document.addEventListener("click", e => { if (!menu.hidden && !menu.contains(e.target)) set(false); });
+  menu.addEventListener("keydown", e => {
+    const items = [...menu.querySelectorAll("button")], i = items.indexOf(document.activeElement);
+    if (e.key === "Escape") { set(false); btn.focus(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
+  });
+})();
 /* Logic toggles: with no links yet, the first press offers to find them */
 const toggleLogic = key => {
   if (!allLinks().length) return openFindLinks();
