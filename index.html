@@ -268,6 +268,44 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
 .chancard .btn { justify-self: start; text-decoration: none; color: inherit; }
 .chancard.beta { border-left-color: var(--warn); }
 .betatag { font: 700 10px/1 var(--font-ui, system-ui); letter-spacing: .08em; color: #FFFFFF; background: #F47920; padding: 3px 6px; border-radius: 3px; text-decoration: none; }
+/* ---------- team working (beta) ---------- */
+.menuwrap .menu#mTeam { left: auto; right: 0; }
+.people { display: flex; align-items: center; }
+.avatar { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; color: #FFFFFF; font: 700 10px/1 var(--font-ui, system-ui); border: 2px solid var(--panel); margin-left: -6px; flex: none; }
+.people .avatar:first-child { margin-left: 0; }
+.dlg.narrow { width: min(440px, 100%); }
+.siform { display: grid; gap: 10px; }
+.sierr { color: var(--danger); font-size: 12.5px; margin: 0; min-height: 1em; }
+.sierr:empty { display: none; }
+table.people td { vertical-align: middle; }
+table.people .avatar { margin: 0 6px 0 0; border: 0; width: 22px; height: 22px; }
+form.invite { display: flex; gap: 8px; align-items: flex-end; margin-top: 12px; }
+form.invite select { padding: 5px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); }
+.hist { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.hist li { border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; display: grid; gap: 4px; font-size: 12.5px; }
+.hist .btn { justify-self: start; padding: 3px 9px; }
+.heldnote { margin: 0; padding: 7px 9px; border-radius: 4px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); font-size: 12.5px; }
+.teamhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; margin: 0 0 8px; }
+.startsub { margin: 14px 0 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600; cursor: pointer; font-size: 12.5px; }
+.linkbtn:hover { text-decoration: underline; }
+.tourlink { margin-top: 12px; text-align: center; }
+/* guided tour (reference/tour.css) */
+.tour { position: fixed; inset: 0; z-index: 1000; font: 13px/1.5 var(--font-ui, system-ui, sans-serif); }
+.tour-dim { position: absolute; inset: 0; background: rgba(2, 12, 26, .6); }
+.tour-spot { position: absolute; border: 2px solid #F47920; border-radius: 10px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(2, 12, 26, .6), 0 0 24px rgba(244, 121, 32, .55); transition: all .3s ease; }
+.tour-card { position: absolute; background: var(--panel, #fff); color: var(--fg, #14263D); border: 1px solid #F47920; border-radius: 12px; padding: 16px 18px 12px; box-shadow: 0 14px 44px rgba(0, 0, 0, .45); transition: left .3s ease, top .3s ease; }
+.tour-card h3 { margin: 2px 0 6px; font-size: 16px; }
+.tour-card p { margin: 0 0 12px; }
+.tour-count { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: #F47920; }
+.tour-dots { display: flex; gap: 4px; margin-bottom: 10px; }
+.tour-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--line, #D3DAE4); }
+.tour-dots span.done { background: rgba(244, 121, 32, .5); }
+.tour-dots span.on { width: 16px; border-radius: 3px; background: #F47920; }
+.tour-btns { display: flex; gap: 6px; align-items: center; }
+.tour-btns button { font: inherit; padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line, #D3DAE4); background: transparent; color: inherit; cursor: pointer; }
+.tour-btns button.primary { background: #F47920; border-color: #F47920; color: #fff; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .tour-spot, .tour-card { transition: none; } }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 3px; font-size: 12px; z-index: 20; }
 
 @media (max-width: 860px) {
@@ -287,6 +325,13 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
     <b>PoaP Builder</b><span id="docName"></span>
   </div>
   <div class="status" id="saveStatus" data-state="none" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="saved"></span><button class="btn" id="bSaveNow" hidden>Save now</button></div>
+  <div class="grp team" id="teamGrp" hidden>
+    <span class="people" id="teamPeople" aria-label="Who's in this programme"></span>
+    <div class="menuwrap">
+      <button class="btn" id="bTeam" aria-haspopup="menu" aria-expanded="false">Sign in</button>
+      <div class="menu" id="mTeam" role="menu" hidden></div>
+    </div>
+  </div>
   <div class="spacer"></div>
   <div class="grp">
     <button class="btn" id="bHelp" title="How it works, and keyboard shortcuts (?)" aria-label="Help">?</button>
@@ -770,7 +815,12 @@ function itemColours(it, lane) {
    ===================================================================== */
 const STORE = (HOST && HOST.storeKey) || "poap-builder-draft-v2";
 let DOC = null;   // with a host: the library file this programme was opened from { path, name, etag, base }
-let P, sel = null, past = [], future = [];
+let P, sel = null, past = [], future = [];   // undo entries: { json, seq }
+/* Teammates' changes (team programmes): applied as patches and logged in order. An undo snapshot records how many
+   had arrived (seq); restoring it replays the newer ones, so undo only takes back your own edits. */
+let extSeq = 0; const EXTERNAL = [];
+const undoEntry = () => ({ json: JSON.stringify(P), seq: extSeq });
+let CLOUD = null, me = null;   // the team programme open in this window, and who's signed in (beta)
 let MULTI = new Set();   // ids when several items are selected (sel then holds the last one clicked)
 const isSel = id => MULTI.size > 1 ? MULTI.has(id) : !!(sel && sel.type === "item" && sel.id === id);
 const selectedIds = () => MULTI.size > 1 ? [...MULTI] : sel && sel.type === "item" ? [sel.id] : [];
@@ -780,7 +830,8 @@ if (!P || P.format !== "poap/2") P = seedProject();
 upgradeProject(P);
 
 function commit(mutator, keepSel) {
-  past.push(JSON.stringify(P)); if (past.length > 200) past.shift(); future = [];
+  if (viewOnly()) return;
+  past.push(undoEntry()); if (past.length > 200) past.shift(); future = [];
   mutator(P);
   if (!keepSel && sel && !findSel()) sel = null;
   changed();
@@ -792,17 +843,36 @@ function changed(opts = {}) {
     if (moved.size) toast(`Moved ${moved.size} successor${moved.size === 1 ? "" : "s"} later to keep ${moved.size === 1 ? "its" : "their"} links.`, 3500);
   }
   syncContainers(P);
-  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+  saveLocalCopy();
   showStatus();
   render(); renderSide();
-  scheduleAutoSave();
+  if (CLOUD) cloudSchedule(); else scheduleAutoSave();
+}
+/* this browser's copy: the draft for a programme on this computer; a team programme keeps its own (with what's
+   waiting to reach the server), so the person's own draft is never overwritten */
+function saveLocalCopy() {
+  if (CLOUD) return cloudCache();
+  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+}
+function viewOnly() {
+  if (!CLOUD || CLOUD.role !== "viewer") return false;
+  toast("You have view-only access to this team programme.", 3000); return true;
+}
+/* a teammate's change arriving from the server: not undoable here, and undo never rolls it back */
+function applyExternal(patch) {
+  extSeq++; EXTERNAL.push({ seq: extSeq, patch }); if (EXTERNAL.length > 2000) EXTERNAL.shift();
+  patch(P);
+  syncContainers(P);
+  if (sel && !findSel()) sel = null;
+  saveLocalCopy(); showStatus();
+  render(); if (!drag) renderSide();
 }
 /* Once a programme has been saved (to the SharePoint library, or to a file on this computer),
    it is saved again a few seconds after the last change. A title block change that renames
    the file waits for a manual Save. */
 let autoTimer = null, saving = false;
 let touched = false;   // changes since this programme was started or opened (matters while DOC is null)
-const isDirty = () => !!DOC && JSON.stringify(P) !== DOC.base;
+const isDirty = () => !!DOC && DOC.kind !== "cloud" && JSON.stringify(P) !== DOC.base;
 function scheduleAutoSave() {
   if (!DOC || DOC.kind === "download") return;   // a download can't be updated in place
   clearTimeout(autoTimer);
@@ -815,13 +885,19 @@ function scheduleAutoSave() {
 }
 /* the one save entry point: library with a host, otherwise a file on this computer */
 async function saveDoc(opts = {}) {
+  if (CLOUD) return cloudFlush();   // a team programme saves itself; Save just sends what's waiting now
   if (saving) return false;
   saving = true; showStatus();
   try { return await (HOST ? librarySave(opts) : fileSave(opts)); }
   finally { saving = false; showStatus(); }
 }
-function undo() { if (!past.length) return; future.push(JSON.stringify(P)); P = JSON.parse(past.pop()); changed({ undo: true }); }
-function redo() { if (!future.length) return; past.push(JSON.stringify(P)); P = JSON.parse(future.pop()); changed({ undo: true }); }
+function restoreEntry(e) {
+  P = JSON.parse(e.json);
+  for (const x of EXTERNAL) if (x.seq > e.seq) x.patch(P);   // teammates' later changes stay
+  changed({ undo: true });
+}
+function undo() { if (!past.length || viewOnly()) return; future.push(undoEntry()); restoreEntry(past.pop()); }
+function redo() { if (!future.length || viewOnly()) return; past.push(undoEntry()); restoreEntry(future.pop()); }
 function findSel() {
   if (!sel) return null;
   if (sel.type === "item") return P.items.find(i => i.id === sel.id);
@@ -981,6 +1057,7 @@ function draw(svg, opts) {
     drawItem(gi, it, ln, L, opts, F);
   }
   drawProgressLine(svg, L, F);
+  if (!opts.print) drawPresence(svg, L);   // teammates' selections (team programmes)
   drawCurtainTags(svg, L, opts, F);
 
   // lane titles (vertical, in the swimlane colour)
@@ -1714,12 +1791,18 @@ $("chart").addEventListener("pointerdown", e => {
     if (i >= 0) ids.splice(i, 1); else ids.push(id);
     return selectItems(ids);
   }
+  if (id && CLOUD && (CLOUD.role === "viewer" || heldBy(id))) {   // team programme: look, but don't move
+    const who = heldBy(id);
+    MULTI.clear(); sel = { type: "item", id }; wantSelTab = true; render(); renderSide();
+    if (who) toast(`${who} is working on this activity right now. You can change it once they've moved on.`, 4000);
+    return;
+  }
   if (id) {
     const it = P.items.find(i => i.id === id);
     const group = MULTI.size > 1 && MULTI.has(id);   // dragging one of several selected: they all move
     if (!group) MULTI.clear();
     sel = { type: "item", id };
-    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false };
+    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: undoEntry(), moved: false };
     // a summary bar carries the bars inside it
     if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
     if (drag.part === "b") drag.parents = new Map(P.items.map(i => [i.id, i.parent]));   // membership before this drag
@@ -1928,7 +2011,7 @@ function groupFreeRow(p, c, it) {
   return c.row + 1;
 }
 /* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
-let PPD_HINT = null;   // the scale a programme being built will be drawn at, before it has been laid out
+var PPD_HINT = null;   // the scale a programme being built will be drawn at, before it has been laid out (var: the example is built before this line runs)
 function freeRow(p, it) {
   // days an item occupies on its row, including a label drawn beside it
   let laid = null; try { laid = LAY; } catch (e) {}   // not laid out yet while the page is starting up
@@ -2003,7 +2086,7 @@ function openHelp() {
         <li><b>Branding</b>: the logo button at the top left switches between Martinus, joint venture and alliance brands.</li>
       </ul>
     </div>
-    <footer><span class="spacer" style="flex:1"></span><button class="btn primary" data-act="close">Got it</button></footer>`, {});
+    <footer><button class="btn" data-act="tour">Take the tour</button><span class="spacer" style="flex:1"></span><button class="btn primary" data-act="close">Got it</button></footer>`, { tour: () => { setTimeout(() => startPoapTour(), 0); } });
 }
 $("bHelp").onclick = openHelp;
 
@@ -2073,6 +2156,9 @@ function tabify(host, panes, top) {
     panes.forEach(p => p.hidden = p.dataset.pane !== id);
     bar.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === id));
     if (top) sideTop = id;
+    // an activity's history is fetched when its tab is first shown
+    const hb = (panes.find(p => p.dataset.pane === id) || {}).querySelector?.(".histbox");
+    if (hb && !hb.dataset.loaded) { hb.dataset.loaded = "1"; loadHistory(hb.dataset.histFor, hb); }
   };
   show(active);
   bar.onclick = e => {
@@ -2106,6 +2192,9 @@ function renderSide() {
   tabify(side, [...side.querySelectorAll(":scope > .pane")], true);
   side.dataset.view = sideTop + "|" + (selKey || "");
   if (side.dataset.view === before) side.scrollTop = scroll;   // re-rendered after an edit: stay put
+  noteSelection();   // team programmes: tell teammates what's selected
+  const who = cur && cur !== true && sel && sel.type === "item" && heldBy(sel.id);
+  if (who) { const n = document.createElement("p"); n.className = "heldnote"; n.textContent = `${who} is working on this activity. Changes to it wait until they've moved on.`; side.querySelector(":scope > [data-pane=sel]")?.prepend(n); }
 }
 /* open a programme tab from the sheet (title block, timeline, legend), optionally focusing a field */
 function openSideTab(tab, focusId) {
@@ -2211,7 +2300,8 @@ function renderSideInner() {
       </div>
       </section>
       <section class="pane" data-pane="progress" data-label="Progress">${progressFields(cur)}</section>
-      ${linkable(cur) ? `<section class="pane" data-pane="links" data-label="Links${nLinks ? ` (${nLinks})` : ""}">${linkFields(cur)}</section>` : ""}`;
+      ${linkable(cur) ? `<section class="pane" data-pane="links" data-label="Links${nLinks ? ` (${nLinks})` : ""}">${linkFields(cur)}</section>` : ""}
+      ${CLOUD ? `<section class="pane" data-pane="history" data-label="History"><div class="histbox" data-hist-for="${esc(cur.id)}"><p class="note">Loading…</p></div></section>` : ""}`;
     bindItemExtras(cur); bindProgressFields(cur); bindLinkFields(cur);
     const upd = (f) => commit(p => f(p.items.find(i => i.id === cur.id)), true);
     $("iName").onchange = e => upd(x => x.name = e.target.value);
@@ -3862,9 +3952,10 @@ const clock = iso => new Date(iso).toLocaleTimeString("en-AU", { hour: "numeric"
 const canPickFiles = !HOST && "showSaveFilePicker" in window;
 /* the title block (number, title, revision) as it was when this file was opened or last named;
    a change suggests a new revision file, but never stops auto-save. The file's own name can be anything. */
-const titleChanged = () => !!DOC && !!DOC.titleKey && DOC.kind !== "download" && DOC.titleKey !== fileBase();
+const titleChanged = () => !!DOC && !!DOC.titleKey && DOC.kind !== "download" && DOC.kind !== "cloud" && DOC.titleKey !== fileBase();
 function showStatus() {
   const box = $("saveStatus"), s = $("saved"), btn = $("bSaveNow"); if (!box) return;
+  if (CLOUD) return cloudStatus(box, s, btn);
   const dirty = isDirty();
   let state, text, button = "";
   if (saving) { state = "saving"; text = "Saving…"; }
@@ -3877,16 +3968,18 @@ function showStatus() {
   box.title = DOC ? `Saved to ${HOST ? DOC.path : DOC.kind === "file" ? DOC.name + " on this computer" : "your downloads as " + DOC.name}${DOC.kind === "download" ? "" : ". Changes save automatically."}` : "Save once and every change after that is saved automatically.";
 }
 function loadDoc(project, doc) {
-  P = upgradeProject(project); DOC = doc; past = []; future = []; sel = null; touched = false;
+  const team = !!(doc && doc.kind === "cloud");
+  if (CLOUD && !team) detachCloud();   // something on this computer opened over a team programme
+  P = upgradeProject(project); DOC = doc; past = []; future = []; EXTERNAL.length = 0; sel = null; MULTI.clear(); touched = false;
   if (DOC && !DOC.titleKey) DOC.titleKey = fileBase();
   rememberProjectBrand();
-  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
-  rememberFile();
+  if (!team) { try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {} rememberFile(); }
   render(); renderSide(); showStatus();
 }
 
 /* Before New or Open replaces the current programme: make sure nothing is lost. */
 async function guardUnsaved(next) {
+  if (CLOUD) { await cloudFlush(); return next(); }   // a team programme is already saved (or waiting in this browser)
   while (saving) await new Promise(r => setTimeout(r, 100));
   if (DOC && DOC.kind !== "download" && isDirty()) { if (await saveDoc()) next(); return; }
   if ((!DOC && touched) || (DOC?.kind === "download" && isDirty())) {
@@ -3904,6 +3997,7 @@ function promptFirstSave(why) {
     { save: () => { saveDoc(); }, open: () => { $("bOpen").click(); } });
 }
 async function flushSave() {
+  if (CLOUD) return cloudFlush();
   while (saving) await new Promise(r => setTimeout(r, 100));
   return DOC && !isDirty() ? true : saveDoc();
 }
@@ -3919,7 +4013,7 @@ function conflictPrompt(theirs, { loadTheirs, saveMerged }) {
     <div class="body"><div class="chips"><span class="chip chg">${m.mine} of your changes</span><span class="chip new">${m.theirs} of theirs</span>${m.both ? `<span class="chip miss">${m.both} changed by both</span>` : ""}</div></div>
     <footer><button class="btn" data-act="theirs">Discard mine, load theirs</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="merge">Save combined version</button></footer>`, {
     theirs: () => { loadTheirs(JSON.parse(theirs.text)); toast("Loaded the latest version."); },
-    merge: () => { past.push(JSON.stringify(P)); future = []; P = m.project; saveMerged(JSON.stringify(JSON.parse(theirs.text))); render(); renderSide(); saveDoc(); },
+    merge: () => { past.push(undoEntry()); future = []; P = m.project; saveMerged(JSON.stringify(JSON.parse(theirs.text))); render(); renderSide(); saveDoc(); },
   });
 }
 
@@ -4038,6 +4132,571 @@ if (CHANNEL && CHANNEL.channel === "beta") {   // a small BETA tag by the name, 
   ROOT.querySelector(".brand b")?.after(tag);
 }
 
+/* =====================================================================
+   Team working (beta): sign-in, shared programmes on Supabase, live per-element sync, presence and holds,
+   history, and an offline outbox. Ported from StageMap's cloud.js; the tables are in supabase/poap_001.sql.
+   Every element (item, lane, type) is its own row, so two people only collide on the same element at the same
+   moment, and the later save wins. Security is in the database (row-level security); nothing here is secret.
+   ===================================================================== */
+const SUPABASE_URL = "https://frhtvxjpcesbuqkusuuu.supabase.co";
+const SUPABASE_KEY = "sb_publishable_p3h2ySkb0crmHXDYX5H-Kw_In7buCFC";   // publishable by design: access is enforced by sign-in and the database rules
+const cloudOn = () => !HOST && !!CHANNEL && CHANNEL.channel === "beta" && !!SUPABASE_URL && !!SUPABASE_KEY;
+const TBL = { projects: "poap_projects", members: "poap_members", invites: "poap_invites", entities: "poap_entities", history: "poap_entity_history" };
+const KINDS = { item: "items", lane: "lanes", style: "styles" }, COLLS = Object.values(KINDS);
+const ekey = (kind, o) => kind === "style" ? o.name : o.id;
+const PER_PERSON = ["view"];   // own zoom and view mode, never shared
+const settingsOf = p => Object.fromEntries(Object.entries(p).filter(([k]) => !COLLS.includes(k) && !PER_PERSON.includes(k)));
+const ckey = (kind, id) => kind + "|" + id;
+const cacheKey = id => `poap-cloud:${me ? me.id : "?"}:${id}`;   // per person, so people sharing a computer keep their own
+const CLIENT = uid() + uid();   // this window: its own saves come back over the live channel and are skipped
+const TEAM_COLORS = ["#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#14b8a6", "#eab308", "#ef4444", "#06b6d4"];
+const colorFor = s => TEAM_COLORS[[...(s || "")].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % TEAM_COLORS.length];
+const initials = email => (String(email || "?").split("@")[0].split(/[._-]+/).filter(Boolean).map(w => w[0]).join("").slice(0, 2) || "?").toUpperCase();
+const validEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || "").trim());
+let SB = null;
+async function supa() {
+  if (SB) return SB;
+  // the test page supplies an in-memory stand-in; otherwise supabase-js loads only now, when team working is used
+  let factory = window.POAP_SB_FACTORY; try { factory = factory || (window.parent !== window && window.parent.POAP_SB_FACTORY); } catch (e) {}
+  if (factory) SB = factory(window);
+  else SB = (await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm")).createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, detectSessionInUrl: true } });
+  return SB;
+}
+
+/* ---------- sign-in: email + password; first time or forgotten, an emailed 6-digit code then a new password ---------- */
+const needsPassword = () => !!me && !(me.user_metadata && me.user_metadata.has_password);
+async function startCloud() {
+  if (!cloudOn()) return false;
+  try { await supa(); } catch (e) { console.warn("Team working isn't available (offline?)", e); return false; }
+  const { data } = await SB.auth.getSession(); me = (data && data.session && data.session.user) || null;
+  SB.auth.onAuthStateChange((ev, session) => {
+    me = (session && session.user) || null; renderTeam();
+    if (ev === "SIGNED_IN") SB.rpc("poap_claim_invites").then(() => {}, () => {});
+    if (ev === "SIGNED_OUT") { if (CLOUD) detachCloud(); showStartScreen(); }
+  });
+  const bad = linkError(); if (bad) toast(`That sign-in link didn't work (${bad}). Use “Email me a code” instead: email apps sometimes use up the link by checking it.`, 9000);
+  renderTeam();
+  const last = localStorage.getItem("poap.lastCloud");
+  if (me && !needsPassword() && last) {
+    try { await openCloud(last); return true; } catch (e) { localStorage.removeItem("poap.lastCloud"); }
+  }
+  return false;
+}
+function linkError() {
+  const h = new URLSearchParams(location.hash.slice(1) || location.search.slice(1)), msg = h.get("error_description");
+  if (msg) history.replaceState(null, "", location.pathname);
+  return msg ? msg.replace(/\+/g, " ") : null;
+}
+async function sendCode(email) {
+  email = email.trim().toLowerCase();
+  if (!validEmail(email)) throw new Error("That doesn't look like an email address.");
+  const { error } = await SB.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+  if (!error) return;
+  const m = String(error.message || "") + " " + (error.status || "");
+  if (/access list|hook|403/i.test(m)) throw new Error(`${email} isn't on the access list for Martinus tools yet. Ask the project lead to add it.`);
+  if (/sending .*email/i.test(m)) throw new Error("The sign-in email couldn't be sent: the email settings (SMTP) in Supabase need checking. Your address is on the access list.");
+  const wait = m.match(/after (\d+) seconds/);
+  if (wait) throw new Error(`A code was sent to ${email} moments ago. Check your inbox and Junk. A new one can be sent in ${wait[1]} seconds.`);
+  if (/rate limit|too many/i.test(m)) throw new Error("Too many sign-in emails in a short time. Wait a few minutes and try again.");
+  throw error;
+}
+async function verifyCode(email, token) {
+  email = email.trim().toLowerCase(); token = token.replace(/\s+/g, "");
+  let { error } = await SB.auth.verifyOtp({ email, token, type: "email" });
+  if (error) ({ error } = await SB.auth.verifyOtp({ email, token, type: "signup" }));   // a brand-new account's first code
+  if (error) throw new Error(/expired|invalid/i.test(error.message) ? "That code is wrong or has expired. Get a new one and try again." : error.message);
+  const { data } = await SB.auth.getSession(); me = (data && data.session && data.session.user) || me;
+}
+async function signInPassword(email, password) {
+  const { data, error } = await SB.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+  if (error) throw new Error(/invalid login/i.test(error.message) ? "Email or password is wrong. First time here, or forgotten it? Leave the password empty to get a code by email." : error.message);
+  me = (data && data.user) || me;
+}
+async function setPassword(password) {
+  const { data, error } = await SB.auth.updateUser({ password, data: { has_password: true } });
+  if (error) throw new Error(/weak|short|characters/i.test(error.message) ? "Choose a longer password (at least 8 characters)." : error.message);
+  me = data.user;
+}
+async function signOut() {
+  if (CLOUD) { await cloudFlush(); detachCloud(); }
+  await SB.auth.signOut(); me = null; renderTeam();
+}
+/* The sign-in dialog. Errors show inside it, and Enter always does the obvious thing. */
+function openSignIn(then) {
+  let step = me && needsPassword() ? "password" : "start", email = me ? me.email : (localStorage.getItem("poap.email") || "");
+  const m = showModal(`<div class="signin"></div>`, {}), box = m.querySelector(".signin");
+  m.querySelector(".dlg").classList.add("narrow");
+  const done = () => {
+    m.remove(); localStorage.setItem("poap.email", me.email); renderTeam();
+    toast(`Signed in as ${me.email}.`); SB.rpc("poap_claim_invites").then(() => {}, () => {});
+    (then || showStartScreen)();
+  };
+  const paint = (err = "") => {
+    const errP = `<p class="sierr" role="alert">${esc(err)}</p>`;
+    if (step === "start") box.innerHTML = `<header><h3>Work with the team</h3><p>Sign in with your work email. First time here, or forgotten your password? Leave the password empty and you'll be emailed a code.</p></header>
+      <form class="body siform" novalidate>
+        <div class="f"><label for="siEmail">Email</label><input id="siEmail" type="email" autocomplete="username" placeholder="name@martinus.com.au" value="${esc(email)}"></div>
+        <div class="f"><label for="siPass">Password</label><input id="siPass" type="password" autocomplete="current-password" placeholder="Leave empty to get a code by email"></div>
+        ${errP}<div class="actions"><button type="button" class="btn" data-act="close">Cancel</button><span class="spacer" style="flex:1"></span><button type="submit" class="btn primary" id="siGo">Email me a code</button></div></form>`;
+    else if (step === "code") box.innerHTML = `<header><h3>Check your email</h3><p>Type the 6-digit code sent to <b>${esc(email)}</b>.</p></header>
+      <form class="body siform" novalidate>
+        <div class="f"><label for="siCode">Code</label><input id="siCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456"></div>
+        <p class="note">Not there after a minute? Look in Junk and in Outlook's quarantine, and mark it “Not junk, always trust sender” so the next one arrives straight away.</p>
+        ${errP}<div class="actions"><button type="button" class="btn" id="siBack">Back</button><button type="button" class="btn" id="siResend">Send a new code</button><span class="spacer" style="flex:1"></span><button type="submit" class="btn primary">Continue</button></div></form>`;
+    else box.innerHTML = `<header><h3>Choose a password</h3><p>From now on you sign in with your email and this password. At least 8 characters.</p></header>
+      <form class="body siform" novalidate>
+        <div class="f"><label for="siNew">New password</label><input id="siNew" type="password" autocomplete="new-password"></div>
+        <div class="f"><label for="siNew2">Type it again</label><input id="siNew2" type="password" autocomplete="new-password"></div>
+        ${errP}<div class="actions"><span class="spacer" style="flex:1"></span><button type="submit" class="btn primary">Save password</button></div></form>`;
+    const form = box.querySelector("form"), go = box.querySelector("#siGo"), pass = box.querySelector("#siPass");
+    if (pass) pass.oninput = () => { go.textContent = pass.value ? "Sign in" : "Email me a code"; };
+    if (box.querySelector("#siBack")) box.querySelector("#siBack").onclick = () => { step = "start"; paint(); };
+    if (box.querySelector("#siResend")) box.querySelector("#siResend").onclick = async () => { try { await sendCode(email); paint(); toast("A new code is on its way."); } catch (e) { paint(e.message); } };
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const busy = form.querySelector("[type=submit]"); busy.disabled = true;
+      try {
+        if (step === "start") {
+          email = box.querySelector("#siEmail").value.trim().toLowerCase();
+          if (pass.value) { await signInPassword(email, pass.value); return needsPassword() ? (step = "password", paint()) : done(); }
+          await sendCode(email); step = "code"; return paint();
+        }
+        if (step === "code") { await verifyCode(email, box.querySelector("#siCode").value); return needsPassword() ? (step = "password", paint()) : done(); }
+        const a = box.querySelector("#siNew").value, b = box.querySelector("#siNew2").value;
+        if (a.length < 8) throw new Error("Choose a longer password (at least 8 characters).");
+        if (a !== b) throw new Error("The two passwords aren't the same.");
+        await setPassword(a); done();
+      } catch (e) { paint(e.message || String(e)); }
+      finally { busy.disabled = false; }
+    };
+    setTimeout(() => (box.querySelector("input:not([value]), #siCode, #siNew") || box.querySelector("input"))?.focus(), 30);
+  };
+  paint();
+}
+
+/* ---------- team programmes ---------- */
+async function listProjects() {
+  if (!me) return [];
+  await SB.rpc("poap_claim_invites").then(() => {}, () => {});
+  const { data: mem, error } = await SB.from(TBL.members).select("project_id, role").eq("user_id", me.id);
+  if (error) throw error;
+  if (!mem.length) return [];
+  const { data: projs, error: e2 } = await SB.from(TBL.projects).select("id, name, updated_at").in("id", mem.map(m => m.project_id)).order("updated_at", { ascending: false });
+  if (e2) throw e2;
+  return projs.map(p => ({ ...p, role: (mem.find(m => m.project_id === p.id) || {}).role }));
+}
+const projectName = p => `${p.meta.number || ""} ${p.meta.title || ""}`.trim() || "Programme";
+function cloudSnapshot(p) {
+  const m = new Map();
+  for (const [kind, coll] of Object.entries(KINDS)) for (const o of p[coll] || []) { const id = ekey(kind, o); if (id) m.set(ckey(kind, id), JSON.stringify(o)); }
+  return m;
+}
+/* a stable order across browsers: lanes and types in their list order, items keep the stamp they were given */
+function stampOrder(p) {
+  for (const c of ["lanes", "styles"]) (p[c] || []).forEach((o, i) => { o._o = i + 1; });
+  let max = Math.max(0, ...p.items.map(o => o._o || 0));
+  for (const o of p.items) if (o._o == null) o._o = ++max;
+}
+/* every element needs its own key: a repeated ShapeID gets a new one (Excel updates match on ShapeID) */
+function uniqueIds(p) {
+  const seen = new Set(); let n = 0;
+  for (const it of p.items) { if (seen.has(it.id)) { it.id = nextId(p, it.style, it.id, seen); n++; } seen.add(it.id); }
+  if (n) toast(`${n} repeated ShapeID${n > 1 ? "s were" : " was"} renumbered so each activity can be saved on its own.`, 5000);
+}
+function assemble(row, ents) {
+  const p = { ...clone(row.settings || {}), items: [], lanes: [], styles: [] };
+  for (const e of ents) if (!e.deleted && KINDS[e.kind] && e.data) p[KINDS[e.kind]].push(e.data);
+  for (const c of COLLS) p[c].sort((a, b) => (a._o ?? 0) - (b._o ?? 0));
+  if (!p.format) p.format = "poap/2";
+  if (!p.meta) p.meta = blankProject().meta;
+  return p;
+}
+async function fetchAll(id) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await SB.from(TBL.entities).select("kind, id, data, deleted, updated_at").eq("project_id", id).range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+/* Open a team programme. Edits made here while offline (kept in this browser) are put back on top, unless a
+   teammate has saved that element since, in which case theirs wins. */
+async function openCloud(id) {
+  if (!me) throw new Error("Sign in first.");
+  if (CLOUD) { await cloudFlush(); detachCloud(); }
+  const [{ data: row, error }, ents, { data: mine, error: e2 }] = await Promise.all([
+    SB.from(TBL.projects).select("*").eq("id", id).single(), fetchAll(id),
+    SB.from(TBL.members).select("role").eq("project_id", id).eq("user_id", me.id).single()]);
+  if (error || e2) throw error || e2;
+  const server = upgradeProject(assemble(row, ents));
+  const last = cloudSnapshot(server), settingsJson = JSON.stringify(settingsOf(server));
+  const p = clone(server);
+  let cache = null; try { cache = JSON.parse(localStorage.getItem(cacheKey(id))); } catch (e) {}
+  let kept = 0, lost = 0;
+  if (cache && cache.pending && mine.role !== "viewer") {
+    const local = cloudSnapshot(cache.project), when = new Map(ents.map(e => [ckey(e.kind, e.id), Date.parse(e.updated_at) || 0]));
+    for (const [k, at] of Object.entries(cache.pending)) {
+      if (k === "~settings") { if ((Date.parse(row.updated_at) || 0) <= at) { Object.assign(p, settingsOf(cache.project)); kept++; } else lost++; continue; }
+      if ((when.get(k) || 0) > at) { lost++; continue; }   // a teammate saved it after you changed it offline
+      const kind = k.split("|")[0], eid = k.slice(kind.length + 1), list = p[KINDS[kind]], i = list.findIndex(o => ekey(kind, o) === eid), mineJson = local.get(k);
+      if (mineJson) { const o = JSON.parse(mineJson); if (i >= 0) list[i] = o; else list.push(o); } else if (i >= 0) list.splice(i, 1);
+      kept++;
+    }
+  }
+  p.view = (cache && cache.project && cache.project.view) || P.view || p.view;
+  loadDoc(p, { kind: "cloud", name: row.name, savedAt: row.updated_at });
+  CLOUD = { id, name: row.name, role: mine.role, last, settingsJson, pending: {}, state: "synced", savedAt: row.updated_at, others: [], timer: null, busy: false, again: false, channel: null };
+  localStorage.setItem("poap.lastCloud", id);
+  cloudCache();
+  // live changes, and who's here (per window, so your own second window counts for holds too)
+  const ch = SB.channel(`poap:${id}`, { config: { presence: { key: CLIENT } } });
+  ch.on("postgres_changes", { event: "*", schema: "public", table: TBL.entities, filter: `project_id=eq.${id}` }, ({ new: r }) => onRemote(r))
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: TBL.projects, filter: `id=eq.${id}` }, ({ new: r }) => onRemoteSettings(r))
+    .on("presence", { event: "sync" }, () => {
+      if (!CLOUD || CLOUD.channel !== ch) return;
+      CLOUD.others = Object.entries(ch.presenceState()).filter(([k]) => k !== CLIENT).map(([, v]) => v[0]).filter(Boolean);
+      renderTeam(); render();
+    })
+    .subscribe(status => { if (status === "SUBSCRIBED") track(true); });
+  CLOUD.channel = ch;
+  ROOT.querySelector(".startscreen")?.remove();
+  renderTeam(); showStatus(); render(); renderSide();
+  if (kept) { toast(`${kept} change${kept > 1 ? "s" : ""} you made offline ${kept > 1 ? "are" : "is"} being saved to the team now.${lost ? ` ${lost} ${lost > 1 ? "were" : "was"} changed by a teammate since, so theirs ${lost > 1 ? "are" : "is"} kept.` : ""}`, 7000); cloudSchedule(0); }
+  else if (lost) toast(`${lost} change${lost > 1 ? "s" : ""} you made offline ${lost > 1 ? "were" : "was"} replaced by newer ones from the team.`, 6000);
+}
+/* stop listening; what hasn't reached the server stays in this browser's copy for next time */
+function detachCloud() {
+  if (!CLOUD) return;
+  clearTimeout(CLOUD.timer); cloudCache();
+  try { if (CLOUD.channel) SB.removeChannel(CLOUD.channel); } catch (e) {}
+  CLOUD = null; localStorage.removeItem("poap.lastCloud");
+  DOC = null; renderTeam(); showStatus();
+}
+/* this browser's copy of the team programme, with what hasn't reached the server and since when (the outbox) */
+function cloudCache() {
+  const c = CLOUD; if (!c) return;
+  const now = cloudSnapshot(P), at = Date.now(), pending = {};
+  for (const [k, j] of now) if (c.last.get(k) !== j) pending[k] = c.pending[k] || at;
+  for (const k of c.last.keys()) if (!now.has(k)) pending[k] = c.pending[k] || at;
+  if (JSON.stringify(settingsOf(P)) !== c.settingsJson) pending["~settings"] = c.pending["~settings"] || at;
+  c.pending = pending;
+  try { localStorage.setItem(cacheKey(c.id), JSON.stringify({ project: P, pending, savedAt: c.savedAt })); } catch (e) {}
+}
+function cloudSchedule(delay = 250) {
+  if (!CLOUD) return;
+  clearTimeout(CLOUD.timer); CLOUD.timer = setTimeout(cloudPush, delay);
+}
+async function cloudFlush() {
+  if (!CLOUD) return true;
+  clearTimeout(CLOUD.timer);
+  await cloudPush();
+  while (CLOUD && (CLOUD.busy || CLOUD.again)) await new Promise(r => setTimeout(r, 50));
+  return !CLOUD || CLOUD.state === "synced";
+}
+/* who holds an item: a teammate who selected it before you did */
+function heldBy(id) {
+  if (!CLOUD) return null;
+  const mineAt = isSel(id) && MULTI.size <= 1 ? mySelAt : Infinity;
+  const o = CLOUD.others.find(x => x.sel && x.sel.type === "item" && x.sel.id === id && (x.selAt || 0) < mineAt);
+  return o ? o.email : null;
+}
+function mayEdit(kind, id) {
+  if (!CLOUD || CLOUD.role === "viewer") return CLOUD ? "role" : true;
+  if (kind === "item" && heldBy(id)) return "held";
+  return true;
+}
+async function cloudPush() {
+  const c = CLOUD; if (!c) return;
+  if (c.busy) { c.again = true; return; }
+  c.busy = true;
+  try {
+    uniqueIds(P); stampOrder(P);
+    const now = cloudSnapshot(P), ups = [], dels = [], denied = [], why = new Set();
+    const sort = (v, ok, list) => { if (ok === true) list.push(v); else { why.add(ok); denied.push(v); } };
+    for (const [k, j] of now) if (c.last.get(k) !== j) { const kind = k.split("|")[0]; sort({ k, kind, id: k.slice(kind.length + 1), json: j }, mayEdit(kind, k.slice(kind.length + 1)), ups); }
+    for (const [k, j] of c.last) if (!now.has(k)) { const kind = k.split("|")[0]; sort({ k, kind, id: k.slice(kind.length + 1), json: j }, mayEdit(kind, k.slice(kind.length + 1)), dels); }
+    if (denied.length) {   // put back what this person may not change right now
+      applyExternal(pp => {
+        for (const d of denied) {
+          const list = pp[KINDS[d.kind]], i = list.findIndex(o => ekey(d.kind, o) === d.id), was = c.last.get(d.k);
+          if (was && i >= 0) list[i] = JSON.parse(was); else if (was) list.push(JSON.parse(was)); else if (i >= 0) list.splice(i, 1);
+        }
+      });
+      const who = denied.map(d => heldBy(d.id)).find(Boolean);
+      toast(why.has("held") ? `${who || "A teammate"} is working on that activity right now, so your change to it was undone.` : "You have view-only access to this team programme.", 5000);
+    }
+    const sj = JSON.stringify(settingsOf(P)), settingsChanged = sj !== c.settingsJson;
+    if (!ups.length && !dels.length && !settingsChanged) { if (c.state !== "offline") c.state = "synced"; return; }
+    c.state = "syncing"; showStatus();
+    const rows = [...ups.map(v => ({ project_id: c.id, kind: v.kind, id: v.id, data: JSON.parse(v.json), deleted: false, client_id: CLIENT })),
+      ...dels.map(v => ({ project_id: c.id, kind: v.kind, id: v.id, data: JSON.parse(v.json), deleted: true, client_id: CLIENT }))];
+    for (let i = 0; i < rows.length; i += 300) {
+      const { error } = await SB.from(TBL.entities).upsert(rows.slice(i, i + 300), { onConflict: "project_id,kind,id" });
+      if (error) throw error;
+    }
+    for (const v of ups) c.last.set(v.k, v.json);
+    for (const v of dels) c.last.delete(v.k);
+    if (settingsChanged) {
+      if (c.role === "viewer") applyExternal(pp => Object.assign(pp, JSON.parse(c.settingsJson)));
+      else { const { error } = await SB.from(TBL.projects).update({ name: projectName(P), settings: JSON.parse(sj) }).eq("id", c.id); if (error) throw error; c.settingsJson = sj; c.name = projectName(P); }
+    }
+    c.state = "synced"; c.savedAt = new Date().toISOString();
+  } catch (err) {
+    console.warn("PoaP team save failed; will retry", err);
+    c.state = "offline"; setTimeout(() => cloudSchedule(0), 5000);
+  } finally {
+    c.busy = false;
+    if (CLOUD === c) { cloudCache(); showStatus(); }
+    if (c.again) { c.again = false; cloudSchedule(0); }
+  }
+}
+/* a teammate's (or another window's) change; this window's own writes echo back too and are skipped */
+function onRemote(row) {
+  const c = CLOUD; if (!c || !row || row.project_id !== c.id || row.client_id === CLIENT || !KINDS[row.kind]) return;
+  const k = ckey(row.kind, row.id), coll = KINDS[row.kind];
+  if (row.deleted || !row.data) c.last.delete(k); else c.last.set(k, JSON.stringify(row.data));
+  const json = row.data ? JSON.stringify(row.data) : null;
+  applyExternal(p => {   // a fresh copy each time: the patch is replayed over anything undo restores
+    const list = p[coll], i = list.findIndex(o => ekey(row.kind, o) === row.id), data = json && JSON.parse(json);
+    if (row.deleted || !data) { if (i >= 0) list.splice(i, 1); return; }
+    if (i >= 0) list[i] = data; else list.push(data);
+    // lanes and types show in their order stamp (a teammate may have moved one); items keep theirs too
+    list.sort((a, b) => (a._o ?? 0) - (b._o ?? 0));
+  });
+}
+function onRemoteSettings(row) {
+  const c = CLOUD; if (!c || !row || row.id !== c.id) return;
+  const sj = JSON.stringify(row.settings || {});
+  if (sj === c.settingsJson) return;
+  c.settingsJson = sj; c.name = row.name;
+  applyExternal(p => Object.assign(p, clone(row.settings || {})));
+}
+/* turn the programme open here into a team programme (you become its owner) */
+async function shareProject() {
+  if (!me) return openSignIn(() => shareProject());
+  if (CLOUD) return toast("This is already a team programme.");
+  const id = uid() + uid(), src = clone(P);
+  uniqueIds(src); stampOrder(src);
+  toast("Creating the team programme…", 60000);
+  const { error } = await SB.from(TBL.projects).insert({ id, name: projectName(src), settings: settingsOf(src) });
+  if (error) { toast("Couldn't create the team programme: " + error.message, 7000); return; }
+  const rows = [];
+  for (const [kind, coll] of Object.entries(KINDS)) for (const o of src[coll] || []) rows.push({ project_id: id, kind, id: ekey(kind, o), data: o, deleted: false, client_id: CLIENT });
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error: e } = await SB.from(TBL.entities).upsert(rows.slice(i, i + 300), { onConflict: "project_id,kind,id" });
+    if (e) { toast("Couldn't upload the programme: " + e.message + ". Try Share again.", 8000); return; }
+    toast(`Uploading… ${Math.min(i + 300, rows.length)} of ${rows.length}`, 60000);
+  }
+  await openCloud(id);
+  toast(`“${projectName(src)}” is a team programme now. Invite people from Team ▾ › People.`, 7000);
+  return id;
+}
+/* ---------- people: members and email invites (owners manage them) ---------- */
+async function openPeople() {
+  if (!CLOUD) return;
+  const owner = CLOUD.role === "owner", id = CLOUD.id;
+  const [{ data: members, error }, inv] = await Promise.all([
+    SB.from(TBL.members).select("user_id, email, role").eq("project_id", id).order("added_at"),
+    SB.from(TBL.invites).select("email, role").eq("project_id", id).order("created_at")]);
+  if (error) return toast("Couldn't load the people: " + error.message, 6000);
+  const invites = inv.error ? [] : inv.data;
+  const roleSel = (r, attr) => `<select ${attr} ${owner ? "" : "disabled"} aria-label="Role">${[["owner", "Owner"], ["editor", "Editor"], ["viewer", "Viewer"]].map(([v, n]) => `<option value="${v}" ${v === r ? "selected" : ""}>${n}</option>`).join("")}</select>`;
+  const m = showModal(`<header><h3>People in “${esc(CLOUD.name)}”</h3><p>Owners invite people and set roles; editors change the programme; viewers look. Anyone invited must be on the access list for Martinus tools.</p></header>
+    <div class="body"><table class="diff people"><tbody>
+      ${members.map(x => `<tr><td><span class="avatar" style="background:${colorFor(x.email)}">${esc(initials(x.email))}</span> ${esc(x.email)}${me && x.user_id === me.id ? ` <span class="note">(you)</span>` : ""}</td><td>${roleSel(x.role, `data-member="${esc(x.user_id)}"`)}</td><td>${owner && !(me && x.user_id === me.id) ? `<button class="btn" data-remove="${esc(x.user_id)}">Remove</button>` : ""}</td></tr>`).join("")}
+      ${invites.map(x => `<tr><td>${esc(x.email)} <span class="note">invited, not signed in yet</span></td><td>${esc(x.role)}</td><td>${owner ? `<button class="btn" data-revoke="${esc(x.email)}">Cancel invite</button>` : ""}</td></tr>`).join("")}
+    </tbody></table>
+    ${owner ? `<form class="invite" id="invForm"><div class="f" style="flex:1"><label for="invEmail">Invite by email</label><input id="invEmail" type="email" placeholder="name@martinus.com.au"></div>${roleSel("editor", `id="invRole"`)}<button class="btn primary" type="submit">Invite</button></form><p class="sierr" id="invErr" role="alert"></p>` : ""}</div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Close</button></footer>`, {});
+  const again = () => { m.remove(); openPeople(); };
+  m.querySelectorAll("[data-member]").forEach(s => s.onchange = async () => { const { error: e } = await SB.from(TBL.members).update({ role: s.value }).eq("project_id", id).eq("user_id", s.dataset.member); if (e) toast(e.message, 5000); else { toast("Role changed."); again(); } });
+  m.querySelectorAll("[data-remove]").forEach(b => b.onclick = async () => { const { error: e } = await SB.from(TBL.members).delete().eq("project_id", id).eq("user_id", b.dataset.remove); if (e) toast(e.message, 5000); else again(); });
+  m.querySelectorAll("[data-revoke]").forEach(b => b.onclick = async () => { const { error: e } = await SB.from(TBL.invites).delete().eq("project_id", id).eq("email", b.dataset.revoke); if (e) toast(e.message, 5000); else again(); });
+  const f = m.querySelector("#invForm");
+  if (f) f.onsubmit = async ev => {
+    ev.preventDefault();
+    const email = m.querySelector("#invEmail").value.trim().toLowerCase();
+    if (!validEmail(email)) { m.querySelector("#invErr").textContent = "That doesn't look like an email address."; return; }
+    const { error: e } = await SB.from(TBL.invites).upsert({ project_id: id, email, role: m.querySelector("#invRole").value });
+    if (e) { m.querySelector("#invErr").textContent = e.message; return; }
+    toast(`Invited ${email}. They'll find it under Team programmes when they sign in.`, 6000); again();
+  };
+}
+/* ---------- presence: who's here and what they've selected (the first to select an activity holds it) ---------- */
+let mySelAt = 0, lastSelKey2 = "", lastTrack = "", trackTimer = null;
+function noteSelection() {
+  const k = MULTI.size > 1 ? "multi" : sel ? sel.type + ":" + sel.id : "";
+  if (k !== lastSelKey2) { lastSelKey2 = k; mySelAt = Date.now(); }
+  if (CLOUD) { clearTimeout(trackTimer); trackTimer = setTimeout(() => track(), 150); }
+}
+function track(force) {
+  const c = CLOUD; if (!c || !c.channel || !me) return;
+  const s = MULTI.size > 1 ? null : sel && sel.type === "item" ? { type: "item", id: sel.id } : null;
+  const payload = { email: me.email, color: colorFor(me.email), sel: s, selAt: s ? mySelAt : null };
+  const j = JSON.stringify(payload);
+  if (j === lastTrack && !force) return;
+  lastTrack = j; c.channel.track(payload);
+}
+/* teammates' selections, outlined in their colour with their initials */
+function drawPresence(svg, L) {
+  if (!CLOUD || !CLOUD.others.length) return;
+  const g = el("g", { "pointer-events": "none" }, svg);
+  for (const o of CLOUD.others) {
+    const it = o.sel && o.sel.type === "item" && P.items.find(i => i.id === o.sel.id); if (!it || hiddenByCollapse(P, it)) continue;
+    const ln = L.lanes.find(x => x.l.id === it.lane); if (!ln) continue;
+    const cy = ln.y + G.pad + ln.toView(it.row) * G.rowH + G.rowH / 2, ms = isMs(P, it.style);
+    const x1 = ms ? L.x(it.start) + L.ppd / 2 - G.ms : L.x(it.start), x2 = ms ? x1 + G.ms * 2 : L.x(it.end) + L.ppd, h = ms ? G.ms : G.barH / 2;
+    el("rect", { x: x1 - 3, y: cy - h - 3, width: x2 - x1 + 6, height: h * 2 + 6, rx: 3, fill: "none", stroke: o.color, "stroke-width": 2 }, g);
+    el("rect", { x: x1 - 3, y: cy - h - 13, width: 18, height: 11, rx: 2, fill: o.color }, g);
+    el("text", { x: x1 + 6, y: cy - h - 4.6, "text-anchor": "middle", fill: "#FFFFFF", "font-size": 7.5, "font-weight": 700, "font-family": "Montserrat, Arial, sans-serif" }, g, initials(o.email));
+  }
+}
+/* ---------- history: every saved version of an activity, and putting one back ---------- */
+async function loadHistory(id, box) {
+  if (!CLOUD || !box) return;
+  const { data, error } = await SB.from(TBL.history).select("seq, data, deleted, changed_at, changed_by_email").eq("project_id", CLOUD.id).eq("kind", "item").eq("id", id).order("seq", { ascending: false }).limit(30);
+  if (!box.isConnected) return;
+  if (error) { box.innerHTML = `<p class="note">History isn't available: ${esc(error.message)}</p>`; return; }
+  if (!data.length) { box.innerHTML = `<p class="note">No saved versions yet.</p>`; return; }
+  const what = d => d ? `${esc(d.name || "")}<br><span class="note">${fmt(d.start)}${d.end && d.end !== d.start ? ` – ${fmt(d.end)}` : ""}${d.pct ? ` · ${d.pct}%` : ""}</span>` : "";
+  box.innerHTML = `<ol class="hist">${data.map((h, i) => `<li><div><b>${esc(timeAgo(h.changed_at))}</b> · ${esc(h.changed_by_email || "someone")}${i === 0 ? ` <span class="note">(current)</span>` : ""}${h.deleted ? ` <span class="note">(deleted)</span>` : ""}</div><div>${what(h.data)}</div>${i > 0 && h.data && !h.deleted ? `<button class="btn" data-hist="${i}">Put this version back</button>` : ""}</li>`).join("")}</ol>`;
+  box.querySelectorAll("[data-hist]").forEach(b => b.onclick = () => {
+    const v = data[+b.dataset.hist].data;
+    commit(p => { const i = p.items.findIndex(x => x.id === id); if (i >= 0) p.items[i] = clone(v); else p.items.push(clone(v)); }, true);
+    toast("That version is back, as a new change (undo takes it away again).");
+  });
+}
+/* ---------- the save status pill, the team area in the top bar and its menu ---------- */
+function cloudStatus(box, s, btn) {
+  const c = CLOUD, st = c.role === "viewer" ? ["saved", "View only · team programme"]
+    : c.state === "syncing" ? ["saving", "Saving to the team…"]
+    : c.state === "offline" ? ["pending", "Offline: changes kept here, sending when back online"]
+    : ["saved", `Saved to the team${c.savedAt ? " " + clock(c.savedAt) : ""}`];
+  box.dataset.state = st[0]; s.textContent = st[1]; btn.hidden = true;
+  box.title = `Team programme “${c.name}” · you're ${c.role === "owner" ? "an owner" : "an " + c.role}. Every change is saved for the team as you make it.`;
+}
+function renderTeam() {
+  const grp = $("teamGrp"); if (!grp) return;
+  grp.hidden = !cloudOn();
+  const people = $("teamPeople");
+  const others = CLOUD ? [...new Map(CLOUD.others.map(o => [o.email, o])).values()] : [];
+  people.innerHTML = (CLOUD && me ? [{ email: me.email, color: colorFor(me.email), you: true }, ...others] : []).map(o => {
+    const it = o.sel && P.items.find(i => i.id === o.sel.id);
+    return `<span class="avatar" style="background:${o.color}" title="${esc(o.email)}${o.you ? " (you)" : it ? ` · on ${esc(it.name || it.id)}` : ""}">${esc(initials(o.email))}</span>`;
+  }).join("");
+  $("bTeam").textContent = me ? "Team ▾" : "Sign in";
+  $("bTeam").title = me ? `Signed in as ${me.email}` : "Sign in to work on programmes with your team";
+}
+function openTeamMenu() {
+  if (!me) return openSignIn();
+  const menu = $("mTeam"), owner = CLOUD && CLOUD.role === "owner";
+  const item = (id, title, note) => `<button type="button" role="menuitem" data-team="${id}"><b>${title}</b><span class="note">${note}</span></button>`;
+  menu.innerHTML = [
+    CLOUD ? item("people", owner ? "People and invites…" : "People…", owner ? "Invite by email, set who can edit" : "Who's in this programme") : item("share", "Share with the team…", "Make this a team programme you can edit together, live"),
+    item("list", "Team programmes…", "Open another one, or start on this computer"),
+    CLOUD ? item("copy", "Save a copy to a file…", "A .poap.json of this programme, as it is now") : "",
+    CLOUD ? item("leave", "Close this team programme", "Back to the start screen") : "",
+    "<hr>", item("tour", "Take the tour", "Where everything is, in a minute"),
+    item("signout", "Sign out", me.email),
+  ].join("");
+  menu.hidden = false; $("bTeam").setAttribute("aria-expanded", "true");
+  menu.querySelector("button").focus();
+}
+$("bTeam").onclick = e => { e.stopPropagation(); if (!$("mTeam").hidden) { $("mTeam").hidden = true; return; } openTeamMenu(); };
+document.addEventListener("click", e => { const m = $("mTeam"); if (m && !m.hidden && !m.contains(e.target)) { m.hidden = true; $("bTeam").setAttribute("aria-expanded", "false"); } });
+$("mTeam").onclick = async e => {
+  const b = e.target.closest("[data-team]"); if (!b) return;
+  $("mTeam").hidden = true;
+  const a = b.dataset.team;
+  if (a === "share") return shareProject();
+  if (a === "people") return openPeople();
+  if (a === "list") { await cloudFlush(); return showStartScreen(); }
+  if (a === "copy") { download(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" }), fileBase() + ".poap.json"); return; }
+  if (a === "leave") { await cloudFlush(); detachCloud(); return showStartScreen(); }
+  if (a === "tour") return startPoapTour();
+  if (a === "signout") { await signOut(); toast("Signed out."); return showStartScreen(); }
+};
+
+/* ---------- guided tour (from reference/tour.js: plain DOM; setTimeout, not rAF, to measure) ---------- */
+function startTour(stops, { onEnd } = {}) {
+  endTour();
+  let i = 0, timer = 0;
+  const root = document.createElement("div"); root.className = "tour";
+  root.innerHTML = '<div class="tour-dim"></div><div class="tour-spot" hidden></div><div class="tour-card" role="dialog" aria-modal="true" aria-label="Tour"></div>';
+  ROOT.appendChild(root);
+  const dim = root.querySelector(".tour-dim"), spot = root.querySelector(".tour-spot"), card = root.querySelector(".tour-card");
+  function show() {
+    const stop = stops[i];
+    try { stop.before && stop.before(); } catch (e) { console.warn("tour: before() failed", e); }
+    const last = i === stops.length - 1;
+    card.innerHTML = `<div class="tour-count">${i + 1} of ${stops.length}</div><h3>${esc(stop.title)}</h3><p>${esc(stop.text)}</p>
+      <div class="tour-dots">${stops.map((_, k) => `<span class="${k === i ? "on" : k < i ? "done" : ""}"></span>`).join("")}</div>
+      <div class="tour-btns"><button type="button" data-t="end">${last ? "Close" : "Skip tour"}</button><span style="flex:1"></span>${i > 0 ? '<button type="button" data-t="back">Back</button>' : ""}<button type="button" class="primary" data-t="next">${last ? "Finish" : i === 0 ? "Start the tour" : "Next"}</button></div>`;
+    place(null); clearTimeout(timer);
+    let tries = 0;
+    const measure = () => {
+      const target = stop.sel && document.querySelector(stop.sel);
+      if (target && target.getClientRects().length) {
+        target.scrollIntoView && target.scrollIntoView({ block: target.offsetHeight > innerHeight * 0.6 ? "start" : "nearest" });
+        const r = target.getBoundingClientRect(), top = Math.max(r.top, 8), bottom = Math.min(r.bottom, innerHeight - 8);
+        place({ x: r.left, y: top, w: r.width, h: Math.max(20, bottom - top) });
+      } else if (stop.sel && tries++ < 20) timer = setTimeout(measure, 40);
+    };
+    timer = setTimeout(measure, 30);
+    card.querySelector('[data-t="next"]').focus();
+  }
+  function place(rect) {
+    const W = Math.min(340, innerWidth - 24), pad = 8, vw = innerWidth, vh = innerHeight;
+    card.style.width = W + "px";
+    const h = card.offsetHeight || 220;
+    let left = (vw - W) / 2, top = vh / 2 - h / 2;
+    if (rect) {
+      spot.hidden = false; dim.hidden = true;
+      Object.assign(spot.style, { left: rect.x - pad + "px", top: rect.y - pad + "px", width: rect.w + pad * 2 + "px", height: rect.h + pad * 2 + "px" });
+      const below = rect.y + rect.h + pad + 12, right = rect.x + rect.w + pad + 12;
+      if (rect.h > vh * 0.45 && right + W < vw) { left = right; top = Math.max(12, Math.min(rect.y, vh - h - 12)); }
+      else if (rect.h > vh * 0.45 && rect.x - pad - 12 - W > 0) { left = rect.x - pad - 12 - W; top = Math.max(12, Math.min(rect.y, vh - h - 12)); }
+      else if (below + h < vh) { left = rect.x; top = below; }
+      else { left = rect.x; top = Math.max(12, rect.y - pad - 12 - h); }
+      left = Math.max(12, Math.min(left, vw - W - 12));
+    } else { spot.hidden = true; dim.hidden = false; }
+    Object.assign(card.style, { left: left + "px", top: top + "px" });
+  }
+  const go = d => { const n = i + d; if (n >= stops.length) return finish(); if (n >= 0) { i = n; show(); } };
+  const finish = () => { endTour(); onEnd && onEnd(); };
+  card.addEventListener("click", e => { const t = e.target.closest("[data-t]")?.dataset.t; if (t === "next") go(1); else if (t === "back") go(-1); else if (t === "end") finish(); });
+  const onKey = e => {
+    if (e.key === "ArrowRight" || e.key === "Enter") go(1); else if (e.key === "ArrowLeft") go(-1); else if (e.key === "Escape") finish(); else return;
+    e.preventDefault(); e.stopImmediatePropagation();   // keep the app's own shortcuts out of it
+  };
+  const onResize = () => show();
+  window.addEventListener("keydown", onKey, true); window.addEventListener("resize", onResize);
+  root._cleanup = () => { clearTimeout(timer); window.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", onResize); };
+  show();
+}
+function endTour() { ROOT.querySelectorAll(".tour").forEach(t => { t._cleanup && t._cleanup(); t.remove(); }); }
+function startPoapTour(opts = {}) {
+  ROOT.querySelectorAll(".startscreen, .modal").forEach(x => x.remove());
+  const prog = tab => () => { sel = null; MULTI.clear(); SIDE_TAB.prog = tab; sideTop = tab; render(); renderSide(); };
+  const stops = [
+    { sel: null, title: "Welcome to PoaP Builder", text: "It draws a Program of Activities and Possessions: lanes, bars, milestones and curtains on one sheet, exactly as it prints. This tour shows where everything is. Use the arrow keys or the buttons." },
+    { sel: "[data-tour=doc]", title: "Your programme", text: "Its name and where it's saved. After the first save every change saves itself; a team programme says “Saved to the team”. File, Excel, P6 and PDF are on the right." },
+    { sel: "[data-tour=tools]", title: "Drawing tools", text: "Add lanes, bars, milestones and curtains, undo and redo, and change the view. Logic turns links and the critical path on; Show switches between planned and actual." },
+    { sel: "[data-tour=sheet]", title: "The sheet", text: "Drag a bar to move it, drag its ends to change dates, double-click a lane to add one. Shift-click or drag a box to select several. Click the title block, timeline or legend to edit them." },
+    { sel: "[data-tour=side]", title: "The side panel", text: "Settings for the whole programme in tabs: Sheet, Progress, Logic and Types. Click anything on the sheet and it gets its own tab in front.", before: prog("sheet") },
+    { sel: "#side > [data-pane=progress]", title: "Progress and baselines", text: "Set a data date, record progress, and start next month's update with this one as its planned baseline.", before: prog("progress") },
+    { sel: "[data-tour=data]", title: "Excel and P6", text: "Export to Excel and update from it, or summarise a P6 programme from an XER export. Each update shows every change before it's applied." },
+    { sel: "[data-tour=pdf]", title: "Print", text: "Export PDF gives the sheet exactly as you see it, on the page size chosen in Sheet." },
+    ...(cloudOn() ? [{ sel: "[data-tour=team]", title: "Working with the team", text: "Sign in, then share a programme to work on it together, live. You'll see who's in it, and an activity someone has selected is held for them. Every change is kept in its history." }] : []),
+    { sel: "[data-tour=help]", title: "Help", text: "Press ? any time for the shortcuts. That's it: have a go." },
+  ];
+  startTour(stops, { onEnd: () => { if (opts.fromStart && !CLOUD) showStartScreen(); } });
+}
+// stable hooks for the tour (ids rather than structural selectors)
+[["saveStatus", "doc", ".bar"], ["bLane", "tools", ".bar"], ["paper", "sheet"], ["side", "side"], ["bExcel", "data", ".menuwrap"], ["bPdf", "pdf"], ["bHelp", "help"], ["teamGrp", "team"]]
+  .forEach(([id, name, up]) => { const e = $(id); if (e) (up ? e.closest(up) : e).dataset.tour = name; });
+
 /* ---------- start screen: what to work on, over a blurred view of the sheet ---------- */
 const START_ICONS = {
   new: '<path d="M12 5v14M5 12h14"/>',
@@ -4045,6 +4704,7 @@ const START_ICONS = {
   continue: '<path d="M8 5l11 7-11 7z"/>',
   excel: '<path d="M4 4h16v16H4zM4 10h16M10 4v16"/>',
   example: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+  team: '<circle cx="9" cy="9" r="3.2"/><circle cx="16.5" cy="10" r="2.6"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5M14 14.4c2.6-.6 5.4.9 6 4.6"/>',
 };
 async function showStartScreen() {
   ROOT.querySelectorAll(".startscreen").forEach(s => s.remove());
@@ -4058,6 +4718,19 @@ async function showStartScreen() {
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${START_ICONS[icon]}</svg>
       <span><b>${title}</b><span class="note">${sub}</span></span></button>`;
   const where = HOST ? `the “${esc(HOST.libraryTitle)}” library` : canPickFiles ? "a file you choose (e.g. a OneDrive or SharePoint folder)" : "your downloads";
+  // team working (beta): signed in, your team programmes; otherwise an invitation to sign in. The rest is "this computer".
+  let team = "";
+  if (cloudOn()) {
+    if (me && !needsPassword()) {
+      let projs = null; try { projs = await listProjects(); } catch (e) { projs = null; }
+      team = `<div class="teamhead"><span>Signed in as <b>${esc(me.email)}</b></span><button type="button" class="linkbtn" data-start="signout">Sign out</button></div>
+        <div class="choices">${projs === null ? `<p class="note">Couldn't load your team programmes (offline?). You can still work on this computer.</p>`
+          : projs.length ? projs.map((p, k) => choice("cloud:" + p.id, "team", `Open “${esc(p.name)}”`, `Team programme · you're ${p.role === "owner" ? "an owner" : "an " + esc(p.role)} · changed ${esc(timeAgo(p.updated_at))}`, k === 0)).join("")
+          : `<p class="note">No team programmes yet. Open or build one below, then use Team ▾ › Share with the team.</p>`}</div>
+        <p class="startsub">On this computer</p>`;
+    } else team = `<div class="choices">${choice("signin", "team", "Work with the team", "Sign in to open shared programmes and work on them together, live.", true)}</div>
+        <p class="startsub">Or on this computer, as a guest</p>`;
+  }
   const s = document.createElement("div");
   s.className = "startscreen"; s.setAttribute("role", "dialog"); s.setAttribute("aria-modal", "true"); s.setAttribute("aria-label", "Start");
   s.innerHTML = `<div class="startcard">
@@ -4065,16 +4738,18 @@ async function showStartScreen() {
       <div><h2>PoaP Builder</h2><p class="note">Program of Activities and Possessions, ready to print on A3.</p></div>
       <button type="button" class="brandpick" data-start="brand" title="Change branding"><span class="logo"><img src="${brandLogoSrc()}" alt=""></span><span class="bname">${esc(currentBrand().name)}</span><span class="caret" aria-hidden="true">▾</span></button>
     </div>
+    ${team}
     <div class="choices">
-      ${last ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, true) : ""}
-      ${draft ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", true) : ""}
-      ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft)}
+      ${last ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, !team) : ""}
+      ${draft ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", !team) : ""}
+      ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft && !team)}
       ${choice("open", "open", "Open a saved programme…", HOST ? `From ${esc(HOST.libraryTitle)} or your computer.` : "A .poap.json file.")}
       ${choice("p6", "excel", "Summarise a P6 programme (XER)…", "Pick what each part of the WBS shows, starting from a suggestion.")}
       ${choice("excel", "excel", "Start from an Excel workbook…", "A programme exported from PoaP Builder, or the older Visio workbook.")}
       ${choice("example", "example", "Explore the example", "A sample programme to try things out. Nothing is saved until you choose to.")}
     </div>
     ${!HOST && !canPickFiles ? `<p class="note warnnote">This browser can't save to a file automatically; Save downloads a copy instead. Use Microsoft Edge or Google Chrome for auto-save.</p>` : ""}
+    ${cloudOn() ? `<p class="tourlink"><button type="button" class="linkbtn" data-start="tour">New here? Take the tour</button></p>` : ""}
     ${channelCard()}
   </div>`;
   ROOT.appendChild(s);
@@ -4084,6 +4759,10 @@ async function showStartScreen() {
   s.querySelectorAll("[data-start]").forEach(b => b.onclick = () => {
     const a = b.dataset.start;
     if (a === "brand") return openBrandMenu();
+    if (a === "signin") return openSignIn();
+    if (a === "signout") return signOut().then(() => { toast("Signed out."); showStartScreen(); });
+    if (a === "tour") return startPoapTour({ fromStart: true });
+    if (a.startsWith("cloud:")) { close(); return openCloud(a.slice(6)).catch(err => { toast("Couldn't open the team programme: " + (err.message || err), 7000); showStartScreen(); }); }
     close();
     if (a === "continue") return lastKind === "library" ? reconnectLibrary(last) : reconnectFile(last);
     if (a === "draft") return toast("This programme isn't saved yet. Press Save to keep it in a file.", 5000);
@@ -4215,6 +4894,9 @@ if (HOST) {
 document.fonts?.ready.then(() => { render(); });
 render(); renderSide(); showStatus();
 showStartScreen();
+// team working (beta): find out who's signed in, reopen the team programme they were in, or refresh the start screen
+startCloud().then(reopened => { if (!reopened && ROOT.querySelector(".startscreen") && me) showStartScreen(); }, e => console.warn(e));
+window.POAP_READY = true;   // the whole script ran (the tests check this)
 </script>
 </body>
 </html>

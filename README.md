@@ -1,3 +1,32 @@
+# PoaP Builder: team beta
+
+**This is the beta** (https://helderpaulofernandes.github.io/poap-builder-beta/), built from the `team-beta` branch. The standard version (https://helderpaulofernandes.github.io/poap-builder/, branch `main`) stays as it is until the beta is approved. `channel.js` says which version is which.
+
+## Team working
+
+- **Sign in** with a work email: the first time (or a forgotten password) leave the password empty, type the 6-digit code that's emailed, then choose a password. After that it's email and password.
+- **Share with the team** (Team ▾) turns the programme you have open into a team programme: you become its owner and invite people by email as editors or viewers.
+- **Live:** everyone's changes appear as they're made. Each activity, lane and type is saved on its own, so two people only collide if they change the same thing at the same moment (the later save wins).
+- **Holds:** an activity someone has selected is outlined in their colour and held for them; your change to it is undone with a note.
+- **Undo** only takes back your own changes, never a teammate's.
+- **History:** select an activity › History to see every saved version, who made it and when, and put one back.
+- **Offline:** changes are kept in the browser and sent when the connection returns, even if the window was closed in between (unless a teammate changed the same activity later; then theirs is kept).
+- **Guest:** everything else works without signing in, saved on this computer as before.
+- **Tour:** “New here? Take the tour” on the start screen, the Team menu or the help (?) window.
+
+### One-off setup in Supabase (the same project as StageMap)
+
+1. **SQL Editor** → New query → paste `supabase/poap_001.sql` → Run. It only adds `poap_` tables, functions and rules; StageMap's are untouched. Check with `select table_name from information_schema.tables where table_name like 'poap_%';` (five tables).
+2. **Authentication → URL Configuration → Redirect URLs:** add `https://helderpaulofernandes.github.io/poap-builder-beta/` (and the standard URL if team working is ever merged there).
+3. **Email templates** (Magic Link and Confirm signup) are shared with StageMap: reword them to mention both apps, e.g. “Your Martinus tools sign-in code”, keeping `{{ .Token }}`.
+4. **Access list:** people sign in only if their email is in `allowed_emails` (shared with StageMap): `insert into allowed_emails(email) values ('name@martinus.com.au');`
+
+## Tests
+
+Open `tests.html` next to `index.html`. On the beta it also runs the team tests against an in-memory stand-in for Supabase (two or three app windows signed in as different people), so no real accounts or network are used.
+
+---
+
 # PoaP Builder
 
 A browser tool for drawing a **Program of Activities and Possessions** (PoaP): a one-page summary construction program.

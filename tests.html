@@ -19,6 +19,7 @@
   li pre { grid-column: 2 / -1; margin: 4px 0 0; white-space: pre-wrap; font-size: 12px; color: var(--bad); }
   button { font: inherit; padding: 5px 12px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; margin-bottom: 12px; }
   iframe { position: absolute; left: -10000px; top: 0; width: 1400px; height: 900px; border: 0; }
+  iframe.teamframe { top: 1000px; }
 </style>
 </head>
 <body>
@@ -71,6 +72,9 @@ const HELPERS = () => {
 };
 
 const TESTS = {
+  "Starts on a first visit (nothing saved yet)": () => {
+    T.ok(window.POAP_READY === true, "the app stopped part-way through starting");
+  },
   "Date helpers": () => {
     T.eq(addDays("2027-01-30", 3), "2027-02-02");
     T.eq(fromDays(toDays("2028-02-29")), "2028-02-29");
@@ -272,12 +276,291 @@ const TESTS = {
   },
 };
 
+/* ---------------------------------------------------------------------------------------------
+   Team working (beta only): an in-memory stand-in for Supabase with the parts PoaP uses (sign-in, the
+   poap_ tables and their rules, the triggers it relies on, live changes and presence), shared by several
+   app windows signed in as different people. No network, no real accounts.
+   --------------------------------------------------------------------------------------------- */
+function makeMockSupabase() {
+  const db = { poap_projects: [], poap_members: [], poap_invites: [], poap_entities: [], poap_entity_history: [] };
+  const users = new Map(), channels = new Set(), presence = {}, offline = new Set();
+  const mock = { db, users, offline, codes: {}, clients: [] };
+  const copy = o => JSON.parse(JSON.stringify(o));
+  const now = () => new Date(Date.now() + (mock.clock || 0)).toISOString();
+  mock.user = (email, pw) => { if (!users.has(email)) users.set(email, { id: "u-" + email, email, password: pw || "secret123", user_metadata: { has_password: pw !== null } }); return users.get(email); };
+  const syncPresence = name => { for (const ch of channels) if (ch.name === name) for (const h of ch.handlers) if (h.type === "presence") setTimeout(() => h.cb(), 5); };
+  mock.factory = win => {
+    const client = { session: null }; mock.clients.push(client); win.__mockClient = client;
+    const as = new URLSearchParams(win.location.search).get("as");
+    if (as) client.session = { user: mock.user(as) };
+    const authCbs = [];
+    const uid = () => client.session && client.session.user.id, email = () => client.session && client.session.user.email;
+    const role = pid => (db.poap_members.find(m => m.project_id === pid && m.user_id === uid()) || {}).role;
+    const canEdit = pid => role(pid) === "owner" || role(pid) === "editor";
+    const visible = (t, r) => t === "poap_invites" ? role(r.project_id) === "owner" || r.email === email()
+      : t === "poap_projects" ? !!role(r.id) : !!role(r.project_id);
+    const emit = (table, row) => { for (const ch of channels) for (const h of ch.handlers)
+      if (h.type === "postgres_changes" && h.filter.table === table) { const [col, v] = h.filter.filter.split("=eq."); if (String(row[col]) === v) setTimeout(() => h.cb({ new: copy(row) }), 5); } };
+    const fail = message => ({ data: null, error: { message } });
+    class Q {
+      constructor(t) { this.t = t; this.f = []; this.op = "select"; }
+      select() { if (this.op === "select") this.op = "select"; return this; }
+      eq(c, v) { this.f.push(r => r[c] === v); return this; }
+      in(c, a) { this.f.push(r => a.includes(r[c])); return this; }
+      order(c, o) { this.ord = [c, !o || o.ascending !== false]; return this; }
+      limit(n) { this.lim = n; return this; }
+      range(a, b) { this.rng = [a, b]; return this; }
+      single() { this.one = true; return this; }
+      insert(rows) { this.op = "insert"; this.rows = [].concat(rows); return this; }
+      upsert(rows) { this.op = "upsert"; this.rows = [].concat(rows); return this; }
+      update(obj) { this.op = "update"; this.obj = obj; return this; }
+      delete() { this.op = "delete"; return this; }
+      then(res, rej) { return Promise.resolve().then(() => this.run()).then(res, rej); }
+      run() {
+        if (offline.has(client)) return fail("Failed to fetch");
+        if (!uid()) return fail("not signed in");
+        const T = db[this.t], t = this.t;
+        if (this.op === "select") {
+          let out = T.filter(r => visible(t, r) && this.f.every(f => f(r)));
+          if (this.ord) out.sort((a, b) => (a[this.ord[0]] > b[this.ord[0]] ? 1 : -1) * (this.ord[1] ? 1 : -1));
+          if (this.rng) out = out.slice(this.rng[0], this.rng[1] + 1);
+          if (this.lim) out = out.slice(0, this.lim);
+          if (this.one) return out.length === 1 ? { data: copy(out[0]), error: null } : fail("JSON object requested, multiple (or no) rows returned");
+          return { data: copy(out), error: null };
+        }
+        if (t === "poap_projects" && this.op === "insert") {
+          for (const r of this.rows) { T.push({ ...copy(r), created_by: uid(), created_at: now(), updated_at: now() }); db.poap_members.push({ project_id: r.id, user_id: uid(), email: email(), role: "owner", added_at: now() }); }
+          return { data: null, error: null };
+        }
+        if (t === "poap_projects" && this.op === "update") {
+          const rows = T.filter(r => this.f.every(f => f(r)));
+          if (rows.some(r => !canEdit(r.id))) return fail("new row violates row-level security policy");
+          rows.forEach(r => { Object.assign(r, copy(this.obj), { updated_at: now() }); emit(t, r); });
+          return { data: null, error: null };
+        }
+        if (t === "poap_entities" && this.op === "upsert") {
+          if (this.rows.some(r => !canEdit(r.project_id))) return fail("new row violates row-level security policy");
+          for (const r0 of this.rows) {
+            const r = { ...copy(r0), updated_at: now(), updated_by: uid() };
+            const i = T.findIndex(x => x.project_id === r.project_id && x.kind === r.kind && x.id === r.id);
+            const same = i >= 0 && JSON.stringify(T[i].data) === JSON.stringify(r.data) && T[i].deleted === r.deleted;
+            if (i >= 0) T[i] = r; else T.push(r);
+            if (!same) db.poap_entity_history.push({ seq: db.poap_entity_history.length + 1, project_id: r.project_id, kind: r.kind, id: r.id, data: copy(r.data), deleted: r.deleted, changed_at: now(), changed_by: uid(), changed_by_email: email() });
+            emit(t, r);
+          }
+          return { data: null, error: null };
+        }
+        if (t === "poap_invites" && this.op === "upsert") {
+          if (this.rows.some(r => role(r.project_id) !== "owner")) return fail("new row violates row-level security policy");
+          for (const r of this.rows) { const e = r.email.toLowerCase(); const i = T.findIndex(x => x.project_id === r.project_id && x.email === e); const row = { ...copy(r), email: e, created_at: now() }; if (i >= 0) T[i] = row; else T.push(row); }
+          return { data: null, error: null };
+        }
+        if ((t === "poap_members" || t === "poap_invites") && (this.op === "update" || this.op === "delete")) {
+          const rows = T.filter(r => this.f.every(f => f(r)));
+          if (rows.some(r => role(r.project_id) !== "owner")) return fail("new row violates row-level security policy");
+          if (this.op === "update") rows.forEach(r => Object.assign(r, this.obj)); else db[t] = T.filter(r => !rows.includes(r));
+          return { data: null, error: null };
+        }
+        return fail(`mock: ${this.op} on ${t} isn't supported`);
+      }
+    }
+    return {
+      from: t => new Q(t),
+      rpc: async name => {
+        if (name !== "poap_claim_invites" || !uid()) return { data: 0, error: null };
+        const mine = db.poap_invites.filter(i => i.email === email());
+        for (const i of mine) { const m = db.poap_members.find(x => x.project_id === i.project_id && x.user_id === uid()); if (m) m.role = i.role; else db.poap_members.push({ project_id: i.project_id, user_id: uid(), email: email(), role: i.role, added_at: now() }); }
+        db.poap_invites = db.poap_invites.filter(i => i.email !== email());
+        return { data: mine.length, error: null };
+      },
+      auth: {
+        getSession: async () => ({ data: { session: client.session } }),
+        onAuthStateChange: cb => { authCbs.push(cb); return { data: { subscription: { unsubscribe() {} } } }; },
+        signInWithOtp: async ({ email: e }) => { mock.codes[e] = "123456"; return { error: null }; },
+        verifyOtp: async ({ email: e, token }) => {
+          if (mock.codes[e] !== token) return { error: { message: "Token has expired or is invalid" } };
+          client.session = { user: mock.user(e, null) }; authCbs.forEach(cb => cb("SIGNED_IN", client.session)); return { error: null };
+        },
+        signInWithPassword: async ({ email: e, password }) => {
+          const u = users.get(e); if (!u || u.password !== password) return { data: {}, error: { message: "Invalid login credentials" } };
+          client.session = { user: u }; authCbs.forEach(cb => cb("SIGNED_IN", client.session)); return { data: { user: u }, error: null };
+        },
+        updateUser: async ({ password, data }) => { const u = client.session.user; u.password = password; u.user_metadata = { ...u.user_metadata, ...data }; return { data: { user: u }, error: null }; },
+        signOut: async () => { client.session = null; authCbs.forEach(cb => cb("SIGNED_OUT", null)); return { error: null }; },
+      },
+      channel: (name, opts) => {
+        const key = opts.config.presence.key;
+        const ch = { name, key, handlers: [],
+          on(type, filter, cb) { if (typeof filter === "function") cb = filter; this.handlers.push({ type, filter, cb }); return this; },
+          subscribe(cb) { channels.add(this); setTimeout(() => cb("SUBSCRIBED"), 1); return this; },
+          track(payload) { (presence[name] = presence[name] || {})[key] = [copy(payload)]; syncPresence(name); return Promise.resolve(); },
+          presenceState() { return copy(presence[name] || {}); } };
+        return ch;
+      },
+      removeChannel(ch) { channels.delete(ch); if (presence[ch.name]) delete presence[ch.name][ch.key]; syncPresence(ch.name); return Promise.resolve(); },
+    };
+  };
+  return mock;
+}
+let MOCK = makeMockSupabase();
+window.POAP_SB_FACTORY = win => MOCK.factory(win);   // read by the app's supa(): no real Supabase in tests
+
+const until = async (fn, ms = 4000, what = "condition") => {
+  const t0 = Date.now();
+  for (;;) { let v; try { v = fn(); } catch (e) { v = false; } if (v) return v; if (Date.now() - t0 > ms) throw new Error("timed out waiting for " + what); await new Promise(r => setTimeout(r, 20)); }
+};
+const teamFrames = [];
+/* an app window signed in as someone (or nobody); in the test page's storage, like a second browser tab */
+async function openApp(as) {
+  const f = document.createElement("iframe"); f.className = "teamframe"; f.title = "Team window " + (as || "signed out");
+  document.body.appendChild(f); teamFrames.push(f);
+  await new Promise(r => { f.onload = r; f.src = `index.html?${as ? "as=" + encodeURIComponent(as) + "&" : ""}t=${Date.now()}${Math.random()}`; });
+  const w = f.contentWindow;
+  await until(() => w.POAP_READY, 4000, "the app to start");
+  if (as) await until(() => w.eval("me && me.email") === as, 4000, "sign-in");
+  w.eval(`document.querySelectorAll(".startscreen, .modal").forEach(x => x.remove())`);
+  return w;
+}
+/* run code inside an app window */
+const ev = (w, code) => w.eval(code);
+
+const TEAM_TESTS = {
+  "Team: share, invite, and see each other's changes live": async () => {
+    const A = await openApp("alice@x.com"), B = await openApp("bob@x.com");
+    ev(A, `loadDoc(seedProject(), null)`);
+    const id = await ev(A, `shareProject()`);
+    if (!id || ev(A, "CLOUD && CLOUD.role") !== "owner") throw new Error("Alice didn't become the owner");
+    await ev(A, `SB.from("poap_invites").upsert({ project_id: "${id}", email: "Bob@X.com", role: "editor" })`);
+    const list = await ev(B, `listProjects()`);
+    if (!list.some(p => p.id === id && p.role === "editor")) throw new Error("Bob's invite didn't turn into a membership: " + JSON.stringify(list));
+    await ev(B, `openCloud("${id}")`);
+    const ids = w => ev(w, `JSON.stringify(P.items.map(i => i.id))`);
+    if (ids(A) !== ids(B)) throw new Error("Bob doesn't have the same programme");
+    ev(A, `commit(p => { p.items.find(i => i.id === "CON003").start = "2027-04-20"; }, true)`);
+    await until(() => ev(B, `P.items.find(i => i.id === "CON003").start`) === "2027-04-20", 3000, "Alice's change to reach Bob");
+    ev(B, `commit(p => { p.items.find(i => i.id === "CON004").name = "Services (Bob)"; }, true)`);
+    await until(() => ev(A, `P.items.find(i => i.id === "CON004").name`) === "Services (Bob)", 3000, "Bob's change to reach Alice");
+    ev(A, `commit(p => { const a = p.lanes; [a[0], a[1]] = [a[1], a[0]]; }, true)`);   // lane order travels too
+    await until(() => ev(B, `P.lanes.map(l => l.name).join()`) === ev(A, `P.lanes.map(l => l.name).join()`), 3000, "the lane order to match");
+    ev(A, `commit(p => { p.meta.title = "Shared title"; }, true)`);   // settings travel
+    await until(() => ev(B, `P.meta.title`) === "Shared title", 3000, "the title to reach Bob");
+    await until(() => ev(A, "CLOUD.state") === "synced" && /Saved to the team/.test(A.document.getElementById("saved").textContent), 3000, "Saved to the team");
+  },
+  "Team: undo only takes back your own edits": async () => {
+    const A = await openApp("alice@x.com"), B = await openApp("bob@x.com");
+    ev(A, `loadDoc(seedProject(), null)`); const id = await ev(A, `shareProject()`);
+    await ev(A, `SB.from("poap_invites").upsert({ project_id: "${id}", email: "bob@x.com", role: "editor" })`);
+    await ev(B, `listProjects()`); await ev(B, `openCloud("${id}")`);
+    ev(B, `commit(p => { p.items.find(i => i.id === "CON005").name = "Bob's edit"; }, true)`);
+    await until(() => ev(A, `P.items.find(i => i.id === "CON005").name`) === "Bob's edit", 3000, "Bob's edit to reach Alice");
+    ev(A, `commit(p => { p.items.find(i => i.id === "CON006").name = "Alice's edit"; }, true)`);
+    await until(() => ev(B, `P.items.find(i => i.id === "CON006").name`) === "Alice's edit", 3000, "Alice's edit to reach Bob");
+    ev(B, `undo()`);
+    if (ev(B, `P.items.find(i => i.id === "CON006").name`) !== "Alice's edit") throw new Error("Bob's undo took away Alice's change");
+    if (ev(B, `P.items.find(i => i.id === "CON005").name`) === "Bob's edit") throw new Error("Bob's undo didn't take back his own edit");
+    await until(() => ev(A, `P.items.find(i => i.id === "CON005").name`) !== "Bob's edit", 3000, "Bob's undo to reach Alice");
+  },
+  "Team: an activity a teammate has selected is held for them": async () => {
+    const A = await openApp("alice@x.com"), B = await openApp("bob@x.com");
+    ev(A, `loadDoc(seedProject(), null)`); const id = await ev(A, `shareProject()`);
+    await ev(A, `SB.from("poap_invites").upsert({ project_id: "${id}", email: "bob@x.com", role: "editor" })`);
+    await ev(B, `listProjects()`); await ev(B, `openCloud("${id}")`);
+    ev(A, `sel = { type: "item", id: "CON007" }; render(); renderSide();`);
+    await until(() => ev(B, `CLOUD.others.some(o => o.sel && o.sel.id === "CON007")`), 3000, "Bob to see Alice's selection");
+    if (ev(B, `heldBy("CON007")`) !== "alice@x.com") throw new Error("not held for Alice");
+    if (!B.document.querySelector("#teamPeople .avatar[title^='alice']")) throw new Error("Alice's avatar isn't in Bob's top bar");
+    const before = ev(B, `P.items.find(i => i.id === "CON007").start`);
+    ev(B, `commit(p => { p.items.find(i => i.id === "CON007").start = "2027-01-01"; }, true)`);
+    await until(() => ev(B, `P.items.find(i => i.id === "CON007").start`) === before, 3000, "Bob's change to the held activity to be undone");
+    await new Promise(r => setTimeout(r, 300));
+    if (ev(A, `P.items.find(i => i.id === "CON007").start`) !== before) throw new Error("the held activity changed for Alice");
+  },
+  "Team: viewers can look but not change": async () => {
+    const A = await openApp("alice@x.com"), C = await openApp("carol@x.com");
+    ev(A, `loadDoc(seedProject(), null)`); const id = await ev(A, `shareProject()`);
+    await ev(A, `SB.from("poap_invites").upsert({ project_id: "${id}", email: "carol@x.com", role: "viewer" })`);
+    await ev(C, `listProjects()`); await ev(C, `openCloud("${id}")`);
+    const before = ev(C, `P.items.find(i => i.id === "CON003").name`);
+    ev(C, `commit(p => { p.items.find(i => i.id === "CON003").name = "Carol"; }, true)`);
+    if (ev(C, `P.items.find(i => i.id === "CON003").name`) !== before) throw new Error("a viewer could change an activity");
+    if (!/View only/.test(C.document.getElementById("saved").textContent)) throw new Error("status doesn't say view only");
+  },
+  "Team: changes made offline are sent when the programme is opened again": async () => {
+    const A = await openApp("alice@x.com"), B = await openApp("bob@x.com");
+    ev(A, `loadDoc(seedProject(), null)`); const id = await ev(A, `shareProject()`);
+    await ev(A, `SB.from("poap_invites").upsert({ project_id: "${id}", email: "bob@x.com", role: "editor" })`);
+    await ev(B, `listProjects()`); await ev(B, `openCloud("${id}")`);
+    MOCK.offline.add(B.__mockClient);
+    ev(B, `commit(p => { p.items.find(i => i.id === "CON008").name = "Offline edit"; p.items.find(i => i.id === "CON002").name = "Offline, but overtaken"; }, true)`);
+    await until(() => ev(B, "CLOUD.state") === "offline", 3000, "Bob to be offline");
+    if (!/Offline/.test(B.document.getElementById("saved").textContent)) throw new Error("status doesn't say offline");
+    ev(B, `detachCloud()`);   // Bob closes the window while offline
+    await new Promise(r => setTimeout(r, 30));
+    ev(A, `commit(p => { p.items.find(i => i.id === "CON002").name = "Alice, later"; }, true)`);   // Alice changes one of the same activities afterwards
+    await until(() => ev(A, "CLOUD.state") === "synced" && MOCK.db.poap_entities.find(e => e.id === "CON002").data.name === "Alice, later", 3000, "Alice's save");
+    MOCK.offline.delete(B.__mockClient);
+    await ev(B, `openCloud("${id}")`);   // Bob opens it again, online
+    await until(() => ev(A, `P.items.find(i => i.id === "CON008").name`) === "Offline edit", 3000, "Bob's offline edit to reach Alice");
+    if (ev(B, `P.items.find(i => i.id === "CON002").name`) !== "Alice, later") throw new Error("Bob's older offline edit overwrote Alice's newer one");
+  },
+  "Team: history lists versions and can put one back": async () => {
+    const A = await openApp("alice@x.com");
+    ev(A, `loadDoc(seedProject(), null)`); await ev(A, `shareProject()`);
+    ev(A, `commit(p => { p.items.find(i => i.id === "CON003").name = "Version two"; }, true)`);
+    await until(() => ev(A, "CLOUD.state") === "synced" && MOCK.db.poap_entity_history.filter(h => h.id === "CON003").length === 2, 3000, "two saved versions");
+    ev(A, `sel = { type: "item", id: "CON003" }; SIDE_TAB.item = "history"; wantSelTab = true; render(); renderSide();`);
+    await until(() => A.document.querySelector(".histbox [data-hist]"), 3000, "the history list");
+    A.document.querySelector(".histbox [data-hist]").click();
+    if (ev(A, `P.items.find(i => i.id === "CON003").name`) !== "Bulk Earthworks & Drainage") throw new Error("the old version didn't come back");
+    await until(() => MOCK.db.poap_entities.find(e => e.id === "CON003").data.name === "Bulk Earthworks & Drainage", 3000, "the restored version to be saved");
+    ev(A, `SIDE_TAB.item = "activity"`);
+  },
+  "Sign-in: emailed code, then choose a password, then sign in with it": async () => {
+    const W = await openApp(null);
+    ev(W, `openSignIn(() => {})`);
+    const q = s => W.document.querySelector(s), submit = () => q(".siform").dispatchEvent(new Event("submit", { cancelable: true }));
+    if (q("#siGo").textContent !== "Email me a code") throw new Error("with no password the button should send a code");
+    q("#siEmail").value = "Dana@X.com"; submit();
+    await until(() => q("#siCode"), 3000, "the code step");
+    q("#siCode").value = "000000"; submit();
+    await until(() => /wrong or has expired/.test(q(".sierr").textContent), 3000, "a wrong-code message in the dialog");
+    q("#siCode").value = "123456"; submit();
+    await until(() => q("#siNew"), 3000, "the choose-a-password step");
+    q("#siNew").value = "short"; q("#siNew2").value = "short"; submit();
+    await until(() => /at least 8/.test(q(".sierr").textContent), 3000, "the too-short message");
+    q("#siNew").value = "longenough1"; q("#siNew2").value = "longenough1"; submit();
+    await until(() => !q(".signin") && ev(W, "me && me.email") === "dana@x.com" && !ev(W, "needsPassword()"), 3000, "signed in with a password set");
+    await ev(W, `signOut()`);
+    ev(W, `document.querySelectorAll(".startscreen").forEach(x => x.remove()); openSignIn(() => {})`);
+    q("#siEmail").value = "dana@x.com"; q("#siPass").value = "longenough1"; q("#siPass").dispatchEvent(new Event("input"));
+    if (q("#siGo").textContent !== "Sign in") throw new Error("with a password the button should sign in");
+    submit();
+    await until(() => ev(W, "me && me.email") === "dana@x.com", 3000, "password sign-in");
+  },
+  "Tour: runs through its stops and highlights each part": async () => {
+    const W = await openApp("alice@x.com");
+    ev(W, `startPoapTour()`);
+    const card = () => W.document.querySelector(".tour-card");
+    const n = +card().querySelector(".tour-count").textContent.split(" of ")[1];
+    let lit = 0;
+    for (let i = 0; i < n; i++) {
+      await new Promise(r => setTimeout(r, 120));
+      if (!W.document.querySelector(".tour-spot").hidden) lit++;
+      card().querySelector('[data-t="next"]').click();
+    }
+    if (W.document.querySelector(".tour")) throw new Error("the tour didn't finish");
+    if (lit < n - 2) throw new Error(`only ${lit} of ${n} stops highlighted something`);
+  },
+};
+
 const frame = document.getElementById("app"), list = document.getElementById("list"), sum = document.getElementById("sum");
 const inApp = (fn) => frame.contentWindow.eval(`(${fn.toString()})()`);
 async function run() {
   document.getElementById("again").hidden = true; list.innerHTML = ""; sum.textContent = "Running…";
   // the app shares this site's storage: keep the user's own draft and settings safe
   const saved = Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)]));
+  // a first visit: nothing saved in this browser (the app builds the example as it starts)
+  localStorage.clear();
   await new Promise(res => { frame.onload = res; frame.src = "index.html?test=" + Date.now(); });
   await new Promise(r => setTimeout(r, 300));
   inApp(HELPERS);
@@ -295,6 +578,18 @@ async function run() {
     list.appendChild(li);
   }
   try { frame.contentWindow.eval("T.clean()"); } catch (e) {}
+  // team working: only in the beta (where the app has it)
+  if (frame.contentWindow.eval("typeof cloudOn === 'function' && cloudOn()")) {
+    for (const [name, fn] of Object.entries(TEAM_TESTS)) {
+      const li = document.createElement("li"), t0 = performance.now();
+      MOCK = makeMockSupabase(); localStorage.clear();
+      try { await fn(); li.className = "ok"; li.innerHTML = `<span class="i">✓</span><span></span><span class="t"></span>`; pass++; }
+      catch (e) { li.className = "bad"; li.innerHTML = `<span class="i">✗</span><span></span><span class="t"></span><pre></pre>`; li.querySelector("pre").textContent = e && e.stack ? e.message + "\n" + e.stack.split("\n").slice(1, 3).join("\n") : String(e); fail++; }
+      teamFrames.splice(0).forEach(f => f.remove());
+      li.children[1].textContent = name; li.querySelector(".t").textContent = Math.round(performance.now() - t0) + " ms";
+      list.appendChild(li);
+    }
+  }
   localStorage.clear(); Object.entries(saved).forEach(([k, v]) => localStorage.setItem(k, v));
   sum.innerHTML = `<b class="${fail ? "bad" : "ok"}">${pass} passed${fail ? `, ${fail} failed` : ""}</b> of ${pass + fail}`;
   document.title = (fail ? "✗ " : "✓ ") + "PoaP Builder tests";
