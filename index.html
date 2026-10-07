@@ -291,7 +291,10 @@ function applySpacing() {
 const inlineMsDate = () => G.rowH < 22;   // tight rows: milestone date goes on the name's line
 /* lane colour presets: the brand's two colours first, then a fixed set */
 const LANE_PRESETS_FIXED = [["Steel blue", "#4F7CAC"], ["Teal", "#128A84"], ["Green", "#5E9A35"], ["Purple", "#6E4E9E"], ["Red", "#C8102E"], ["Grey", "#6F7C8C"]];
-const lanePresets = () => [["Brand accent", BRAND.orange], ["Brand main colour", BRAND.navy], ...LANE_PRESETS_FIXED];
+const lanePresets = () => {
+  const own = [["Brand swimlane 1", BRAND.lane1 || BRAND.orange], ["Brand swimlane 2", BRAND.lane2 || BRAND.navy], ["Brand accent", BRAND.orange], ["Brand main colour", BRAND.navy]];
+  return [...own.filter(([, c], i) => own.findIndex(([, d]) => d.toUpperCase() === c.toUpperCase()) === i), ...LANE_PRESETS_FIXED];
+};
 
 /* ---------- branding: logo + main colour + accent colour; a programme carries its brand (P.brand) ---------- */
 const DEFAULT_BRAND = { id: "martinus", name: "Martinus", logo: "", ratio: LOGO_RATIO, primary: "#163E6B", accent: "#F47920" };
@@ -304,9 +307,14 @@ function shade(hexIn, t) {
   const h = String(hexIn).replace("#", ""), c = [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16));
   return "#" + c.map(v => Math.round(v * (1 - t)).toString(16).padStart(2, "0")).join("").toUpperCase();
 }
+/* a brand's timeline colours (years, months) and its two swimlane colours; unless set, they come from
+   the main and accent colours, which gives the Martinus look */
+const brandTimeline = b => [(b.timeline && b.timeline[0]) || tint(b.primary, .6), (b.timeline && b.timeline[1]) || tint(b.accent, .5)];
+const brandLanes = b => [(b.laneColours && b.laneColours[0]) || b.accent, (b.laneColours && b.laneColours[1]) || b.primary];
 function applyBrandColours() {
   const b = currentBrand();
   BRAND.navy = b.primary; BRAND.orange = b.accent; BRAND.ink = shade(b.primary, .4);
+  [BRAND.band1, BRAND.band2] = brandTimeline(b); [BRAND.lane1, BRAND.lane2] = brandLanes(b);
   document.documentElement.style.setProperty("--accent-2", b.accent);
 }
 function loadBrands() {
@@ -323,7 +331,9 @@ function rememberProjectBrand() {
 function remapBrandColours(p, from, to) {
   const map = new Map([[from.primary.toUpperCase(), to.primary], [from.accent.toUpperCase(), to.accent]]);
   const swap = v => (v && map.get(String(v).toUpperCase())) || v;
-  p.lanes.forEach(l => l.colour = swap(l.colour));
+  // lanes in the old brand's swimlane colours take the new brand's
+  const fl = brandLanes(from), tl = brandLanes(to), laneMap = new Map([[fl[1].toUpperCase(), tl[1]], [fl[0].toUpperCase(), tl[0]]]);
+  p.lanes.forEach(l => l.colour = (l.colour && laneMap.get(String(l.colour).toUpperCase())) || swap(l.colour));
   p.styles.forEach(s => { s.fill = swap(s.fill); s.stroke = swap(s.stroke); if (s.tagFill) s.tagFill = swap(s.tagFill); if (s.tagText) s.tagText = swap(s.tagText); });
   p.items.forEach(i => { if (i.fill) i.fill = swap(i.fill); if (i.stroke) i.stroke = swap(i.stroke); if (i.tagFill) i.tagFill = swap(i.tagFill); });
 }
@@ -503,7 +513,7 @@ function seedProject() {
 }
 
 function newLane(p, name) {
-  const l = { id: "L" + uid(), name, colour: p.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 1 };
+  const l = { id: "L" + uid(), name, colour: p.lanes.length % 2 ? (BRAND.lane2 || BRAND.navy) : (BRAND.lane1 || BRAND.orange), minRows: 1 };
   p.lanes.push(l);
   return l;
 }
@@ -949,12 +959,12 @@ function drawBand(svg, L, y0, F) {
   eachMonth(L, (xa, xb, dt, i) => {
     const y = dt.getUTCFullYear(), last = years[years.length - 1];
     if (!last || last.y !== y) years.push({ y, a: xa, b: xb }); else last.b = xb;
-    el("rect", { x: xa, y: y0 + yh, width: xb - xa, height: mh, fill: i % 2 ? "#FFFFFF" : tint(BRAND.orange, .5) }, g);
+    el("rect", { x: xa, y: y0 + yh, width: xb - xa, height: mh, fill: i % 2 ? "#FFFFFF" : BRAND.band2 }, g);
     const w = xb - xa, lab = w > 30 ? MON[dt.getUTCMonth()] : w > 11 ? MON[dt.getUTCMonth()][0] : "";
     if (lab) el("text", { x: (xa + xb) / 2, y: y0 + yh + mh / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": 10, "font-weight": 500, "font-family": F.font }, g, lab);
   });
   years.forEach((yr, i) => {
-    el("rect", { x: yr.a, y: y0, width: yr.b - yr.a, height: yh, fill: i % 2 ? tint(BRAND.orange, .7) : tint(BRAND.navy, .6), stroke: "#FFFFFF", "stroke-width": .8 }, g);
+    el("rect", { x: yr.a, y: y0, width: yr.b - yr.a, height: yh, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
     if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: y0 + yh / 2 + 5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 13.5, "font-weight": 700, "font-family": F.font }, g, yr.y);
   });
   eachMonth(L, (xa) => el("line", { x1: xa, x2: xa, y1: y0 + yh, y2: y0 + G.topH, stroke: "#FFFFFF", "stroke-width": .8 }, g));
@@ -2260,6 +2270,16 @@ function openBrandEditor(existing) {
         <div class="f"><label for="brAccent">Accent (project line, highlights)</label><input id="brAccent" type="color" value="${b.accent}"></div>
       </div>
       <div class="actions"><button class="btn" id="brSwap">Swap colours</button><button class="btn" id="brPicked" hidden>Use the logo's colours</button></div>
+      <div class="row2">
+        <div class="f"><label for="brT1">Timeline: years</label><input id="brT1" type="color"></div>
+        <div class="f"><label for="brT2">Timeline: months</label><input id="brT2" type="color"></div>
+      </div>
+      <div class="row2">
+        <div class="f"><label for="brL1">Swimlane colour 1</label><input id="brL1" type="color"></div>
+        <div class="f"><label for="brL2">Swimlane colour 2</label><input id="brL2" type="color"></div>
+      </div>
+      <p class="note">Swimlanes alternate between these two; lane titles and bars use lighter shades. Switching brand re-colours lanes that use the old brand's swimlane colours.</p>
+      <div class="actions"><button class="btn" id="brAuto" hidden>Timeline and swimlanes from the main colours</button></div>
       <div class="brand-preview" id="brPreview"></div>
     </div>
     <footer>${isNew ? "" : `<button class="btn danger" data-act="delete">Delete brand</button>`}<span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save">${isNew ? "Save and use" : "Save"}</button></footer>`, {
@@ -2279,13 +2299,17 @@ function openBrandEditor(existing) {
     },
   });
   const preview = () => {
-    const p = m.querySelector("#brPreview"), M = P.meta;
+    const p = m.querySelector("#brPreview"), M = P.meta, [t1, t2] = brandTimeline(b), [l1, l2] = brandLanes(b);
+    const lane = c => `<div style="display:flex;align-items:stretch;border:1px solid ${b.primary};border-top:0"><span style="width:16px;background:${laneHeader(c)};border-right:1px solid ${b.primary}"></span><span style="flex:1;padding:5px 8px"><span style="display:block;width:55%;height:9px;background:${laneBar(c)};border:1px solid ${b.primary}"></span></span></div>`;
     p.innerHTML = `<div class="ph"><div><div style="font-weight:700;font-size:12px;color:${b.primary}">${esc((M.program || "PROGRAM").toUpperCase())}</div>
         <div style="font-weight:700;font-size:11.5px;color:${b.accent}">${esc(`${M.number} ${M.title}`)}</div></div>
         ${b.logo ? `<img src="${b.logo}" alt="">` : `<span class="note">Logo appears here</span>`}</div>
-      <div class="band" style="color:${b.primary}"><span style="background:${tint(b.primary, .6)}">2026</span><span style="background:${tint(b.accent, .7)}">2027</span><span style="background:${tint(b.accent, .5)}">Jan</span><span style="background:#fff">Feb</span></div>
-      <div style="display:flex;gap:6px;align-items:center;font-size:10px"><span style="width:12px;height:30px;background:${laneHeader(b.accent)};border:1px solid ${b.primary}"></span><span style="flex:1;height:10px;background:${laneBar(b.accent)};border:1px solid ${b.primary}"></span><span style="flex:1;height:10px;background:${laneBar(b.primary)};border:1px solid ${b.primary}"></span></div>`;
+      <div><div class="band" style="color:${b.primary};grid-template-columns:1fr 1fr"><span style="background:${t1}">2026</span><span style="background:${tint(t2, .4)}">2027</span></div>
+        <div class="band" style="color:${b.primary}"><span style="background:${t2}">Nov</span><span style="background:#fff">Dec</span><span style="background:${t2}">Jan</span><span style="background:#fff">Feb</span></div>
+        <div style="border-top:1px solid ${b.primary}">${lane(l1)}${lane(l2)}</div></div>`;
     m.querySelector("#brPrimary").value = b.primary; m.querySelector("#brAccent").value = b.accent;
+    m.querySelector("#brT1").value = t1; m.querySelector("#brT2").value = t2; m.querySelector("#brL1").value = l1; m.querySelector("#brL2").value = l2;
+    m.querySelector("#brAuto").hidden = !b.timeline && !b.laneColours;
     m.querySelector("#brPicked").hidden = !picked || (picked.primary === b.primary && picked.accent === b.accent);
   };
   m.querySelector("#brUpload").onclick = () => m.querySelector("#brFile").click();
@@ -2297,6 +2321,7 @@ function openBrandEditor(existing) {
       try {
         const out = await prepareLogo(r.result);
         Object.assign(b, { logo: out.logo, ratio: out.ratio, primary: out.primary, accent: out.accent });
+        delete b.timeline; delete b.laneColours;   // follow the new logo's colours
         picked = { primary: out.primary, accent: out.accent };
         if (!m.querySelector("#brName").value.trim()) m.querySelector("#brName").value = f.name.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ");
         m.querySelector("#brUpload").textContent = "Replace logo…";
@@ -2309,6 +2334,11 @@ function openBrandEditor(existing) {
   m.querySelector("#brPrimary").oninput = e => { b.primary = e.target.value.toUpperCase(); preview(); };
   m.querySelector("#brAccent").oninput = e => { b.accent = e.target.value.toUpperCase(); preview(); };
   m.querySelector("#brSwap").onclick = () => { [b.primary, b.accent] = [b.accent, b.primary]; preview(); };
+  // setting one timeline or swimlane colour fixes both of the pair (the other keeps what it showed)
+  const pair = (key, ids, from) => ids.forEach((id, k) => m.querySelector(id).oninput = e => { const v = from(b).slice(); v[k] = e.target.value.toUpperCase(); b[key] = v; preview(); });
+  pair("timeline", ["#brT1", "#brT2"], brandTimeline);
+  pair("laneColours", ["#brL1", "#brL2"], brandLanes);
+  m.querySelector("#brAuto").onclick = () => { delete b.timeline; delete b.laneColours; preview(); };
   m.querySelector("#brPicked").onclick = () => { Object.assign(b, picked); preview(); };
   preview();
 }
