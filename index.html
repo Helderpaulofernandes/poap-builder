@@ -490,6 +490,8 @@ function upgradeProject(p) {
     p.styles.splice(i < 0 ? p.styles.length : i, 0, def);
   }
   adoptGeometricChildren(p); syncContainers(p);
+  // a side-panel bug stored tab names ("Activity", "Progress"…) as label positions; positions are lowercase words
+  p.items.forEach(i => { if (i.labelMode && /[^a-z]/.test(i.labelMode)) delete i.labelMode; });
   if (!p.styles.some(s => s.behaviour === "Curtain")) p.styles.push(...curtainDefaults().filter(c => !p.styles.some(s => s.name === c.name)));
   p.page = { size: "A3", orient: "landscape", margin: 7, rowH: 26, fill: true, ...(p.page || {}) };
   p.view = { zoom: 3, ...(p.view || {}) }; if (!p.view.mode) p.view.mode = "page-width";
@@ -2661,7 +2663,7 @@ function itemExtras(cur) {
 }
 function bindItemExtras(cur) {
   const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
-  $("side").querySelectorAll("[data-label]").forEach(b => b.onclick = () => upd(x => { if (b.dataset.label === "auto") delete x.labelMode; else x.labelMode = b.dataset.label; }));
+  $("side").querySelectorAll("button[data-label]").forEach(b => b.onclick = () => upd(x => { if (b.dataset.label === "auto") delete x.labelMode; else x.labelMode = b.dataset.label; }));
   if ($("iParent")) $("iParent").onchange = e => upd(x => {
     const g = P.items.find(i => i.id === e.target.value);
     if (!g) { delete x.parent; x.row = 999; x.row = freeRow(P, x); return; }

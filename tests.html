@@ -258,6 +258,17 @@ const TESTS = {
     const s = T.item("WBS C.B.1");
     T.eq([s.start, s.bStart, s.row, P.meta.title, DOC], ["2027-05-24", "2027-05-10", rowBefore, "Option B", null]);
   },
+  "Clicking a dropdown in the side panel changes nothing": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"]]);
+    sel = { type: "item", id: "A" }; render(); renderSide();
+    const undoBefore = past.length;
+    document.getElementById("iStyle").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    document.getElementById("iLane").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    T.eq([T.item("A").labelMode, past.length], [undefined, undoBefore], "no label change, nothing to undo");
+    T.ok(document.getElementById("iStyle"), "the panel wasn't redrawn under the pointer");
+    const p = clone(P); p.items[0].labelMode = "Activity"; loadDoc(upgradeProject(p), null);
+    T.eq(T.item("A").labelMode, undefined, "a bad label position saved earlier is cleared on load");
+  },
   "Help opens with ? and lists the shortcuts": () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
     const m = document.querySelector(".modal");
