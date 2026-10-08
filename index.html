@@ -250,6 +250,8 @@ table.diff td:first-child { font-family: var(--font-mono); white-space: nowrap; 
 .startscreen { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: 16px; background: rgba(8,14,24,.28); backdrop-filter: blur(7px) saturate(.8); -webkit-backdrop-filter: blur(7px) saturate(.8); overflow: auto; }
 .startcard { background: var(--panel); border-radius: 6px; width: min(560px, 100%); box-shadow: 0 18px 60px rgba(0,0,0,.35); border-top: 4px solid var(--accent-2); padding: 20px 22px 18px; }
 .starthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.startx { order: 3; background: none; border: 0; color: inherit; opacity: .6; font-size: 18px; line-height: 1; cursor: pointer; padding: 4px 7px; border-radius: 4px; }
+.startx:hover, .startx:focus-visible { opacity: 1; background: rgba(127, 127, 127, .18); }
 .starthead h2 { margin: 0 0 2px; font-size: 20px; font-weight: 700; color: var(--accent); }
 .startcard .brandpick .logo { background: #FFFFFF; border-radius: 3px; padding: 3px 5px; display: flex; }
 .startcard .brandpick .logo img { height: 18px; max-width: 150px; object-fit: contain; display: block; }
@@ -3201,7 +3203,7 @@ $("bFit").onclick = () => {
   const s = new Date(a*DAY), e = new Date(b*DAY);
   commit(p => { p.timeline.start = fromDays(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1)/DAY); p.timeline.end = fromDays(Date.UTC(e.getUTCFullYear(), e.getUTCMonth()+2, 0)/DAY); }, true);
 };
-$("bNew").onclick = () => guardUnsaved(() => { hadDraft = false; showStartScreen(); });
+$("bNew").onclick = () => guardUnsaved(() => { hadDraft = false; showStartScreen({ back: true }); });   // a programme is open: offer the way back to it
 const fileBase = () => `${P.meta.number} ${P.meta.title} PoaP Rev${P.meta.revision}`.replace(/[\\/:*?"<>|]+/g, "-").trim();
 $("bSave").onclick = () => saveDoc();
 $("bSaveNow").onclick = () => saveDoc();
@@ -4059,8 +4061,11 @@ const START_ICONS = {
   excel: '<path d="M4 4h16v16H4zM4 10h16M10 4v16"/>',
   example: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
 };
-async function showStartScreen() {
+async function showStartScreen(opts = {}) {
   ROOT.querySelectorAll(".startscreen").forEach(s => s.remove());
+  const back = !!opts.back && !!P;   // opened from New with a programme open: it can be closed again
+  // what "Continue" would reopen is the programme already open: "Back to" covers it
+  const sameAsOpen = l => back && l && DOC && DOC.name === l.name;
   // what can be continued: the library file, the file on this computer, or an unsaved draft in this browser
   let last = null, lastKind = null;
   if (HOST) { try { last = JSON.parse(localStorage.getItem(STORE + ":doc")); if (last) lastKind = "library"; } catch (e) {} }
@@ -4076,12 +4081,14 @@ async function showStartScreen() {
   s.innerHTML = `<div class="startcard">
     <div class="starthead">
       <div><h2>PoaP Builder</h2><p class="note">Program of Activities and Possessions, ready to print on A3.</p></div>
+      ${back ? `<button type="button" class="startx" data-start="back" title="Back to the programme (Esc)" aria-label="Back to the programme">✕</button>` : ""}
       <button type="button" class="brandpick" data-start="brand" title="Change branding"><span class="logo"><img src="${brandLogoSrc()}" alt=""></span><span class="bname">${esc(currentBrand().name)}</span><span class="caret" aria-hidden="true">▾</span></button>
     </div>
     <div class="choices">
-      ${last ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, true) : ""}
-      ${draft ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", true) : ""}
-      ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft)}
+      ${last && !sameAsOpen(last) ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, true) : ""}
+      ${draft && !back ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", true) : ""}
+      ${back ? choice("back", "continue", `Back to “${name(P.meta.title || P.meta.number)}”`, "Close this and carry on with the programme that's open.", true) : ""}
+      ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft && !back)}
       ${choice("open", "open", "Open a saved programme…", HOST ? `From ${esc(HOST.libraryTitle)} or your computer.` : "A .poap.json file.")}
       ${choice("p6", "excel", "Summarise a P6 programme (XER)…", "Pick what each part of the WBS shows, starting from a suggestion.")}
       ${choice("excel", "excel", "Start from an Excel workbook…", "A programme exported from PoaP Builder, or the older Visio workbook.")}
@@ -4094,8 +4101,10 @@ async function showStartScreen() {
   const close = () => s.remove();
   s.querySelector('[data-start]').focus();
   s.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  if (back) s.addEventListener("click", e => { if (e.target === s) close(); });   // a click beside the card goes back too
   s.querySelectorAll("[data-start]").forEach(b => b.onclick = () => {
     const a = b.dataset.start;
+    if (a === "back") return close();
     if (a === "brand") return openBrandMenu();
     close();
     if (a === "continue") return lastKind === "library" ? reconnectLibrary(last) : reconnectFile(last);

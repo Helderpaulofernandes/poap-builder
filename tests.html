@@ -295,6 +295,18 @@ const TESTS = {
     selectItems(["A"]); drag("B", 0, 0, true);
     T.eq([...MULTI].sort(), ["A", "B"]);
   },
+  "New with a programme open can go back to it": async () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"]]); commit(p => p.meta.title = "Keep me", true);
+    const s = () => document.querySelector(".startscreen");
+    await showStartScreen({ back: true });
+    T.ok(/Back to “Keep me”/.test(s().innerText), "the way back is offered");
+    s().querySelector('.choice[data-start="back"]').click();
+    T.ok(!s(), "closed");
+    T.eq([P.meta.title, P.items.length], ["Keep me", 1], "the programme is untouched");
+    await showStartScreen({ back: true }); s().querySelector(".startx").click(); T.ok(!s(), "the ✕ closes it");
+    await showStartScreen({ back: true }); s().dispatchEvent(new MouseEvent("click", { bubbles: true })); T.ok(!s(), "so does a click beside the card");
+    await showStartScreen(); T.ok(!s().querySelector('[data-start="back"]'), "no way back when nothing was open");
+  },
   "Start screen offers the choices": async () => {
     await showStartScreen();
     const acts = [...document.querySelectorAll(".startscreen [data-start]")].map(b => b.dataset.start);
