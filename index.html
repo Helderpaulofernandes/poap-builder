@@ -1727,7 +1727,8 @@ $("chart").addEventListener("pointerdown", e => {
     const group = (MULTI.size > 1 && MULTI.has(id)) || (withThis && withThis.length > 1);   // dragging one of several selected: they all move
     if (!group) MULTI.clear(); else if (withThis) MULTI = new Set(withThis);
     sel = { type: "item", id };
-    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false, toggle: shiftBody, prevSel };
+    drag = { id, part: t.getAttribute("data-part") || "body", x0: p.x, y0: p.y, orig: clone(it), before: JSON.stringify(P), moved: false, toggle: shiftBody, prevSel,
+      spans: new Map(P.items.filter(c => isContainer(P, c)).map(c => [c.id, c.span])) };   // summaries' heights before the drag
     // a summary bar carries the bars inside it
     if (isContainer(P, it) && drag.part === "body") drag.kids = containerChildren(P, it).map(k => ({ id: k.id, orig: clone(k) }));
     if (drag.part === "b") drag.parents = new Map(P.items.map(i => [i.id, i.parent]));   // membership before this drag
@@ -1857,7 +1858,9 @@ window.addEventListener("pointermove", e => {
       if (!isCurtain(P, x.style) && g.orig.lane === o.lane) { x.lane = it.lane; x.row = Math.max(0, g.orig.row + (it.row - o.row)); }
     }
   }
-  if (it.parent || drag.group) syncContainers(P);   // the summary's bracket follows its bars while dragging
+  // the summary's bracket follows its bars while dragging, but pushes nothing down yet: pushing as the pointer moves
+  // shifts the row under it, which moves the bar again… (it ran away down the sheet)
+  if (it.parent || drag.group) syncContainers(P, { noPush: true });
   render();
 });
 function rowCenter(o) { const ln = LAY.lanes.find(x => x.l.id === o.lane); return ln ? ln.y + G.pad + ln.toView(o.row) * LAY.rowH + LAY.rowH / 2 : 0; }
@@ -1886,6 +1889,8 @@ window.addEventListener("pointerup", e => {
       const c = summaryAt(P, it);
       if (c) it.parent = c.id; else delete it.parent;
     }
+    // summaries measured against their heights before the drag: one that grew moves what's below it down, once
+    if (drag.spans) P.items.forEach(c => { if (drag.spans.has(c.id) && isContainer(P, c)) c.span = drag.spans.get(c.id); });
     past.push(drag.before); future = []; changed();
   }
   drag = null;
