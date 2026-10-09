@@ -484,6 +484,18 @@ function curtainDefaults() {
     { name: "CUR_ALLOWANCE",   shape: "solid",   behaviour: "Curtain", fill: "#4F7CAC", stroke: "#2F5A87", notes: "Allowance",   opacity: 0.14, days: "plain" },
   ];
 }
+/* rows that ran far down a lane (a drag that kept pushing) make a sheet too tall to draw: close up the empty rows,
+   keeping everything in the same order. Lanes laid out normally are left exactly as they are. */
+function compactRows(p) {
+  for (const l of p.lanes || []) {
+    const its = p.items.filter(i => i.lane === l.id && Number.isFinite(+i.row) && (p.styles.find(s => s.name === i.style) || {}).behaviour !== "Curtain");
+    if (!its.length) continue;
+    const bottom = Math.max(...its.map(i => +i.row + Math.max(0, (+i.span || 1) - 1)));
+    if (bottom <= its.length * 4 + 40) continue;
+    const rank = new Map([...new Set(its.map(i => +i.row))].sort((a, b) => a - b).map((r, k) => [r, k]));
+    its.forEach(i => { i.row = rank.get(+i.row); if (+i.span > its.length + 2) i.span = 2; });
+  }
+}
 /* programmes saved before curtains / page settings existed get the defaults */
 function upgradeProject(p) {
   for (const shape of ["container", "container-box"]) if (!p.styles.some(s => s.shape === shape)) {
@@ -491,6 +503,7 @@ function upgradeProject(p) {
     const def = clone(DEFAULT_STYLES.find(s => s.shape === shape)); if (p.styles.some(s => s.name === def.name)) def.name += "_2";
     p.styles.splice(i < 0 ? p.styles.length : i, 0, def);
   }
+  compactRows(p);   // a lane whose rows ran away (thousands of empty rows) is closed up again
   adoptGeometricChildren(p); syncContainers(p);
   // a side-panel bug stored tab names ("Activity", "Progress"…) as label positions; positions are lowercase words
   p.items.forEach(i => { if (i.labelMode && /[^a-z]/.test(i.labelMode)) delete i.labelMode; });
@@ -779,7 +792,8 @@ let MULTI = new Set();   // ids when several items are selected (sel then holds 
 const isSel = id => MULTI.size > 1 ? MULTI.has(id) : !!(sel && sel.type === "item" && sel.id === id);
 const selectedIds = () => MULTI.size > 1 ? [...MULTI] : sel && sel.type === "item" ? [sel.id] : [];
 let hadDraft = false;   // unsaved work from an earlier visit, offered on the start screen
-try { const s = localStorage.getItem(STORE); if (s) { P = JSON.parse(s); hadDraft = true; } } catch (e) {}
+// ?fresh: start without the draft kept in this browser (it's set aside, not lost: STORE + ":set-aside")
+try { const s = localStorage.getItem(STORE); if (s && /[?&]fresh\b/.test(location.search)) { localStorage.setItem(STORE + ":set-aside", s); localStorage.removeItem(STORE); } else if (s) { P = JSON.parse(s); hadDraft = true; } } catch (e) {}
 if (!P || P.format !== "poap/2") P = seedProject();
 upgradeProject(P);
 
