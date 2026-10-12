@@ -669,6 +669,19 @@ const TESTS = {
     window.dispatchEvent(new PointerEvent("pointerup", at(x0, y0 + LAY.rowH)));
     T.eq([T.item("U2").row, T.item("U").span, T.item("Y").row], [3, 4, 4], "the free row takes the growth; nothing below moves");
   },
+  "Drag a type in the Types tab to reorder the legend": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10"], ["M1", "2027-02-01", "2027-02-01", "ML_Diamond"], ["M2", "2027-03-01", "2027-03-01", "ML_Square"]]);
+    const legend = () => footerPlan(LAY, LAY.labels.keyList).entries.filter(e => e.kind === "style").map(e => e.s.name);
+    const before = legend(); T.ok(before.indexOf("ML_Diamond") < before.indexOf("ML_Square"), "diamond first to start with");
+    sel = null; render(); renderSide(); document.querySelector('#side [data-tab="types"]').click();
+    const row = n => document.querySelector(`#side .pane[data-pane="types"] [data-type="${n}"]`);
+    const dt = new DataTransfer(), src = row("ML_Square"), dst = row("ML_Diamond"), r = dst.getBoundingClientRect();
+    src.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true }));
+    dst.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true, clientY: r.top + 2 }));
+    dst.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true, clientY: r.top + 2 }));
+    const after = legend(); T.ok(after.indexOf("ML_Square") < after.indexOf("ML_Diamond"), "dropped above: the legend follows");
+    undo(); const back = legend(); T.ok(back.indexOf("ML_Diamond") < back.indexOf("ML_Square"), "undo puts it back");
+  },
   "A gate or curtain can cover only some lanes": () => {
     const p = blankProject(); p.timeline = { start: "2027-01-01", end: "2027-06-30" }; ensureSummaryStyles(p);
     const ls = ["North", "Middle", "South"].map(n => newLane(p, n));

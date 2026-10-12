@@ -253,6 +253,9 @@ aside h2:first-child { margin-top: 0; }
 .types { display: grid; gap: 2px; }
 .type { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; text-align: left; padding: 5px 6px; border: 1px solid transparent; border-radius: 3px; background: none; cursor: pointer; }
 .type:hover { background: var(--hover); border-color: var(--line); }
+.type.dragging { opacity: .45; }
+.type.dropbefore { box-shadow: inset 0 2px 0 var(--accent-2); }
+.type.dropafter { box-shadow: inset 0 -2px 0 var(--accent-2); }
 .type small { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
 .type-preview { background: #FFFFFF; border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
 .check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
@@ -2735,7 +2738,7 @@ function renderSideInner() {
     <h2>Curtain types</h2>
     <div class="types">${P.styles.filter(s => s.behaviour === "Curtain").map(typeRow).join("")}</div>
     <div class="actions"><button class="btn" id="addCurtainType">+ Curtain type</button></div>
-    <p class="note">Click a type to rename it or change its shape, colour or shading. Names appear in the sheet legend.</p>
+    <p class="note">Click a type to rename it or change its shape, colour or shading. Names appear in the sheet legend, in the order of these lists: drag a type up or down to change it.</p>
     </section>`;
   const um = (k, f) => $(k).onchange = e => commit(p => f(p, e.target.value), true);
   um("mProg", (p,v) => p.meta.program = v); um("mNum", (p,v) => p.meta.number = v); um("mRev", (p,v) => p.meta.revision = v);
@@ -2763,6 +2766,28 @@ function renderSideInner() {
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
   if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
   side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
+  // drag a type up or down its list: the legend follows the types' order
+  let dragType = null;
+  const clearDrop = () => side.querySelectorAll(".type.dropbefore, .type.dropafter").forEach(x => x.classList.remove("dropbefore", "dropafter"));
+  const kindOf = name => (P.styles.find(x => x.name === name) || {}).behaviour;
+  side.querySelectorAll('.pane[data-pane="types"] [data-type]').forEach(b => {
+    b.draggable = true;
+    b.ondragstart = e => { dragType = b.dataset.type; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragType); b.classList.add("dragging"); };
+    b.ondragend = () => { dragType = null; b.classList.remove("dragging"); clearDrop(); };
+    b.ondragover = e => {
+      if (!dragType || dragType === b.dataset.type || kindOf(dragType) !== kindOf(b.dataset.type)) return;   // within its own list
+      e.preventDefault(); clearDrop();
+      const r = b.getBoundingClientRect(); b.classList.add(e.clientY > r.top + r.height / 2 ? "dropafter" : "dropbefore");
+    };
+    b.ondragleave = () => b.classList.remove("dropbefore", "dropafter");
+    b.ondrop = e => {
+      e.preventDefault();
+      const from = dragType, to = b.dataset.type, after = b.classList.contains("dropafter"); clearDrop();
+      if (!from || from === to || kindOf(from) !== kindOf(to)) return;
+      commit(p => { const [st] = p.styles.splice(p.styles.findIndex(x => x.name === from), 1); p.styles.splice(p.styles.findIndex(x => x.name === to) + (after ? 1 : 0), 0, st); });
+      renderSide();
+    };
+  });
   bindProgressSection(); bindLogicSection();
   $("addMsType").onclick = () => addType("Move");
   $("addBarType").onclick = () => addType("Stretch");
