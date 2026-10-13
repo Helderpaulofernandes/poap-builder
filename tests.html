@@ -809,6 +809,24 @@ const TESTS = {
     const acts = [...document.querySelectorAll(".startscreen [data-start]")].map(b => b.dataset.start);
     ["new", "open", "excel", "example", "brand"].forEach(a => T.ok(acts.includes(a), "missing " + a));
   },
+  "Chevron bar shape: an arrow, and the % complete clipped to it": () => {
+    T.ok(BAR_SHAPES.some(([k]) => k === "chevron"), "offered in the Types list");
+    const pts = s => s.split(" ").map(p => p.split(",").map(Number));
+    const full = pts(chevronPts(0, 0, 100, 10));
+    T.eq(full.length, 6, "six corners");
+    T.eq(Math.max(...full.map(p => p[0])), 100, "tip at the finish");
+    T.ok(full.some(p => p[0] === 5 && p[1] === 5), "notch at the start");
+    const half = pts(chevronPts(0, 0, 100, 10, 50));
+    T.eq(Math.max(...half.map(p => p[0])), 50, "progress stops at 50%");
+    const g = document.createElementNS(NS, "g");
+    drawBarShape(g, "chevron", 0, 0, 100, 10, "#fff", "#000");
+    T.ok(g.querySelector("polygon"), "drawn as a polygon");
+    T.mini([["A", "2027-01-01", "2027-02-10"]]);
+    const it = P.items[0], st = P.styles.find(x => x.name === it.style);
+    st.shape = "chevron"; it.pct = 40; P.progress = { ...(P.progress || {}), bars: true }; render();
+    T.ok(document.querySelectorAll(`#chart [data-id="${it.id}"]`).length, "bar on the sheet");
+    T.ok(document.querySelectorAll("#chart polygon").length >= 2, "bar and its progress drawn as chevrons");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();

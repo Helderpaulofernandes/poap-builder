@@ -1771,7 +1771,8 @@ function drawItem(g, it, ln, L, opts, F) {
     drawBarShape(grp, st.shape, x1, y, w, h, fill, stroke, { edge: crit ? LINE_RED : null, sw });
     if (pr.baseline && it.bStart) drawBaseline(grp, it, L, y + h);
     // done so far: the bar filled to its full height in a stronger shade, from the start to the % complete
-    if (pct > 0 && st.shape !== "summary") el("rect", { x: x1, y, width: w * pct / 100, height: h, fill: progressColour(it, ln.l), stroke: edge, "stroke-width": sw, "pointer-events": "none" }, grp);
+    if (pct > 0 && st.shape === "chevron") el("polygon", { points: chevronPts(x1, y, w, h, w * pct / 100), fill: progressColour(it, ln.l), stroke: edge, "stroke-width": sw, "pointer-events": "none" }, grp);
+    else if (pct > 0 && st.shape !== "summary") el("rect", { x: x1, y, width: w * pct / 100, height: h, fill: progressColour(it, ln.l), stroke: edge, "stroke-width": sw, "pointer-events": "none" }, grp);
     const plan = L.labels?.get(it.id) || { mode: textW(it.name, 9, 500) + 10 < w ? "inside" : "right" };
     const fs = plan.small ? STAGE_FONT : 9, tw = textW(it.name, fs, 500);
     const text = { fill: BRAND.navy, "font-size": fs, "font-weight": 500, "font-family": F.font, "pointer-events": "none" };
@@ -1827,7 +1828,7 @@ function polyPts(x, cy, n, r, rot) {
   return Array.from({ length: n }, (_, i) => { const t = rot + i * 2 * Math.PI / n; return `${(x + r(i) * Math.cos(t)).toFixed(2)},${(cy + r(i) * Math.sin(t)).toFixed(2)}`; }).join(" ");
 }
 const MS_SHAPES = [["diamond","Diamond"],["triangle","Triangle"],["invtriangle","Inverted triangle"],["square","Square"],["circle","Circle"],["star","Star"],["hexagon","Hexagon"]];
-const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["tile","Possession tile"],["summary","Summary bracket (single bar)"],["container","Summary group · bracket"],["container-box","Summary group · square box"],["container-umbrella","Umbrella · bold bar, stages below"]];
+const BAR_SHAPES = [["bar","Plain bar"],["rounded","Rounded bar"],["poss","Hatched bar"],["dashed","Dashed outline"],["chevron","Chevron (arrow)"],["tile","Possession tile"],["summary","Summary bracket (single bar)"],["container","Summary group · bracket"],["container-box","Summary group · square box"],["container-umbrella","Umbrella · bold bar, stages below"]];
 
 /* ---------- summary groups: a bracket (or box) on its own row, with its bars in the rows below ----------
    Bars belong to a summary through it.parent. The summary's height follows its bars (c.span = rows from its
@@ -1952,10 +1953,24 @@ function hiddenRows(p, laneId) {
   return out;
 }
 /* o.edge: an outline colour of its own (critical), o.sw: its width; everything else keeps the bar's colours */
+function chevronPts(x, y, w, h, cut = w) {   // cut: keep only the part left of x + cut (the % complete)
+  const d = Math.min(h / 2, w / 3), m = y + h / 2, X = x + Math.min(cut, w);
+  const pts = [[x, y], [x + w - d, y], [x + w, m], [x + w - d, y + h], [x, y + h], [x + d, m]], out = [];
+  pts.forEach((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    if (p[0] <= X) out.push(p);
+    if ((p[0] <= X) !== (q[0] <= X)) out.push([X, p[1] + (q[1] - p[1]) * (X - p[0]) / (q[0] - p[0])]);
+  });
+  return out.map(p => p.map(v => +v.toFixed(2)).join(",")).join(" ");
+}
 function drawBarShape(g, shape, x, y, w, h, fill, stroke, o = {}) {
   if (shape === "tile") {   // a possession: a small upright tile with a dashed edge, at least wide enough to see
     const tw = Math.max(w, 7);
     el("rect", { x, y: y - 2, width: tw, height: h + 4, fill, stroke: o.edge || stroke, "stroke-width": o.sw || .9, "stroke-dasharray": "2 1.4" }, g);
+    return;
+  }
+  if (shape === "chevron") {   // an arrow bar: pointed at the finish, notched at the start
+    el("polygon", { points: chevronPts(x, y, w, h), fill, stroke: o.edge || stroke, "stroke-width": o.sw || .9, "stroke-linejoin": "round" }, g);
     return;
   }
   if (shape === "summary") {   // thin bar with down-pointing ends, like a summary task
