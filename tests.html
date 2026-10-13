@@ -682,6 +682,14 @@ const TESTS = {
     const after = legend(); T.ok(after.indexOf("ML_Square") < after.indexOf("ML_Diamond"), "dropped above: the legend follows");
     undo(); const back = legend(); T.ok(back.indexOf("ML_Diamond") < back.indexOf("ML_Square"), "undo puts it back");
   },
+  "Removing the baseline takes 'Planned' out of the title": () => {
+    T.mini([["A", "2027-01-01", "2027-01-10", "BAR", { bStart: "2027-01-05", bEnd: "2027-01-12" }]]);
+    commit(p => p.progress = { show: "planned" }, true);
+    const title = () => [...document.querySelectorAll("#chart tspan")].map(t => t.textContent).join(" ");
+    T.ok(/Planned|baseline/i.test(title()), "with a baseline the title says which programme it shows");
+    commit(p => p.items.forEach(i => { delete i.bStart; delete i.bEnd; }), true);
+    T.ok(!/Planned|Actual/.test(title()), "without one it doesn't");
+  },
   "A gate or curtain can cover only some lanes": () => {
     const p = blankProject(); p.timeline = { start: "2027-01-01", end: "2027-06-30" }; ensureSummaryStyles(p);
     const ls = ["North", "Middle", "South"].map(n => newLane(p, n));
