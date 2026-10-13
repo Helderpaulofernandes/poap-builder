@@ -708,6 +708,14 @@ const TESTS = {
     const bc = B.items.find(i => i.id === c.id);
     T.eq(canon(itemMore(bc)), canon(itemMore(A.items.find(i => i.id === c.id))), "a curtain's own tag settings");
   },
+  "Progress tab: actual dates to edit, the baseline shown but left alone": () => {
+    T.mini([["A", "2027-01-04", "2027-01-20", "BAR", { bStart: "2027-01-04", bEnd: "2027-01-15", pct: 40 }]]);
+    sel = { type: "item", id: "A" }; render(); renderSide();
+    T.eq([document.getElementById("iAStart").value, document.getElementById("iAEnd").value], ["2027-01-04", "2027-01-20"], "the actual (current) dates are there");
+    T.ok(document.getElementById("iBForm").hidden && /04-Jan-27/.test(document.querySelector(".baseline-ro").textContent), "the baseline is shown, not open for editing");
+    const f = document.getElementById("iAEnd"); f.value = "2027-01-25"; f.dispatchEvent(new Event("change"));
+    T.eq([T.item("A").end, T.item("A").bEnd], ["2027-01-25", "2027-01-15"], "changing the finish moves the activity, not its baseline");
+  },
   "A gate or curtain can cover only some lanes": () => {
     const p = blankProject(); p.timeline = { start: "2027-01-01", end: "2027-06-30" }; ensureSummaryStyles(p);
     const ls = ["North", "Middle", "South"].map(n => newLane(p, n));

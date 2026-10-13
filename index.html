@@ -98,6 +98,8 @@ button.p6tag { cursor: pointer; font-size: 11.5px; padding: 1px 8px; }
 .p6tag.on:not(button) { color: var(--muted); }
 button.p6tag.on { outline: 2px solid currentColor; }
 .p6tag a { color: inherit; }
+.baseline-ro { margin: 4px 0 8px; font-size: 13px; }
+.baseline-ro a { margin-left: 6px; }
 .p6resetlnk { flex: none; font-size: 10.5px; color: var(--muted); }
 .p6chg { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 12px; }
 .p6legend { margin: 0; padding: 4px 8px; font-size: 11px; color: #333; display: flex; gap: 6px; align-items: center; }
@@ -2815,7 +2817,12 @@ function progressFields(cur) {
   const p = pctOf(cur);
   let state = "";
   if (dd) { const v = Math.round(progressPoint(cur, ddPoint()) - ddPoint()); state = v < 0 ? `${-v} day${v === -1 ? "" : "s"} behind at the data date` : v > 0 ? `${v} day${v === 1 ? "" : "s"} ahead at the data date` : "On track at the data date"; }
-  return `${ms ? `<label class="check"><input type="checkbox" id="iDone" ${p >= 100 ? "checked" : ""}> Achieved</label>`
+  // the actual dates, to update with the progress (the baseline below is set once and stays)
+  const actual = `<div class="row2">
+      <div class="f"><label for="iAStart">${ms ? "Actual date" : "Actual start"}</label><input id="iAStart" type="date" value="${cur.start}"></div>
+      ${ms ? "" : `<div class="f"><label for="iAEnd">${p >= 100 ? "Actual finish" : "Forecast finish"}</label><input id="iAEnd" type="date" value="${cur.end}"></div>`}
+    </div>`;
+  return `${actual}${ms ? `<label class="check"><input type="checkbox" id="iDone" ${p >= 100 ? "checked" : ""}> Achieved</label>`
       : `<div class="f"><label for="iPct">Complete: <span id="iPctVal">${p}</span>%</label>
         <div style="display:flex;gap:8px;align-items:center"><input id="iPct" type="range" min="0" max="100" step="5" value="${p}" style="flex:1;accent-color:var(--accent-2)"><input id="iPctN" type="number" min="0" max="100" value="${p}" style="width:58px" aria-label="Percent complete"></div></div>`}
     ${state ? `<p class="note">${state}.</p>` : ""}
@@ -2825,11 +2832,14 @@ function progressFields(cur) {
 function baselineFields(cur, ms) {
   const has = !!cur.bStart;
   const fin = has ? toDays(cur.end) - toDays(cur.bEnd || cur.bStart) : 0, st = has ? toDays(cur.start) - toDays(cur.bStart) : 0;
-  return `<div class="row2">
+  if (!has) return `<p class="note">No baseline yet. Set one for the whole programme from the Progress section (click an empty part of the sheet).</p>`;
+  const shown = `<p class="baseline-ro"><b>${ms ? fmt(cur.bStart) : `${fmt(cur.bStart)} – ${fmt(cur.bEnd || cur.bStart)}`}</b><br><span class="note">${ms ? `${signedDays(st)} against it.` : `Starts ${signedDays(st)}, finishes ${signedDays(fin)} against it.`}</span>
+      <a href="#" id="iBEdit" class="note" title="Correct this activity's baseline (it normally stays as it was set)">change</a></p>`;
+  return shown + `<div id="iBForm" hidden><div class="row2">
       <div class="f"><label for="iBStart">${ms ? "Baseline date" : "Baseline start"}</label><input id="iBStart" type="date" value="${cur.bStart || ""}"></div>
       ${ms ? "" : `<div class="f"><label for="iBEnd">Baseline finish</label><input id="iBEnd" type="date" value="${cur.bEnd || ""}"></div>`}
     </div>
-    <p class="note">${has ? (ms ? `${signedDays(st)} against the baseline.` : `Starts ${signedDays(st)}, finishes ${signedDays(fin)} against the baseline.`) : "No baseline yet. Set one for the whole programme from the Progress section (click an empty part of the sheet)."}</p>`;
+    </div>`;
 }
 function bindProgressFields(cur) {
   const upd = f => commit(p => f(p.items.find(i => i.id === cur.id)), true);
@@ -2840,6 +2850,9 @@ function bindProgressFields(cur) {
     $("iPctN").onchange = e => setPct(e.target.value);
   }
   if ($("iDone")) $("iDone").onchange = e => setPct(e.target.checked ? 100 : 0);
+  if ($("iAStart")) $("iAStart").onchange = e => { const v = e.target.value; if (!v) return; upd(x => { if (isMs(P, x.style)) { x.start = x.end = v; return; } const d = toDays(v) - toDays(x.start); x.start = v; if (toDays(x.end) < toDays(v)) x.end = addDays(x.end, d); }); };
+  if ($("iAEnd")) $("iAEnd").onchange = e => { const v = e.target.value; if (!v) return; upd(x => x.end = toDays(v) < toDays(x.start) ? x.start : v); };
+  if ($("iBEdit")) $("iBEdit").onclick = e => { e.preventDefault(); $("iBForm").hidden = false; e.target.hidden = true; };
   if ($("iBStart")) $("iBStart").onchange = e => upd(x => {
     const v = e.target.value; if (!v) { delete x.bStart; delete x.bEnd; return; }
     if (isMs(P, x.style)) { x.bStart = x.bEnd = v; return; }
