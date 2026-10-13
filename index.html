@@ -3756,10 +3756,14 @@ async function openFromFile(f, handle) {
   } else {
     const parsed = parseWorkbook(await f.arrayBuffer());
     const base = blankProject(); Object.assign(base.meta, parsed.meta);
+    mergeWorkbookTypes(base, parsed.styles);   // the workbook's types as they are, in its order (existing ones too)
     base.styles.push(...newTypesFrom(parsed, base.styles));
     const p = projectFromRows(parsed.rows, parsed.lanes, base);
+    applyRowMore(p, parsed.rows);
     if (parsed.timeline) p.timeline = parsed.timeline;
-    if (parsed.page) p.page = parsed.page;
+    if (parsed.page) p.page = { ...p.page, ...parsed.page };
+    if (parsed.view) p.view = { ...(p.view || {}), mode: parsed.view };
+    if (parsed.brand) p.brand = parsed.brand;
     if (parsed.progress && (parsed.progress.dataDate || parsed.progress.baselineName)) p.progress = { ...parsed.progress };
     loadDoc(p, null); if (!parsed.timeline) $("bFit").click();
     toast(`Opened ${parsed.rows.length} rows from ${f.name}`);
@@ -3803,34 +3807,49 @@ function exportExcel() {
   download(buildExcelBlob(), fileBase() + ".xlsx");
   toast("Exported " + fileBase() + ".xlsx");
 }
+/* What the workbook's own columns don't hold, kept as JSON in a "More" column so a workbook from PoaP Builder
+   rebuilds the programme exactly: tag and title settings, zones, second lines, P6 links, stage versions… */
+const XL_ITEM_KEYS = new Set(["id", "name", "style", "lane", "start", "end", "status", "row", "fill", "stroke", "labelMode", "parent", "collapsed", "pct", "bStart", "bEnd", "preds", "span", "y"]);
+const itemMore = i => { const o = {}; for (const [k, v] of Object.entries(i)) if (!XL_ITEM_KEYS.has(k) && v !== undefined) o[k] = v; return o; };
+const moreText = o => { if (!Object.keys(o).length) return ""; let t = JSON.stringify(o); if (t.length > 32000) { const { stageSets, ...rest } = o; t = JSON.stringify(rest); } return t.length > 32000 ? "" : t; };
+const moreIn = v => { if (v == null || v === "") return undefined; try { const o = JSON.parse(String(v)); return o && typeof o === "object" && !Array.isArray(o) ? o : undefined; } catch (e) { return undefined; } };
 function buildExcelBlob() {
   const wb = XLSX.utils.book_new();
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
-  const rowsOut = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed","Progress","BaselineStart","BaselineFinish","Predecessors"]]
+  const rowsOut = [["ShapeID","Name","Style","Lane","Start","End","Status","Duration","Row","Fill","Stroke","Label","Parent","Collapsed","Progress","BaselineStart","BaselineFinish","Predecessors","More"]]
     .concat(ordered.map(i => [i.id, i.name, i.style, laneName(i.lane), xDate(i.start), xDate(i.end), i.status, toDays(i.end) - toDays(i.start) + 1, i.row, i.fill, i.stroke,
       i.labelMode || "", i.parent || "", isContainer(P, i) ? (i.collapsed ? "Yes" : "No") : "",
-      isCurtain(P, i.style) ? "" : isContainer(P, i) ? rollupPct(i) : pctOf(i), i.bStart ? xDate(i.bStart) : "", i.bStart ? xDate(i.bEnd || i.bStart) : "", (i.preds || []).map(predText).join(", ")]));
+      isCurtain(P, i.style) ? "" : isContainer(P, i) ? rollupPct(i) : pctOf(i), i.bStart ? xDate(i.bStart) : "", i.bStart ? xDate(i.bEnd || i.bStart) : "", (i.preds || []).map(predText).join(", "), moreText(itemMore(i))]));
   const ws = XLSX.utils.aoa_to_sheet(rowsOut, { cellDates: true });
   for (let r = 1; r < rowsOut.length; r++) for (const c of [4,5,15,16]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws[a]) ws[a].z = "dd-mmm-yy"; }
-  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13,24].map(w => ({ wch: w }));
-  ws["!autofilter"] = { ref: `A1:R${rowsOut.length}` };
+  ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13,24,14].map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: `A1:S${rowsOut.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
   const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
   lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
   XLSX.utils.book_append_sheet(wb, lanes, "Lanes");
-  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration","TagPosition","TagAlign","TagSize","TagStyle","TagColour","TagTextColour"]].concat(P.styles.map(s => {
+  // (the type exactly as it is, in "More"; the columns before it are for reading and hand edits)
+  const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration","TagPosition","TagAlign","TagSize","TagStyle","TagColour","TagTextColour","More"]].concat(P.styles.map(s => {
     const c = s.behaviour === "Curtain", f = c ? tagFmt({}, s) : {};
     return [s.name, s.behaviour, s.shape, s.fill || "LANE", s.stroke, s.notes, c ? s.opacity ?? .18 : "", c ? s.days || "none" : "",
-      c ? f.tagPos : "", c ? f.tagAlign : "", c ? f.tagSize : "", c ? f.tagStyle : "", c ? s.tagFill || "" : "", c ? s.tagText || "" : ""];
+      c ? f.tagPos : "", c ? f.tagAlign : "", c ? f.tagSize : "", c ? f.tagStyle : "", c ? s.tagFill || "" : "", c ? s.tagText || "" : "", moreText(s)];
   })));
   styles["!cols"] = [{ wch: 13 }, { wch: 10 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 26 }];
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
-  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["RowHeightPx",P.page.rowH],["FillPage",P.page.fill !== false ? "Yes" : "No"],["DataDate",prog().dataDate ? xDate(prog().dataDate) : ""],["BaselineName",prog().baselineName],["Format","poap/2"]], { cellDates: true });
+  const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["RowHeightPx",P.page.rowH],["FillPage",P.page.fill !== false ? "Yes" : "No"],["DataDate",prog().dataDate ? xDate(prog().dataDate) : ""],["BaselineName",prog().baselineName],["Format","poap/2"],
+    ["Font",P.page.font || ""],["Header",P.page.header || ""],["View",(P.view && P.view.mode) || ""],["Status",m.status || ""],["Date",m.date || ""],
+    ["ClientLogoCrop",m.clientLogoCrop ? JSON.stringify(m.clientLogoCrop) : ""]], { cellDates: true });
   ["B9","B10","B16"].forEach(a => { if (proj[a] && proj[a].t !== "s") proj[a].z = "dd-mmm-yy"; });
   proj["!cols"] = [{ wch: 14 }, { wch: 44 }];
   XLSX.utils.book_append_sheet(wb, proj, "Project");
+  // the client logo and the brand (with its logo) are too big for a cell (32,767 characters): in pieces, on a sheet of their own
+  const logoRows = [["Field","Part","Data"]];
+  const pieces = (k, v) => { for (let i = 0; i < v.length; i += 30000) logoRows.push([k, i / 30000 + 1, v.slice(i, i + 30000)]); };
+  for (const k of ["clientLogo", "clientLogoSrc"]) pieces(k, m[k] || "");
+  if (P.brand) pieces("brand", JSON.stringify(P.brand));
+  if (logoRows.length > 1) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(logoRows), "Images");
   const out = XLSX.write(wb, { bookType: "xlsx", type: "array", cellDates: true });
   return new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
@@ -3857,7 +3876,7 @@ function parseWorkbook(buf) {
   const H = aoa[hi].map(c => String(c ?? "").trim().toLowerCase().replace(/\s+/g, ""));
   const col = (...names) => H.findIndex(h => names.includes(h));
   const C = { id: col("shapeid"), name: col("name","activity","description"), style: col("style"), lane: col("lane","swimlane"), start: col("start","startdate"), end: col("end","finish","enddate"), status: col("status"), row: col("row"), y: col("y_mm","ymm"), fill: col("fill"), stroke: col("stroke"), label: col("label","labelmode"), parent: col("parent","summary"), collapsed: col("collapsed"),
-    pct: col("progress","%complete","percentcomplete","pct","complete"), bStart: col("baselinestart","blstart"), bEnd: col("baselinefinish","baselineend","blfinish"), preds: col("predecessors","predecessor","preds") };
+    pct: col("progress","%complete","percentcomplete","pct","complete"), bStart: col("baselinestart","blstart"), bEnd: col("baselinefinish","baselineend","blfinish"), preds: col("predecessors","predecessor","preds"), more: col("more") };
   // progress as 45, "45%" or a percent-formatted 0.45; blank is 0. Undefined when the column isn't there.
   const pctIn = v => { if (v == null || v === "") return 0; const n = parseFloat(String(v).replace("%", "")); if (!Number.isFinite(n)) return 0; return Math.max(0, Math.min(100, Math.round(typeof v === "number" && n > 0 && n < 1 ? n * 100 : n))); };
   const rows = [], problems = [];
@@ -3871,7 +3890,7 @@ function parseWorkbook(buf) {
       pct: C.pct >= 0 ? pctIn(g("pct")) : undefined,
       predsRaw: C.preds >= 0 ? String(g("preds") ?? "").trim() : undefined,
       bStart: C.bStart >= 0 ? toISO(g("bStart")) || "" : undefined, bEnd: C.bEnd >= 0 ? toISO(g("bEnd")) || toISO(g("bStart")) || "" : undefined,
-      collapsed: C.collapsed >= 0 && String(g("collapsed") ?? "").trim() !== "" ? /^(yes|y|true|1)$/i.test(String(g("collapsed")).trim()) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined });
+      collapsed: C.collapsed >= 0 && String(g("collapsed") ?? "").trim() !== "" ? /^(yes|y|true|1)$/i.test(String(g("collapsed")).trim()) : undefined, labelMode: LABEL_MODES.some(([k]) => k === String(g("label") ?? "").trim().toLowerCase()) ? String(g("label")).trim().toLowerCase() : undefined, more: moreIn(g("more")) });
   }
   let lanes = [];
   const lsh = wb.Sheets["Lanes"];
@@ -3879,18 +3898,28 @@ function parseWorkbook(buf) {
     const la = XLSX.utils.sheet_to_json(lsh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
     lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0 }));
   }
-  let meta = {}, timeline = null, page = null, fromTool = false, progress;
+  let meta = {}, timeline = null, page = null, fromTool = false, progress, view = "", brand = null;
   const psh = wb.Sheets["Project"];
   if (psh) {
     const kv = Object.fromEntries(XLSX.utils.sheet_to_json(psh, { header: 1, raw: true }).slice(1).map(r => [String(r[0] ?? "").trim().toLowerCase(), r[1]]));
     fromTool = /^poap\//i.test(String(kv.format ?? ""));   // exported by PoaP Builder: the workbook is the whole programme
     meta = { program: kv.program, number: kv.number, title: kv.title, subtitle: kv.subtitle, client: kv.client, author: kv.author || kv.preparedby, revision: kv.revision };
+    meta = { ...meta, status: kv.status, date: kv.date instanceof Date ? toISO(kv.date) : kv.date };
     meta = Object.fromEntries(Object.entries(meta).filter(([,v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]));
+    const crop = moreIn(kv.clientlogocrop); if (crop) meta.clientLogoCrop = crop;
+    view = String(kv.view ?? "").trim(); brand = moreIn(kv.brand) || null;
     const a = toISO(kv.timelinestart), b = toISO(kv.timelineend); if (a && b) timeline = { start: a, end: b };
     if ("datadate" in kv || "baselinename" in kv) progress = { dataDate: toISO(kv.datadate) || "", baselineName: String(kv.baselinename ?? "").trim() };
     const size = Object.keys(PAPER).find(k => k.toLowerCase() === String(kv.pagesize ?? "").trim().toLowerCase());
     if (size) page = { size, orient: /portrait/i.test(kv.orientation ?? "") ? "portrait" : "landscape", margin: [5, 7, 10, 15, 20].includes(+kv.marginmm) ? +kv.marginmm : 7,
       rowH: +kv.rowheightpx >= 14 && +kv.rowheightpx <= 40 ? +kv.rowheightpx : 26, fill: !/^no$/i.test(String(kv.fillpage ?? "").trim()) };
+    if (page && /^(montserrat|condensed)$/.test(String(kv.font ?? ""))) page.font = String(kv.font);
+    if (page && /^(classic|bold)$/.test(String(kv.header ?? ""))) page.header = String(kv.header);
+  }
+  const lgs = wb.Sheets["Images"] || wb.Sheets["ClientLogo"];   // the client logo and the brand, in pieces
+  if (lgs) {
+    const parts = {}; XLSX.utils.sheet_to_json(lgs, { header: 1, raw: true }).slice(1).forEach(r => { const k = String(r[0] ?? ""); if (/^(clientLogo(Src)?|brand)$/.test(k)) (parts[k] = parts[k] || []).push([+r[1] || 0, String(r[2] ?? "")]); });
+    for (const [k, ps] of Object.entries(parts)) { const v = ps.sort((a, b) => a[0] - b[0]).map(x => x[1]).join(""); if (k === "brand") brand = moreIn(v) || brand; else meta[k] = v; }
   }
   let styles = [];
   const ssh = wb.Sheets["StyleRegister"];
@@ -3913,10 +3942,35 @@ function parseWorkbook(buf) {
           tagFill: hex(x.tagcolour) || undefined, tagText: hex(x.tagtextcolour) || undefined,
         }).filter(([, v]) => v !== undefined)));
       }
+      const full = moreIn(x.more);   // the type exactly as it was exported (hand edits in the columns before it still count)
+      if (full && full.name === name) {
+        const edits = {}, col = v => v == null ? "" : String(v).trim();
+        if (col(x.legendlabel) && col(x.legendlabel) !== (full.notes || "")) edits.notes = col(x.legendlabel);
+        const fc = col(x.defaultfill); if (fc && (/^lane$/i.test(fc) ? "" : hex(fc)) !== (full.fill || "")) edits.fill = /^lane$/i.test(fc) ? "" : hex(fc);
+        if (col(x.defaultstroke) && hex(col(x.defaultstroke)) !== (full.stroke || "")) edits.stroke = hex(col(x.defaultstroke));
+        if (col(x.shape) && col(x.shape) !== full.shape && shapes.some(([k]) => k === col(x.shape))) edits.shape = col(x.shape);
+        return { ...full, ...edits };
+      }
       return s;
     });
   }
-  return { rows, lanes, meta, timeline, page, problems, styles, fromTool, progress };
+  return { rows, lanes, meta, timeline, page, problems, styles, fromTool, progress, view, brand };
+}
+/* a workbook's types replace the programme's types of the same name, and set their order (others keep theirs, after) */
+function mergeWorkbookTypes(p, styles) {
+  if (!styles || !styles.length) return;
+  const key = n => String(n).toLowerCase(), byName = new Map(styles.map(s => [key(s.name), s]));
+  const merged = styles.map(s => clone(s)).concat(p.styles.filter(s => !byName.has(key(s.name))));
+  p.styles = merged;
+}
+/* the settings a row carried in "More": onto the item it made */
+function applyRowMore(p, rows) {
+  for (const r of rows) if (r.more && r.id) { const it = p.items.find(i => i.id === r.id); if (it) setItemMore(it, r.more); }
+}
+const canon = v => JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x);
+function setItemMore(it, more) {
+  for (const k of Object.keys(it)) if (!XL_ITEM_KEYS.has(k) && !(k in more)) delete it[k];
+  for (const [k, v] of Object.entries(more)) if (!XL_ITEM_KEYS.has(k)) it[k] = v;
 }
 /* Types the workbook uses that this project doesn't have yet: from its StyleRegister sheet,
    or guessed from the Style column. Existing types are never overwritten. */
@@ -3954,6 +4008,7 @@ function previewImport(parsed, fname) {
     if (look && r.lane && r.lane.toLowerCase() !== laneName(cur.lane).toLowerCase()) diffs.push(["Lane", laneName(cur.lane), r.lane]);
     if (r.status && r.status !== cur.status) diffs.push(["Status", cur.status, r.status]);
     if (look && r.parent !== undefined && (r.parent || "") !== (cur.parent || "")) diffs.push(["Summary", cur.parent || "(none)", r.parent || "(none)"]);
+    if (look && r.more && canon(itemMore(cur)) !== canon(r.more)) diffs.push(["Settings", null, "tags, titles, zones and other settings, as in the workbook"]);
     if (look && r.collapsed !== undefined && !!r.collapsed !== !!cur.collapsed) diffs.push(["Collapsed", cur.collapsed ? "Yes" : "No", r.collapsed ? "Yes" : "No"]);
     // progress and baseline (a summary's progress is worked out from its bars, so it isn't read back)
     const trackedRow = !isCurtain(lookup, st) && !/^container/.test(styleOf(lookup, st).shape);
@@ -3994,8 +4049,21 @@ function previewImport(parsed, fname) {
   }
   const removable = missing.length + lanesGone.length;
 
+  // a workbook PoaP Builder wrote is the whole programme: its title block, page, view, brand and types come too
+  const whole = parsed.fromTool && !parsed.keepLook, sheetDiffs = [], typeDiffs = [];
+  if (whole) {
+    const big = k => /^clientLogo(Src)?$/.test(k);
+    for (const [k, v] of Object.entries(parsed.meta || {})) if (canon(P.meta[k] ?? "") !== canon(v ?? "")) sheetDiffs.push(["Title block", k === "clientLogo" ? "Client logo" : k === "clientLogoSrc" ? null : k[0].toUpperCase() + k.slice(1), big(k) ? null : String(P.meta[k] ?? ""), big(k) ? "as in the workbook" : typeof v === "object" ? "as in the workbook" : String(v)]);
+    for (const [k, v] of Object.entries(parsed.page || {})) if (canon(P.page[k]) !== canon(v)) sheetDiffs.push(["Page", k, String(P.page[k] ?? ""), String(v)]);
+    if (parsed.timeline && (parsed.timeline.start !== P.timeline.start || parsed.timeline.end !== P.timeline.end)) sheetDiffs.push(["Timeline", "", `${fmt(P.timeline.start)} – ${fmt(P.timeline.end)}`, `${fmt(parsed.timeline.start)} – ${fmt(parsed.timeline.end)}`]);
+    if (parsed.brand && canon(parsed.brand) !== canon(P.brand || null)) sheetDiffs.push(["Brand", "", null, parsed.brand.name || "as in the workbook"]);
+    for (const st of parsed.styles || []) { const cur = P.styles.find(x => x.name.toLowerCase() === st.name.toLowerCase()); if (cur && canon(cur) !== canon(st)) typeDiffs.push([st.name, "Type", null, `${st.notes || st.name}: as in the workbook`]); }
+    if ((parsed.styles || []).length && parsed.styles.map(x => x.name).join() !== P.styles.filter(x => parsed.styles.some(y => y.name === x.name)).map(x => x.name).join()) typeDiffs.push(["", "Type order", null, "as in the workbook (the legend follows it)"]);
+  }
   const tr = (id, what, from, to) => `<tr><td>${esc(id)}</td><td>${esc(what)}</td><td>${from != null ? `<span class="old">${esc(from)}</span> → ` : ""}${esc(to)}</td></tr>`;
   const body = [
+    ...sheetDiffs.filter(d => d[1] !== null).map(d => tr(d[0], d[1], d[2], d[3])),
+    ...typeDiffs.map(d => tr(...d)),
     ...(ddChange ? [tr("", "Data date", prog().dataDate ? fmt(prog().dataDate) : "(none)", ddNew ? fmt(ddNew) : "(none)")] : []),
     ...newTypes.map(s => tr(s.name, `New ${s.behaviour === "Move" ? "milestone" : "bar"} type`, null, s.notes)),
     ...laneDiffs.map(d => tr(...d)),
@@ -4006,7 +4074,7 @@ function previewImport(parsed, fname) {
     ...missing.map(m => tr(m.id, "Not in workbook", null, `${m.name}${m.lane ? " · " + laneName(m.lane) : ""}`)),
     ...parsed.problems.map(p => `<tr><td></td><td>Skipped</td><td>${esc(p)}</td></tr>`),
   ].join("");
-  const nothing = !changes.length && !adds.length && !dupes.length && !newTypes.length && !laneDiffs.length && !ddChange;
+  const nothing = !changes.length && !adds.length && !dupes.length && !newTypes.length && !laneDiffs.length && !ddChange && !sheetDiffs.length && !typeDiffs.length;
   const removeLabel = [missing.length && `${missing.length} item${missing.length > 1 ? "s" : ""}`, lanesGone.length && `${lanesGone.length} lane${lanesGone.length > 1 ? "s" : ""}`].filter(Boolean).join(" and ");
   showModal(`
     <header><h3>Update from ${esc(fname)}</h3><p>${parsed.keepLook ? "Only P6's dates, status, progress and new items come in: names, types, lanes, summaries, labels and positions you set on the sheet are kept." : "Rows are matched to the programme by ShapeID. Positions and colours you set on the sheet are kept."}</p></header>
@@ -4030,7 +4098,15 @@ function previewImport(parsed, fname) {
       const del = m.querySelector("#impDel")?.checked;
       commit(p => {
         if (parsed.onApply) parsed.onApply(p);   // e.g. a P6 update keeping the current dates as the baseline first
-        p.styles.push(...clone(newTypes));
+        if (whole) {
+          Object.assign(p.meta, clone(parsed.meta || {}));
+          if (parsed.page) p.page = { ...p.page, ...parsed.page };
+          if (parsed.timeline) p.timeline = { ...parsed.timeline };
+          if (parsed.view) p.view = { ...(p.view || {}), mode: parsed.view };
+          if (parsed.brand) p.brand = clone(parsed.brand);
+          mergeWorkbookTypes(p, parsed.styles);
+        }
+        p.styles.push(...clone(newTypes).filter(t => !p.styles.some(x => x.name.toLowerCase() === t.name.toLowerCase())));
         const laneFor = name => { let l = p.lanes.find(x => x.name.toLowerCase() === name.toLowerCase()); if (!l) l = newLane(p, name); return l.id; };
         for (const c of changes) {
           const it = p.items.find(i => i.id === c.cur.id), r = c.r, st = styleOf(p, r.style).name;
@@ -4050,6 +4126,7 @@ function previewImport(parsed, fname) {
           }
           if (r.p6) { if (r.p6.crit) it.p6crit = true; else delete it.p6crit; if (r.p6.tf != null) it.p6tf = r.p6.tf; else delete it.p6tf; }   // P6's float, quietly refreshed
           if (r.x) Object.assign(it, r.x);
+          if (r.more) setItemMore(it, r.more);
           if (r.reset) {   // fresh from P6: its own look back to the type's, its place in its summary as the import puts it
             it.fill = r.fill || ""; it.stroke = r.stroke || "";
             ["titleAlign", "titleSize", "titleWeight", "titleColour"].forEach(k => delete it[k]);
@@ -4655,6 +4732,7 @@ function rowToNewItem(p, r, { laneFor, allIds, reserved, keepLook }) {
   if (r.p6) { if (r.p6.crit) it.p6crit = true; if (r.p6.tf != null) it.p6tf = r.p6.tf; }
   if (r.x) Object.assign(it, r.x);
   if (r.labelMode && r.labelMode !== "auto") it.labelMode = r.labelMode;
+  if (r.more) setItemMore(it, r.more);
   const par = it.parent && p.items.find(i => i.id === it.parent);
   if (!curtain && par && Number.isFinite(r.relRow)) it.row = par.row + r.relRow;
   else if (!curtain && keepLook && /^container/.test(styleOf(p, st).shape)) it.row = p.items.filter(i => i.lane === it.lane && !isCurtain(p, i.style)).reduce((m, i) => Math.max(m, bottomOf(p, i)), -1) + 1;

@@ -690,6 +690,24 @@ const TESTS = {
     commit(p => p.items.forEach(i => { delete i.bStart; delete i.bEnd; }), true);
     T.ok(!/Planned|Actual/.test(title()), "without one it doesn't");
   },
+  "Excel holds everything: a programme rebuilt from its workbook is the same programme": async () => {
+    const p = seedProject();
+    p.meta.clientLogo = "data:image/png;base64," + "A".repeat(70000); p.meta.status = "For Information";
+    p.page.font = "condensed"; p.page.header = "bold";
+    const ms = p.styles.find(s => s.name === "ML_Square"); ms.fill = "#002E8A"; ms.notes = "Construction Milestone";
+    const cur = p.styles.find(s => s.behaviour === "Curtain"); cur.notes = "Track Certification"; cur.fill = "#00E1FF"; cur.legend = false;
+    p.styles.push(p.styles.splice(p.styles.indexOf(ms), 1)[0]);   // order changed
+    const c = p.items.find(i => p.styles.find(s => s.name === i.style).behaviour === "Curtain");
+    Object.assign(c, { tagPos: "inside", tagAlign: "right", tagSize: "S", tagText: "#BDBCBC", opacity: .3, sub: "second line" });
+    loadDoc(p, null); const A = clone(P);
+    const f = new File([buildExcelBlob()], "round trip.xlsx");
+    await openFromFile(f, null); T.clean();
+    const B = P;
+    T.eq([B.meta.clientLogo.length, B.meta.status, B.page.font, B.page.header], [A.meta.clientLogo.length, "For Information", "condensed", "bold"], "title block, logo and page");
+    T.eq(B.styles.map(s => canon(s)), A.styles.map(s => canon(s)), "every type, as it was and in its order");
+    const bc = B.items.find(i => i.id === c.id);
+    T.eq(canon(itemMore(bc)), canon(itemMore(A.items.find(i => i.id === c.id))), "a curtain's own tag settings");
+  },
   "A gate or curtain can cover only some lanes": () => {
     const p = blankProject(); p.timeline = { start: "2027-01-01", end: "2027-06-30" }; ensureSummaryStyles(p);
     const ls = ["North", "Middle", "South"].map(n => newLane(p, n));
