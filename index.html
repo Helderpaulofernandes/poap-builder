@@ -3834,7 +3834,9 @@ function showModal(html, acts) {
   const m = document.createElement("div"); m.className = "modal"; m.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">${html}</div>`;
   ROOT.appendChild(m);
   const close = () => m.remove();
-  m.addEventListener("click", e => { const a = e.target.closest("[data-act]")?.dataset.act; if (e.target === m || a === "close") { acts.close?.(); return close(); } if (a && acts[a]) { if (acts[a](m) !== false) close(); } });
+  // close on the backdrop only when the press started there too: selecting text and letting go outside the dialog mustn't close it
+  let downOn = null; m.addEventListener("mousedown", e => downOn = e.target);
+  m.addEventListener("click", e => { const a = e.target.closest("[data-act]")?.dataset.act; if ((e.target === m && downOn === m) || a === "close") { acts.close?.(); return close(); } if (a && acts[a]) { if (acts[a](m) !== false) close(); } });
   return m;
 }
 

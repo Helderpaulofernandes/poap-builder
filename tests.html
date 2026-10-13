@@ -827,6 +827,14 @@ const TESTS = {
     T.ok(document.querySelectorAll(`#chart [data-id="${it.id}"]`).length, "bar on the sheet");
     T.ok(document.querySelectorAll("#chart polygon").length >= 2, "bar and its progress drawn as chevrons");
   },
+  "A dialog stays open when a text selection ends on the backdrop": () => {
+    const m = showModal(`<div class="body"><input id="tSel" value="Planned (Rev A)"></div>`, {});
+    const fire = (t, type) => t.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+    fire(m.querySelector("#tSel"), "mousedown"); fire(m, "click");
+    T.ok(m.isConnected, "still open after a drag from the field");
+    fire(m, "mousedown"); fire(m, "click");
+    T.ok(!m.isConnected, "a real backdrop click still closes it");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();
