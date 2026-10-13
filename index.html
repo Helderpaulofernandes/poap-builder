@@ -536,6 +536,7 @@ function plannedCopy(p) {
     return i;
   });
   q.progress = { ...prog(), dataDate: "", line: false, bars: false, baseline: false, show: "planned" };
+  q.plannedView = true;   // drawn as the planned programme (it has no baseline of its own)
   return q;
 }
 const planName = () => prog().baselineName || "Planned";
@@ -1181,7 +1182,7 @@ function drawHeader(svg, L, F, opts) {
   const t2 = el("text", { x: tx, y: 55, fill: BRAND.orange, "font-size": 14, "font-weight": 700, "font-family": F.font }, g, `${m.number || ""} ${m.title || ""}`.trim());
   if (m.subtitle) el("tspan", { "font-size": 11, "font-weight": 600 }, t2, `  –  ${m.subtitle}`);
   // which programme this sheet shows, once there's a plan to compare against
-  const pr = prog(), mode = pr.show;
+  const pr = prog(), mode = P.plannedView ? "planned" : showMode();   // (no baseline any more: no "Planned" or "Actual vs" in the title)
   const shown = mode === "planned" ? planName()
     : hasPlan() ? (mode === "actual" ? "Actual" : `Actual vs ${planName()}`) + (pr.dataDate ? ` at ${fmt(pr.dataDate)}` : "") : "";
   if (shown) el("tspan", { "font-size": 11, "font-weight": 700, fill: BRAND.navy }, t2, `  ·  ${shown}`);
