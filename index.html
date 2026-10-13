@@ -956,7 +956,8 @@ function layout(opts) {
   // a phase band (e.g. Station open / closed) gets a row of its own under the timeline, only when used
   const phaseH = P.items.some(i => isCurtain(P, i.style) && isShape(P, i, "band")) ? 24 : 0;
   // curtain tag strip: a band of its own between the timeline and the first lane, only when used
-  const bandTop = G.hdrH, phaseTop = bandTop + G.topH, stripTop = phaseTop + phaseH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
+  const sc = opts.chrome || 1;   // the title block and footer drawn larger by this, so they print at their own size however the sheet shrinks
+  const bandTop = G.hdrH * sc, phaseTop = bandTop + G.topH, stripTop = phaseTop + phaseH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
   const bodyTop = stripTop + stripH;
   let y = bodyTop; const lanes = [];
   for (const l of P.lanes) {
@@ -975,7 +976,7 @@ function layout(opts) {
         : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
   }
   const ftrH = opts.ftrH || G.ftrH;   // the footer grows when the legend and key need more lines
-  return { ppd, t0, t1, W, bandTop, phaseTop, phaseH, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + ftrH, ftrH, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
+  return { ppd, t0, t1, W, bandTop, phaseTop, phaseH, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + ftrH * sc, ftrH, chrome: sc, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
 }
 
 /* ---------- curtain tags: position, alignment, size, style and colours ---------- */
@@ -1041,7 +1042,7 @@ function draw(svg, opts) {
   }
   let L = layout(opts);
   // labels first: numbered ones go in the footer key, which may need a taller footer
-  const labels = planLabels(L), fh = footerPlan(L, labels.keyList).height;
+  const labels = planLabels(L), fh = footerPlan({ ...L, W: L.W / (L.chrome || 1) }, labels.keyList).height;
   if (fh !== L.ftrH) L = layout({ ...opts, ftrH: fh });
   L.labels = labels;
   const lg = logic(); L.cp = lg.critical || lg.links ? criticalPath() : null;
@@ -1051,7 +1052,9 @@ function draw(svg, opts) {
   const F = { font: opts.font || sheetFace() };
   el("rect", { x: 0, y: 0, width: L.W, height: L.H, fill: "#FFFFFF" }, svg);
 
-  drawHeader(svg, L, F, opts);
+  const sc = L.chrome || 1;
+  if (sc === 1) drawHeader(svg, L, F, opts);
+  else drawHeader(el("g", { transform: `scale(${sc})` }, svg), { ...L, W: L.W / sc }, F, opts);
 
   // lane bodies (white, like the Visio sheet) are the hit targets for selection / double-click
   const gl = el("g", {}, svg);
@@ -1113,14 +1116,15 @@ function draw(svg, opts) {
   if (L.stripH) el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": .9, "pointer-events": "none" }, svg);
   el("line", { x1: 0, x2: L.W, y1: L.bodyBottom, y2: L.bodyBottom, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   drawDataDatePointers(svg, L);
-  drawFooter(svg, L, F);
+  if (sc === 1) drawFooter(svg, L, F);
+  else drawFooter(el("g", { transform: `translate(0 ${L.H - L.ftrH * sc}) scale(${sc})` }, svg), { ...L, W: L.W / sc, H: L.ftrH }, F);
   if (!opts.print) {   // on screen, the title block, timelines and legend open their settings when clicked
     const gz = el("g", {}, svg), zone = (x, y, w, h, z, tip) => el("title", {}, el("rect", { x, y, width: w, height: h, class: "zone", "data-zone": z }, gz), tip);
-    zone(0, 0, L.W, G.hdrH, "sheet:mProg", "Edit the title block");
+    zone(0, 0, L.W, G.hdrH * sc, "sheet:mProg", "Edit the title block");
     zone(G.headW, L.bandTop, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
     zone(G.headW, L.bodyBottom, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
-    zone(0, L.H - L.ftrH, L.W - FOOTER_BOX_W, L.ftrH, "types", "Legend: edit the milestone, bar and curtain types");
-    zone(L.W - FOOTER_BOX_W, L.H - L.ftrH, FOOTER_BOX_W, L.ftrH, "sheet:mAuthor", "Edit the author and revision");
+    zone(0, L.H - L.ftrH * sc, L.W - FOOTER_BOX_W * sc, L.ftrH * sc, "types", "Legend: edit the milestone, bar and curtain types");
+    zone(L.W - FOOTER_BOX_W * sc, L.H - L.ftrH * sc, FOOTER_BOX_W * sc, L.ftrH * sc, "sheet:mAuthor", "Edit the author and revision");
   }
   el("rect", { x: .9, y: .9, width: L.W - 1.8, height: L.H - 1.8, fill: "none", stroke: BRAND.navy, "stroke-width": 1.8, "pointer-events": "none" }, svg);
 
@@ -1997,8 +2001,15 @@ function drawPage(svg, extra = {}) {
   const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), slack = availH / (availW / L.W) - L.H, baseRow = G.rowH;
   if (P.page.fill !== false && rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); try { L = draw(svg, opts); } finally { G.rowH = baseRow; } }
   // taller than the page: it has to print smaller, so spread the timeline wider first and the shrunk sheet still fills the width
-  for (let n = 0; n < 3 && L.H / L.W > availH / availW * 1.01; n++) {
-    opts.ppd = (L.H * availW / availH - G.headW) / span; L = draw(svg, opts);
+  const widen = () => { for (let n = 0; n < 3 && L.H / L.W > availH / availW * 1.01; n++) { opts.ppd = (L.H * availW / availH - G.headW) / span; L = draw(svg, opts); } };
+  widen();
+  // only the programme shrinks: the title block and the legend are drawn larger by as much as the sheet is reduced,
+  // so they print at the same size on every sheet (two scenarios side by side read the same)
+  for (let n = 0; n < 4; n++) {
+    const kk = Math.min(availW / L.W, availH / L.H), want = (availW / W0) / kk;
+    if (want <= 1.01 && !opts.chrome) break;
+    if (Math.abs(want - (opts.chrome || 1)) < .01) break;
+    opts.chrome = Math.max(1, want); L = draw(svg, opts); widen();
   }
   const k = Math.min(availW / L.W, availH / L.H);   // printed mm per sheet px
   return { L, k, PW, PH, M, availW, availH, pg, fit: k / (availW / W0) };   // fit: how big the text prints against its natural size
