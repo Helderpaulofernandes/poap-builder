@@ -898,12 +898,7 @@ function changed(opts = {}) {
     const moved = pushSuccessors(P);
     if (moved.size) toast(`Moved ${moved.size} successor${moved.size === 1 ? "" : "s"} later to keep ${moved.size === 1 ? "its" : "their"} links.`, 3500);
   }
-  if (!opts.undo && msApart()) {
-    const moved = separateMilestones(P);
-    if (moved.length) toast(moved.length === 1 ? `Moved “${moved[0][0].name}” down a row so it isn't on top of “${moved[0][1].name}”.` : `Moved ${moved.length} milestones down a row so they aren't on top of others.`, 4000);
-  }
   syncContainers(P);
-  separateMilestones(P, true);   // remember where they are now
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   showStatus();
   render(); renderSide();
@@ -2366,21 +2361,7 @@ function groupFreeRow(p, c, it) {
 /* first row in the lane where this item doesn't collide (milestone labels count as occupied) */
 var PPD_HINT = null;   // the scale a programme being built will be drawn at, before it has been laid out (var: the example is built before this line runs)
 function freeRow(p, it) {
-  const span = rowSpan(p);
-  // a new summary bar goes below everything in its lane
-  if (isContainer(p, it)) return p.items.filter(o => o !== it && o.lane === it.lane).reduce((m, o) => Math.max(m, o.row + (isContainer(p, o) ? spanOf(o) : 1)), 0);
-  const [a, b] = span(it);
-  // summary bars block all their rows over their dates, so nothing is auto-placed inside one
-  const onRow = (o, r) => isContainer(p, o) ? r >= o.row && r < o.row + spanOf(o) : o.row === r;
-  const sp = o => isContainer(p, o) ? [toDays(o.start), toDays(o.end) + 1] : span(o);
-  for (let r = 0; r < 200; r++) {
-    const clash = p.items.some(o => o !== it && o.lane === it.lane && onRow(o, r) && (([c, d]) => c < b && a < d)(sp(o)));
-    if (!clash) return r;
-  }
-  return 0;
-}
-/* days an item occupies on its row, including a label drawn beside it */
-function rowSpan(p) {
+  // days an item occupies on its row, including a label drawn beside it
   let laid = null; try { laid = LAY; } catch (e) {}   // not laid out yet while the page is starting up
   const ppd = Math.max(0.5, PPD_HINT || (laid && laid.ppd) || p.view.zoom);
   const endD = p.timeline ? toDays(p.timeline.end) + 1 : Infinity;
@@ -2393,33 +2374,17 @@ function rowSpan(p) {
     const tw = textW(x.name, 9, 500) + 10;
     return [s, tw < (e - s) * ppd ? e : e + Math.ceil((tw + 4) / ppd)];   // name doesn't fit inside: it sits to the right
   };
-  return span;
-}
-/* A milestone just moved, re-dated or renamed that now sits on top of another milestone (marker or name) drops to
-   the nearest clear row below, inside its summary if it's in one. Nothing else moves. */
-var MS_SNAP = null;
-const msApart = () => P.page.msApart !== false;
-function separateMilestones(p, onlyRemember) {
-  const key = i => [i.lane, i.row, i.start, i.name, i.parent || ""].join("|");
-  const ms = p.items.filter(i => isMs(p, i.style) && !isCurtain(p, i.style));
-  const prev = MS_SNAP && MS_SNAP.of === p ? MS_SNAP.map : null;
-  const moved = [];
-  if (prev && !onlyRemember) {
-    const span = rowSpan(p), hit = (x, y) => { const [a, b] = span(x), [c, d] = span(y); return a < d && c < b; };
-    const onRow = (o, r) => isContainer(p, o) ? r >= o.row && r < o.row + spanOf(o) : o.row === r;
-    const sp = o => isContainer(p, o) ? [toDays(o.start), toDays(o.end) + 1] : span(o);
-    for (const it of ms.filter(i => prev.get(i.id) !== key(i))) {
-      const other = ms.find(o => o !== it && o.lane === it.lane && o.row === it.row && hit(it, o));
-      if (!other) continue;
-      const box = it.parent && p.items.find(c => c.id === it.parent);
-      const [a, b] = span(it);
-      const clear = r => !p.items.some(o => o !== it && o.lane === it.lane && (box ? o.parent === box.id && o.row === r : onRow(o, r)) && (([c, d]) => c < b && a < d)(sp(o)))
-        && (box || !p.items.some(c => isContainer(p, c) && c.lane === it.lane && r >= c.row && r < c.row + spanOf(c)));
-      for (let r = it.row + 1; r < it.row + 200; r++) if (clear(r)) { it.row = r; moved.push([it, other]); break; }
-    }
+  // a new summary bar goes below everything in its lane
+  if (isContainer(p, it)) return p.items.filter(o => o !== it && o.lane === it.lane).reduce((m, o) => Math.max(m, o.row + (isContainer(p, o) ? spanOf(o) : 1)), 0);
+  const [a, b] = span(it);
+  // summary bars block all their rows over their dates, so nothing is auto-placed inside one
+  const onRow = (o, r) => isContainer(p, o) ? r >= o.row && r < o.row + spanOf(o) : o.row === r;
+  const sp = o => isContainer(p, o) ? [toDays(o.start), toDays(o.end) + 1] : span(o);
+  for (let r = 0; r < 200; r++) {
+    const clash = p.items.some(o => o !== it && o.lane === it.lane && onRow(o, r) && (([c, d]) => c < b && a < d)(sp(o)));
+    if (!clash) return r;
   }
-  MS_SNAP = { of: p, map: new Map(ms.map(i => [i.id, key(i)])) };
-  return moved;
+  return 0;
 }
 
 document.addEventListener("keydown", e => {
@@ -2780,7 +2745,6 @@ function renderSideInner() {
     <label class="check"><input type="checkbox" id="pgFill" ${P.page.fill !== false ? "checked" : ""}> Spread rows to fill the page</label>
     <div class="f"><label>Font</label><div class="seg" role="group" aria-label="Sheet font">${[["montserrat", "Montserrat"], ["condensed", "Condensed (summary)"]].map(([v, n]) => `<button type="button" data-font="${v}" aria-pressed="${(P.page.font || "montserrat") === v}">${n}</button>`).join("")}</div></div>
     <div class="f"><label>Timeline header</label><div class="seg" role="group" aria-label="Timeline header">${[["classic", "Martinus"], ["bold", "Bold months"]].map(([v, n]) => `<button type="button" data-header="${v}" aria-pressed="${(P.page.header || "classic") === v}">${n}</button>`).join("")}</div></div>
-    <label class="check" title="When you move, re-date or rename a milestone onto another one, it drops to the nearest clear row"><input type="checkbox" id="pgMsApart" ${P.page.msApart !== false ? "checked" : ""}> Keep milestones off each other</label>
     <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
     ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%. Try Compact spacing or Tidy all lanes.</p>` : ""}
     <h2>Timeline</h2>
@@ -2819,7 +2783,6 @@ function renderSideInner() {
   $("pgRow").oninput = e => { $("pgRowVal").textContent = e.target.value; P.page.rowH = +e.target.value; render(); };
   $("pgRow").onchange = e => { const v = +e.target.value; P.page.rowH = origRow; commit(p => p.page.rowH = v, true); };
   $("pgFill").onchange = e => commit(p => p.page.fill = e.target.checked, true);
-  $("pgMsApart").onchange = e => commit(p => p.page.msApart = e.target.checked, true);
   side.querySelectorAll("[data-font]").forEach(b => b.onclick = () => commit(p => p.page.font = b.dataset.font, true));
   side.querySelectorAll("[data-header]").forEach(b => b.onclick = () => commit(p => p.page.header = b.dataset.header, true));
   $("pgTidy").onclick = () => {
