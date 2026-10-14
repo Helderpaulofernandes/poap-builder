@@ -835,6 +835,22 @@ const TESTS = {
     fire(m, "mousedown"); fire(m, "click");
     T.ok(!m.isConnected, "a real backdrop click still closes it");
   },
+  "A milestone moved onto another drops to a clear row; nothing else moves": () => {
+    T.mini([["A", "2027-01-01", "2027-01-20"], ["M1", "2027-03-01", "2027-03-01", "ML_Square"], ["M2", "2027-05-01", "2027-05-01", "ML_Square"]]);
+    const [a, m1, m2] = P.items;
+    commit(p => { const x = p.items.find(i => i.id === m1.id); x.row = 0; x.start = x.end = "2027-03-01"; });
+    commit(p => { const x = p.items.find(i => i.id === m2.id); x.row = 0; x.start = x.end = "2027-03-02"; });
+    const M1 = P.items.find(i => i.id === m1.id), M2 = P.items.find(i => i.id === m2.id);
+    T.eq(M1.row, 0, "the one already there stays");
+    T.ok(M2.row > 0, "the moved one drops a row");
+    T.eq(P.items.find(i => i.id === a.id).row, 0, "the bar stays");
+    // far apart on the same row is fine
+    commit(p => { const x = p.items.find(i => i.id === m2.id); x.row = 0; x.start = x.end = "2027-09-01"; });
+    T.eq(P.items.find(i => i.id === m2.id).row, 0, "no clash, no move");
+    // switched off: left where you put it
+    commit(p => { p.page.msApart = false; const x = p.items.find(i => i.id === m2.id); x.start = x.end = "2027-03-02"; });
+    T.eq(P.items.find(i => i.id === m2.id).row, 0, "off: stays on top");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();
