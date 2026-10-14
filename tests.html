@@ -835,6 +835,21 @@ const TESTS = {
     fire(m, "mousedown"); fire(m, "click");
     T.ok(!m.isConnected, "a real backdrop click still closes it");
   },
+  "Milestone names: auto keeps them off each other and off bars; the Label setting overrides": () => {
+    T.mini([["Bar", "2027-03-03", "2027-04-30"], ["Energex application submission", "2027-02-20", "2027-02-20", "ML_Square"], ["Energisation gate", "2027-03-01", "2027-03-01", "ML_Square"]]);
+    P.items.forEach(i => i.row = 0); render();
+    const pl = id => LAY.labels.get(id), [bar, m1, m2] = P.items;
+    T.ok(pl(m1.id) && pl(m1.id).ms, "milestones are planned");
+    T.ok(pl(m2.id).mode !== "right", "the second one doesn't write over the bar: " + pl(m2.id).mode);
+    T.ok(!(pl(m1.id).mode === "right" && pl(m2.id).mode === "left"), "the two names don't meet");
+    commit(p => { p.items.find(i => i.id === m2.id).labelMode = "above"; }, true);
+    T.eq(LAY.labels.get(m2.id).mode, "above", "set by hand");
+    commit(p => { p.items.find(i => i.id === m2.id).labelMode = "key"; }, true);
+    T.ok(LAY.labels.keyList.some(k => k.name.startsWith("Energisation gate")), "keyed milestones are listed in the key");
+    sel = { type: "item", id: m2.id }; renderSide();
+    T.ok(document.querySelector('#side button[data-label="left"]'), "the Label buttons show for a milestone");
+    T.ok(!document.querySelector('#side button[data-label="inside"]'), "but not Inside");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();

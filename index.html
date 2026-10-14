@@ -1525,6 +1525,9 @@ function vText(parent, text, cx, cy, maxW, size, weight, fill, F, laneId) {
 
 /* ---------- bar labels: inside, right, above, numbered key, or hidden ---------- */
 const LABEL_MODES = [["auto", "Auto"], ["inside", "Inside"], ["left", "Left"], ["right", "Right"], ["above", "Above"], ["below", "Below"], ["upright", "Upright"], ["key", "Key no."], ["none", "Hide"]];
+const MS_LABEL_MODES = LABEL_MODES.filter(([k]) => !["inside", "upright"].includes(k));
+/* a milestone's name (and date) beside its marker: how wide it is */
+const msLabelW = it => inlineMsDate() ? textW(it.name, 9, 500) + textW("  " + fmt(it.start), 8.5, 400) : Math.max(textW(it.name, 9, 500), textW(fmt(it.start), 8.5, 400));
 const CAPTION_FONT = 6.6, STAGE_FONT = 7.6;   // captions under possession tiles; stage names inside umbrella rows
 const ABOVE_FONT = 7.5;
 /* Decides where each bar's name goes. Auto: inside if it fits, else to the right if there's room before the
@@ -1542,7 +1545,7 @@ function planLabels(L) {
     for (const i of its) {
       if (isContainer(P, i)) continue;
       const x = L.x(i.start);
-      if (isMs(P, i.style)) { const w = textW(i.name, 9, 500) + 30 + (inlineMsDate() ? textW("  00-Mmm-00", 8.5, 400) : 0); take(occ, i.row, x - G.ms, x + w); take(msOcc, i.row, x - G.ms, x + w); }
+      if (isMs(P, i.style)) { const m = x + L.ppd / 2; take(occ, i.row, m - G.ms, m + G.ms); take(msOcc, i.row, m - G.ms, m + G.ms); }
       else take(occ, i.row, x, L.x(i.end) + L.ppd);
     }
     // every umbrella bar first, so a title placed beside one never runs into a neighbour that comes later
@@ -1574,9 +1577,23 @@ function planLabels(L) {
       if (side === "left") take(occ, c.row, x1 - 7 - tw, x1); else take(occ, c.row, x2, x2 + 7 + tw);
       out.set(c.id, { titleSide: side });
     }
-    const bars = its.filter(i => !isContainer(P, i) && !isMs(P, i.style)).sort((a, b) => toDays(a.start) - toDays(b.start) || a.row - b.row);
+    const bars = its.filter(i => !isContainer(P, i)).sort((a, b) => toDays(a.start) - toDays(b.start) || a.row - b.row);
     const captions = [];   // things captioned underneath (tiles, short stages), placed after the loop
     for (const i of bars) {
+      if (isMs(P, i.style)) {   // a milestone's name: right of the marker, else left, else above, else a key number, as for bars
+        const x = L.x(i.start) + L.ppd / 2, g = G.ms * .8 + 4, lw = msLabelW(i), aw = textW(i.name + "  " + fmt(i.start), ABOVE_FONT, 600);
+        const fitsRight = x + g + lw <= L.W - 6 && free(occ, i.row, x + G.ms + 4, x + g + lw);   // (clear of its own marker)
+        const fitsLeft = x - g - lw >= G.headW + 4 && free(occ, i.row, x - g - lw, x - G.ms - 4);
+        const fitsAbove = x - aw / 2 >= G.headW + 4 && x + aw / 2 <= L.W - 4 && free(aboveOcc, i.row, x - aw / 2, x + aw / 2) && free(occ, i.row - 1, x - aw / 2, x + aw / 2);
+        let mode = i.labelMode && MS_LABEL_MODES.some(([k]) => k === i.labelMode) ? i.labelMode : "auto";
+        if (mode === "auto") mode = fitsRight ? "right" : fitsLeft ? "left" : fitsAbove ? "above" : "key";
+        if (mode === "right") { take(occ, i.row, x + g, x + g + lw); take(msOcc, i.row, x + g, x + g + lw); }
+        if (mode === "left") { take(occ, i.row, x - g - lw, x - g); take(msOcc, i.row, x - g - lw, x - g); }
+        if (mode === "above") take(aboveOcc, i.row, x - aw / 2, x + aw / 2);
+        const plan = { mode, auto: !i.labelMode || i.labelMode === "auto", ms: true };
+        if (mode === "key") { plan.n = keyList.length + 1; keyList.push({ n: plan.n, name: `${i.name} (${fmt(i.start)})` }); take(occ, i.row, x + g, x + g + 12); }
+        out.set(i.id, plan); continue;
+      }
       const st = styleOf(P, i.style), x1 = L.x(i.start), x2 = L.x(i.end) + L.ppd, w = x2 - x1;
       const parent = parentOf.get(i.id), umb = parent && isUmbrella(P, parent);
       // possession tiles: a caption below when they sit on a work row, the name upright inside on the possession lane
@@ -1753,10 +1770,16 @@ function drawItem(g, it, ln, L, opts, F) {
     if (pr.baseline && it.bStart && it.bStart !== it.start) drawMarker(grp, st.shape, L.x(it.bStart) + L.ppd / 2, cy, s * .7, "#FFFFFF", BASE_GREY);
     drawMarker(grp, st.shape, x, cy, s, fill, edge, sw);
     if (pct >= 100) el("polyline", { points: `${x - s * .3},${cy} ${x - s * .08},${cy + s * .24} ${x + s * .32},${cy - s * .26}`, fill: "none", stroke: "#FFFFFF", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "pointer-events": "none" }, grp);
-    const tw = textW(it.name, 9, 500) + (inlineMsDate() ? textW("  " + fmt(it.start), 8.5, 400) : 0);
-    const left = x + s * .8 + 4 + tw > L.W - 6;          // near the right edge: label goes left of the marker
+    const tw = msLabelW(it);
+    const plan = L.labels?.get(it.id) || { mode: x + s * .8 + 4 + tw > L.W - 6 ? "left" : "right" };   // near the right edge: label goes left of the marker
+    const left = plan.mode === "left", beside = left || plan.mode === "right";
     const lx = left ? x - s * .8 - 4 : x + s * .8 + 4, anchor = left ? "end" : "start";
-    if (inlineMsDate()) {   // one line: "Name  03-Nov-26"
+    if (plan.mode === "above" || plan.mode === "below") {   // one small line over or under the marker
+      const t = el("text", { x, y: plan.mode === "above" ? cy - s - 1.5 : cy + s + ABOVE_FONT, "text-anchor": "middle", fill: BRAND.navy, "font-size": ABOVE_FONT, "font-weight": 600, "font-family": F.font }, grp, it.name + "  ");
+      el("tspan", { "font-weight": 400 }, t, fmt(it.start));
+    } else if (plan.mode === "key") keyBadge(grp, x + s * .8 + 6, cy, plan.n, F, stroke);
+    else if (!beside) {}   // hidden
+    else if (inlineMsDate()) {   // one line: "Name  03-Nov-26"
       const t = el("text", { x: lx, y: cy + 3.2, "text-anchor": anchor, fill: BRAND.navy, "font-size": 9, "font-weight": 500, "font-family": F.font }, grp, it.name + "  ");
       el("tspan", { "font-size": 8.5, "font-weight": 400 }, t, fmt(it.start));
     } else {
@@ -1764,7 +1787,8 @@ function drawItem(g, it, ln, L, opts, F) {
       el("text", { x: lx, y: cy + 8.5, "text-anchor": anchor, fill: BRAND.navy, "font-size": 8.5, "font-weight": 400, "font-family": F.font }, grp, fmt(it.start));
     }
     if (selected) el("rect", { x: x - s, y: cy - s, width: s * 2, height: s * 2, fill: "none", stroke: BRAND.orange, "stroke-width": 1.6, rx: 2 }, grp);
-    el("rect", { x: left ? x - s - tw - 10 : x - s, y: cy - s, width: s * 2 + tw + 10, height: s * 2, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
+    const hw = beside ? tw + 10 : 0;
+    el("rect", { x: left ? x - s - hw : x - s, y: cy - s, width: s * 2 + hw, height: s * 2, fill: "transparent", "data-id": it.id, "data-part": "body" }, grp);
     linkDots(x - s - 4, x + s + 4);
   } else {
     const x1 = L.x(it.start), x2 = L.x(it.end) + L.ppd, w = Math.max(2, x2 - x1), h = G.barH, y = cy - h / 2;
@@ -2564,7 +2588,7 @@ function renderMultiSide(side) {
       <div class="f"><label for="mxLane">Lane</label><select id="mxLane"><option value="">(as they are)</option>${P.lanes.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("")}</select></div>
       ${bars.length ? `<div class="f"><label for="mxStyle">Bar type</label><select id="mxStyle"><option value="">(as they are)</option>${P.styles.filter(s => s.behaviour === "Stretch" && !/^container/.test(s.shape)).map(s => `<option value="${esc(s.name)}">${esc(s.notes || s.name)}</option>`).join("")}</select></div>` : ""}
     </div>
-    ${bars.length || umbs.length ? `<div class="f"><label>Labels</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-mxlabel="${v}">${n}</button>`).join("")}</div></div>` : ""}
+    ${bars.length || umbs.length || mss.length ? `<div class="f"><label>Labels</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-mxlabel="${v}">${n}</button>`).join("")}</div></div>` : ""}
     <div class="row2">
       <div class="f"><label for="mxFill">Fill</label><input id="mxFill" type="color" value="${itemColours(its[0], P.lanes.find(l => l.id === its[0].lane)).fill}"></div>
       <div class="f"><label>&nbsp;</label><button class="btn" id="mxReset" title="Back to the lane and type colours">Default colours</button></div>
@@ -2594,6 +2618,7 @@ function renderMultiSide(side) {
   if ($("mxStyle")) $("mxStyle").onchange = e => { const s = e.target.value; if (s) each(x => { if (bars.some(b => b.id === x.id)) x.style = s; }); };
   side.querySelectorAll("[data-mxlabel]").forEach(b => b.onclick = () => each(x => {
     const v = b.dataset.mxlabel, umb = umbs.some(y => y.id === x.id);
+    if (mss.some(y => y.id === x.id)) { if (MS_LABEL_MODES.some(([k]) => k === v)) { if (v === "auto") delete x.labelMode; else x.labelMode = v; } return; }
     if (!umb && !bars.some(y => y.id === x.id)) return;
     if (umb && !UMB_MODES.some(([k]) => k === v)) return;   // below / upright don't apply to an umbrella's title
     if (v === "auto") delete x.labelMode; else x.labelMode = v;
@@ -3114,7 +3139,11 @@ async function baselineFromFile(f) {
 function itemExtras(cur) {
   const groups = P.items.filter(i => isContainer(P, i) && i.lane === cur.lane && i !== cur && (!isContainer(P, cur) || canNest(P, i, cur)));
   const groupPick = (!isContainer(P, cur) || isUmbrella(P, cur)) && groups.length ? `<div class="f"><label for="iParent">In summary</label><select id="iParent"><option value="">(none)</option>${groups.map(g => `<option value="${esc(g.id)}" ${cur.parent === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>` : "";
-  if (isMs(P, cur.style)) return groupPick;
+  if (isMs(P, cur.style)) {
+    const plan = LAY?.labels?.get(cur.id), mode = cur.labelMode || "auto";
+    return `${groupPick}<div class="f"><label>Label</label><div class="seg" role="group" aria-label="Label position">${MS_LABEL_MODES.map(([v, n]) => `<button type="button" data-label="${v}" aria-pressed="${mode === v}">${n}</button>`).join("")}</div></div>
+    ${mode === "auto" && plan ? `<p class="note">Auto puts it ${{ right: "to the right of the marker", left: "to the left of the marker", above: "above the marker", key: `as no. ${plan.n}, listed in the key at the bottom of the page` }[plan.mode] || "beside the marker"}, clear of the bars and names around it.</p>` : ""}`;
+  }
   if (isContainer(P, cur)) {
     const kids = containerChildren(P, cur), box = styleOf(P, cur.style).shape === "container-box";
     const tf = titleFmt(P, cur), tseg = (key, label, opts, val) => `<div class="f"><label>${label}</label><div class="seg" role="group" aria-label="${label}">${opts.map(([v, n]) => `<button type="button" data-tset="${key}" data-val="${v}" aria-pressed="${val === v}">${n}</button>`).join("")}</div></div>`;
