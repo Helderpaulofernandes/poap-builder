@@ -2088,22 +2088,40 @@ function render() {
   placePaper(mode);
   $("bUndo").disabled = !past.length; $("bRedo").disabled = !future.length;
 }
+/* Ctrl + scroll (or a trackpad pinch) over the sheet zooms the programme on screen, around the pointer; elsewhere the
+   browser zooms the page as usual. On screen only: it's not saved and doesn't change the print. Ctrl+0 resets it. */
+let MAG = 1;
+const magNote = () => MAG !== 1 ? ` · zoomed to ${Math.round(MAG * 100)}% (Ctrl+0 resets)` : "";
+$("stage").addEventListener("wheel", e => {
+  if (!(e.ctrlKey || e.metaKey) || !e.target.closest("#paper")) return;
+  e.preventDefault();
+  const st = $("stage"), a = $("chart").getBoundingClientRect();
+  const fx = (e.clientX - a.left) / a.width, fy = (e.clientY - a.top) / a.height;
+  const was = MAG;
+  MAG = Math.max(0.25, Math.min(8, MAG * Math.exp(-e.deltaY * (e.deltaMode ? 0.06 : 0.002))));
+  if (Math.abs(MAG - 1) < 0.03) MAG = 1;   // settles on 100% on the way through
+  if (MAG === was) return;
+  placePaper(P.view.mode);
+  const b = $("chart").getBoundingClientRect();   // keep the point under the pointer where it was
+  st.scrollLeft += b.left + fx * b.width - e.clientX; st.scrollTop += b.top + fy * b.height - e.clientY;
+}, { passive: false });
 /* size the paper and the sheet on screen; page views scale the printed layout to the window */
 function placePaper(mode) {
   const paper = $("paper"), sheet = $("sheet"), svg = $("chart"), st = $("stage");
   const warn = $("pageWarn"), label = $("pageLabel");
   if (!PLAN) {
-    paper.className = "paper free"; paper.style.width = paper.style.height = ""; sheet.style.left = sheet.style.top = ""; svg.style.width = svg.style.height = "";
-    label.textContent = `Free zoom · prints on ${pageName()}, switch to a Page view to see the printed layout`; warn.hidden = true; return;
+    paper.className = "paper free"; paper.style.width = paper.style.height = ""; sheet.style.left = sheet.style.top = "";
+    svg.style.width = MAG === 1 ? "" : LAY.W * MAG + "px"; svg.style.height = MAG === 1 ? "" : LAY.H * MAG + "px";
+    label.textContent = `Free zoom · prints on ${pageName()}, switch to a Page view to see the printed layout${magNote()}`; warn.hidden = true; return;
   }
   const W = Math.max(200, st.clientWidth - 40), H = Math.max(200, st.clientHeight - 80);
-  const s = mode === "page-100" ? 96 / 25.4 : mode === "page-fit" ? Math.min(W / PLAN.PW, H / PLAN.PH) : W / PLAN.PW;   // screen px per mm
+  const s = MAG * (mode === "page-100" ? 96 / 25.4 : mode === "page-fit" ? Math.min(W / PLAN.PW, H / PLAN.PH) : W / PLAN.PW);   // screen px per mm
   paper.className = "paper";
   paper.style.width = PLAN.PW * s + "px"; paper.style.height = PLAN.PH * s + "px";
   sheet.style.left = (PLAN.M + (PLAN.availW - PLAN.L.W * PLAN.k) / 2) * s + "px"; sheet.style.top = PLAN.M * s + "px";
   svg.style.width = PLAN.L.W * PLAN.k * s + "px"; svg.style.height = PLAN.L.H * PLAN.k * s + "px";
   $("pageInfo").style.width = paper.style.width;
-  label.textContent = `${pageName()} · ${P.page.margin} mm margins · what you see is what prints`;
+  label.textContent = `${pageName()} · ${P.page.margin} mm margins · what you see is what prints${magNote()}`;
   warn.hidden = PLAN.fit > 0.98;
   if (!warn.hidden) warn.textContent = `Content is taller than ${pageName()}: it prints at ${Math.round(PLAN.fit * 100)}%. Try a larger paper size, portrait, fewer rows or shorter lanes.`;
 }
@@ -2414,6 +2432,7 @@ function freeRow(p, it) {
 document.addEventListener("keydown", e => {
   if (e.target.closest && e.target.closest("input,select,textarea,.modal")) return;
   const k = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && k === "0" && MAG !== 1) { e.preventDefault(); MAG = 1; placePaper(P.view.mode); return; }   // the sheet's zoom first, then the browser's
   if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "s") { e.preventDefault(); saveDoc(); return; }
@@ -2440,6 +2459,7 @@ function openHelp() {
     ["Undo / redo", k("Ctrl") + " " + k("Z") + " / " + k("Ctrl") + " " + k("Y")],
     ["Save", k("Ctrl") + " " + k("S") + ". After the first save, changes save themselves"],
     ["Select all / none", k("Ctrl") + " " + k("A") + " / " + k("Esc")],
+    ["Zoom the sheet", k("Ctrl") + " + scroll (or pinch) over the programme zooms it around the pointer; " + k("Ctrl") + " " + k("0") + " goes back. On screen only, the print doesn't change"],
   ];
   showModal(`<header><h3>How PoaP Builder works</h3><p>Draw on the sheet; everything else is in the side panel. What you see is what prints.</p></header>
     <div class="body helpbody">
@@ -3794,7 +3814,7 @@ $("bCurtain").onclick = () => {
   ROOT.querySelectorAll(".modal [data-type]").forEach(b => b.onclick = () => { b.closest(".modal").remove(); addItem(b.dataset.type); });
 };
 $("bUndo").onclick = undo; $("bRedo").onclick = redo;
-$("viewMode").onchange = e => { P.view.mode = e.target.value; changed(); $("stage").scrollTo(0, 0); };
+$("viewMode").onchange = e => { P.view.mode = e.target.value; MAG = 1; changed(); $("stage").scrollTo(0, 0); };
 $("zoom").oninput = e => { P.view.zoom = +e.target.value; render(); };
 $("zoom").onchange = () => changed();
 $("bFit").onclick = () => {
