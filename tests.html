@@ -888,6 +888,11 @@ const TESTS = {
     // Excel keeps the groups
     const rows = XLSX.utils.sheet_to_json(XLSX.read(await buildExcelBlob().arrayBuffer()).Sheets["Lanes"]);
     T.eq(rows.filter(r => r.Group === g.name).length, 2, "the Lanes sheet names the group");
+    // a sub-lane's name can be turned upright
+    commit(p => { p.lanes.find(l => l.id === n.id).upright = true; }, true);
+    T.ok([...document.querySelectorAll(`#chart text[data-lanehead="${n.id}"]`)].every(x => /rotate\(-90/.test(x.parentNode.getAttribute("transform") || "")), "upright: drawn rotated");
+    const rows2 = XLSX.utils.sheet_to_json(XLSX.read(await buildExcelBlob().arrayBuffer()).Sheets["Lanes"]);
+    T.eq(rows2.find(r => r.LaneName === "New sub-lane").NameText, "Upright", "the Lanes sheet keeps it");
     // ungroup: the lanes stay
     commit(p => { p.lanes.forEach(l => delete l.group); }, true);
     T.ok(!P.laneGroups, "an empty group goes");
