@@ -2122,7 +2122,15 @@ function drawPage(svg, extra = {}) {
   let L = draw(svg, opts);
   const W0 = L.W;   // the sheet's natural width: printed at the full page width, text is its true size
   const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), slack = availH / (availW / L.W) - L.H, baseRow = G.rowH;
-  if (P.page.fill !== false && rowsTotal && slack > 0) { G.rowH = Math.min(baseRow * 2, baseRow + slack / rowsTotal); try { L = draw(svg, opts); } finally { G.rowH = baseRow; } }
+  // Spread rows to fill the page: the rows share out all the height left, however few lanes there are (the bars keep their size)
+  if (P.page.fill !== false && rowsTotal && slack > 0) {
+    G.rowH = baseRow + slack / rowsTotal;
+    try {
+      L = draw(svg, opts);
+      const left = availH / (availW / L.W) - L.H;   // a second pass takes up what the first didn't quite reach
+      if (Math.abs(left) > 1) { G.rowH = Math.max(baseRow, G.rowH + left / rowsTotal); L = draw(svg, opts); }
+    } finally { G.rowH = baseRow; }
+  }
   // taller than the page: it has to print smaller, so spread the timeline wider first and the shrunk sheet still fills the width
   const widen = () => { for (let n = 0; n < 3 && L.H / L.W > availH / availW * 1.01; n++) { opts.ppd = (L.H * availW / availH - G.headW) / span; L = draw(svg, opts); } };
   widen();
