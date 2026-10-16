@@ -306,8 +306,9 @@ const TESTS = {
     T.eq([box.style, a.parent, b.parent], ["SUMMARY_BOX", "WBS C", "WBS C"], "the umbrellas sit in the box");
     T.ok(containerChildren(P, a).length >= 1 && containerChildren(P, a).every(k => k.row > a.row), "each umbrella keeps its stages under it");
     T.ok(box.row + spanOf(box) - 1 >= Math.max(...descendants(P, box).map(k => bottomOf(P, k))), "the box reaches the bottom of everything inside");
-    const H = LAY.H; commit(q => q.items.find(i => i.id === "WBS C").collapsed = true, true);
-    T.ok(LAY.H < H && !document.querySelector('#chart [data-id="WBS C.A"]'), "collapsing the box hides the umbrellas and their stages");
+    const used = () => P.lanes.reduce((n, l) => n + laneRows(l, false), 0);   // the programme's own rows (the page is always filled)
+    const H = used(); commit(q => q.items.find(i => i.id === "WBS C").collapsed = true, true);
+    T.ok(used() < H && !document.querySelector('#chart [data-id="WBS C.A"]'), "collapsing the box hides the umbrellas and their stages");
     undo();
     T.eq([canNest(P, box, a), canNest(P, a, box), canNest(P, box, T.item("WBS C"))], [true, false, false], "only umbrellas go in a box, one level deep");
   },
@@ -900,6 +901,24 @@ const TESTS = {
       T.ok(usedH > PLAN.availH * .98 || usedW > PLAN.availW * .98, `${n} lane(s): ${usedW.toFixed(0)} x ${usedH.toFixed(0)} mm of ${PLAN.availW} x ${PLAN.availH}`);
       T.ok(usedH > PLAN.availH * .98, `${n} lane(s) use the full height: ${usedH.toFixed(0)} of ${PLAN.availH} mm`);
     }
+  },
+  "Fill with more rows: compact spacing kept, lanes get empty rows, page still full": () => {
+    const p = seedProject(); p.items = []; p.lanes = Array.from({ length: 3 }, (_, i) => ({ id: "X" + i, name: "Lane " + i, colour: "#4F7CAC", minRows: i + 1 }));
+    p.page.rowH = 18;   // More rows is the default
+    loadDoc(p, null);
+    const rows = PLAN.L.lanes.map(ln => ln.rows), h = PLAN.L.lanes.map(ln => ln.h / ln.rows);
+    T.ok(rows.reduce((a, b) => a + b, 0) > 6, "rows added: " + rows);
+    T.ok(rows[2] >= rows[0], "bigger lanes get more");
+    T.ok(Math.max(...h) < 18 * 1.6, "the spacing stays compact: " + h.map(x => x.toFixed(1)));
+    T.ok(PLAN.L.H * PLAN.k > PLAN.availH * .98, "the page is full");
+    T.eq(P.items.length, 0, "no items made");
+    // compact fits more rows into the page than roomy
+    const count = rowH => { const q = clone(p); q.page.rowH = rowH; loadDoc(q, null); return PLAN.L.lanes.reduce((n, ln) => n + ln.rows, 0); };
+    const compact = count(18), normal = count(26), roomy = count(34);
+    T.ok(compact > normal && normal > roomy, `rows on the page: compact ${compact}, normal ${normal}, roomy ${roomy}`);
+    // Taller rows: the old way, same rows, spread out
+    const q = clone(p); q.page.fillBy = "space"; loadDoc(q, null);
+    T.eq(PLAN.L.lanes.map(ln => ln.rows), [1, 2, 3], "taller rows add none");
   },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);

@@ -1019,7 +1019,7 @@ function layout(opts) {
   const bodyTop = stripTop + stripH;
   let y = bodyTop; const lanes = [];
   for (const l of P.lanes) {
-    const rows = laneRows(l, opts.spare);
+    const rows = laneRows(l, opts.spare) + ((opts.addRows && opts.addRows.get(l.id)) || 0);   // + empty rows that fill the page
     const h = Math.max(rows * G.rowH + G.pad * 2, laneTitleLen(l.name) + 14);   // tall enough for the vertical title
     lanes.push({ l, y, h, rows, ...rowMaps(l.id) }); y += h;
   }
@@ -2124,11 +2124,23 @@ function drawPage(svg, extra = {}) {
   const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), slack = availH / (availW / L.W) - L.H, baseRow = G.rowH;
   // Spread rows to fill the page: the rows share out all the height left, however few lanes there are (the bars keep their size)
   if (P.page.fill !== false && rowsTotal && slack > 0) {
-    G.rowH = baseRow + slack / rowsTotal;
+    if (P.page.fillBy !== "space") {
+      // More rows: the spacing stays as chosen and each lane gets empty rows, shared by its size; only the last part of a row is spread
+      // a lane already taller than its rows (for its title) first fills that height with rows, which costs no space
+      const free = new Map(L.lanes.map(ln => [ln.l.id, Math.max(0, Math.floor((ln.h - G.pad * 2) / baseRow) - ln.rows)]));
+      const extra = Math.floor(slack / baseRow), share = L.lanes.map(ln => [ln.l.id, extra * ln.rows / rowsTotal]);
+      const add = new Map(share.map(([id, x]) => [id, Math.floor(x)]));
+      let rest = extra - [...add.values()].reduce((a, b) => a + b, 0);
+      for (const [id] of [...share].sort((a, b) => (b[1] % 1) - (a[1] % 1))) { if (rest-- <= 0) break; add.set(id, add.get(id) + 1); }
+      // the free rows count towards a lane's share when it gets one, so its height only grows by what's left of the share
+      for (const [id, f] of free) add.set(id, Math.max(f, add.get(id)));
+      opts.addRows = add;
+    } else G.rowH = baseRow + slack / rowsTotal;
     try {
       L = draw(svg, opts);
       const left = availH / (availW / L.W) - L.H;   // a second pass takes up what the first didn't quite reach
-      if (Math.abs(left) > 1) { G.rowH = Math.max(baseRow, G.rowH + left / rowsTotal); L = draw(svg, opts); }
+      const rowsNow = L.lanes.reduce((n, ln) => n + ln.rows, 0);
+      if (Math.abs(left) > 1) { G.rowH = Math.max(baseRow, G.rowH + left / rowsNow); L = draw(svg, opts); }
     } finally { G.rowH = baseRow; }
   }
   // taller than the page: it has to print smaller, so spread the timeline wider first and the shrunk sheet still fills the width
@@ -2917,7 +2929,9 @@ function renderSideInner() {
     <div class="f"><label>Orientation</label><div class="seg" role="group" aria-label="Orientation">${[["landscape", "Landscape"], ["portrait", "Portrait"]].map(([v, n]) => `<button type="button" data-orient="${v}" aria-pressed="${P.page.orient === v}">${n}</button>`).join("")}</div></div>
     <div class="f"><label>Row spacing</label><div class="seg" role="group" aria-label="Row spacing">${SPACING.map(([k, n, v]) => `<button type="button" data-space="${v}" aria-pressed="${+P.page.rowH === v}">${n}</button>`).join("")}</div></div>
     <div class="f"><label for="pgRow">Row height: <span id="pgRowVal">${P.page.rowH}</span> px</label><input id="pgRow" type="range" min="14" max="40" step="1" value="${P.page.rowH}" style="accent-color:var(--accent-2)"></div>
-    <label class="check"><input type="checkbox" id="pgFill" ${P.page.fill !== false ? "checked" : ""}> Spread rows to fill the page</label>
+    <label class="check"><input type="checkbox" id="pgFill" ${P.page.fill !== false ? "checked" : ""}> Fill the page</label>
+    ${P.page.fill !== false ? `<div class="f"><label>Fill it with</label><div class="seg" role="group" aria-label="Fill the page with">${[["space", "Taller rows"], ["rows", "More rows"]].map(([v, n]) => `<button type="button" data-fillby="${v}" aria-pressed="${(P.page.fillBy || "rows") === v}">${n}</button>`).join("")}</div></div>
+    <p class="note">${P.page.fillBy !== "space" ? "Keeps the row spacing and adds empty rows to the lanes until the page is full: Compact fits more rows than Normal or Roomy." : "Spreads the rows out until the page is full; the bars keep their size."}</p>` : ""}
     <div class="f"><label>Font</label><div class="seg" role="group" aria-label="Sheet font">${[["montserrat", "Montserrat"], ["condensed", "Condensed (summary)"]].map(([v, n]) => `<button type="button" data-font="${v}" aria-pressed="${(P.page.font || "montserrat") === v}">${n}</button>`).join("")}</div></div>
     <div class="f"><label>Timeline header</label><div class="seg" role="group" aria-label="Timeline header">${[["classic", "Martinus"], ["bold", "Bold months"]].map(([v, n]) => `<button type="button" data-header="${v}" aria-pressed="${(P.page.header || "classic") === v}">${n}</button>`).join("")}</div></div>
     <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
@@ -2958,6 +2972,7 @@ function renderSideInner() {
   $("pgRow").oninput = e => { $("pgRowVal").textContent = e.target.value; P.page.rowH = +e.target.value; render(); };
   $("pgRow").onchange = e => { const v = +e.target.value; P.page.rowH = origRow; commit(p => p.page.rowH = v, true); };
   $("pgFill").onchange = e => commit(p => p.page.fill = e.target.checked, true);
+  side.querySelectorAll("[data-fillby]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.fillby === "space") p.page.fillBy = "space"; else delete p.page.fillBy; }, true));
   side.querySelectorAll("[data-font]").forEach(b => b.onclick = () => commit(p => p.page.font = b.dataset.font, true));
   side.querySelectorAll("[data-header]").forEach(b => b.onclick = () => commit(p => p.page.header = b.dataset.header, true));
   $("pgTidy").onclick = () => {
