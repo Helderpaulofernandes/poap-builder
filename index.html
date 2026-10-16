@@ -243,6 +243,7 @@ aside h2:first-child { margin-top: 0; }
 .idtag { font: 500 12px var(--font-mono); background: var(--hover); padding: 2px 6px; border-radius: 3px; letter-spacing: 0; text-transform: none; color: var(--fg); }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sublist { margin: 2px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
 .sw { width: 26px; height: 26px; border-radius: 3px; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
 .sw[aria-pressed="true"] { border-color: var(--fg); }
 .swatches input[type=color] { width: 30px; height: 26px; border: 1px solid var(--line); padding: 0; background: none; }
@@ -507,6 +508,58 @@ function tint(hexIn, t) {
 }
 const laneHeader = c => tint(c, .72);   // swimlane colour as shown on the sheet
 const laneBar = c => tint(c, .82);      // bars: same hue, lighter
+/* Sub-lanes: lanes can sit in a group (P.laneGroups: id, name, colour). The group's name runs down the first column of
+   the lane heads and its lanes' names sit beside it, each with its own rows. A group's lanes are always together. */
+const GROUP_W = 46, SUB_W = 120;
+const laneGroupOf = (p, l) => (l && l.group && (p.laneGroups || []).find(g => g.id === l.group)) || null;
+const hasSubLanes = p => !!(p && p.laneGroups && p.lanes.some(l => laneGroupOf(p, l)));
+function refreshHead(p) { G.headW = GROUP_W + (hasSubLanes(p) ? SUB_W : 0); }
+/* the lanes in blocks: a group's lanes together, every other lane on its own */
+function laneBlocks(p) {
+  const out = [];
+  p.lanes.forEach(l => { const g = laneGroupOf(p, l), last = out[out.length - 1]; if (g && last && last.g === g) last.lanes.push(l); else out.push({ g, lanes: [l] }); });
+  return out;
+}
+/* keep each group's lanes together (where its first one is) and drop groups with no lanes left */
+function tidyLaneGroups(p) {
+  if (!p.laneGroups) { p.lanes.forEach(l => delete l.group); return; }
+  p.lanes.forEach(l => { if (l.group && !laneGroupOf(p, l)) delete l.group; });
+  const order = [], seen = new Set();
+  p.lanes.forEach(l => { if (!l.group) order.push(l); else if (!seen.has(l.group)) { seen.add(l.group); order.push(...p.lanes.filter(x => x.group === l.group)); } });
+  p.lanes = order;
+  p.laneGroups = p.laneGroups.filter(g => p.lanes.some(l => l.group === g.id));
+  if (!p.laneGroups.length) delete p.laneGroups;
+}
+/* a sub-lane moves within its group; any other lane, or a whole group, steps over the next lane or group */
+function moveLane(p, id, d) {
+  const l = p.lanes.find(x => x.id === id), g = laneGroupOf(p, l);
+  if (g) {
+    const sib = p.lanes.filter(x => x.group === g.id), i = sib.indexOf(l), j = i + d; if (j < 0 || j >= sib.length) return;
+    const a = p.lanes.indexOf(sib[i]), b = p.lanes.indexOf(sib[j]); [p.lanes[a], p.lanes[b]] = [p.lanes[b], p.lanes[a]]; return;
+  }
+  moveBlock(p, l, d);
+}
+function moveBlock(p, first, d) {
+  const bl = laneBlocks(p), i = bl.findIndex(b => b.lanes.includes(first)), j = i + d; if (i < 0 || j < 0 || j >= bl.length) return;
+  [bl[i], bl[j]] = [bl[j], bl[i]]; p.lanes = bl.flatMap(b => b.lanes);
+}
+const canMoveLane = (p, l, d) => { const g = laneGroupOf(p, l); if (g) { const sib = p.lanes.filter(x => x.group === g.id), j = sib.indexOf(l) + d; return j >= 0 && j < sib.length; } const bl = laneBlocks(p), j = bl.findIndex(b => b.lanes.includes(l)) + d; return j >= 0 && j < bl.length; };
+/* a new sub-lane below this lane; a lane not in a group yet becomes the group (its name and colour) with itself as the first sub-lane */
+function addSubLane(p, laneId) {
+  const l = p.lanes.find(x => x.id === laneId);
+  let g = laneGroupOf(p, l);
+  if (!g) { g = { id: "G" + uid(), name: l.name, colour: l.colour }; (p.laneGroups = p.laneGroups || []).push(g); l.group = g.id; }
+  const n = { id: "L" + uid(), name: "New sub-lane", colour: g.colour, minRows: 1, group: g.id };
+  p.lanes.splice(p.lanes.indexOf(l) + 1, 0, n);
+  return n;
+}
+/* lines of text that fit a width, split at spaces */
+function wrapText(text, maxW, size, weight) {
+  const out = []; let cur = "";
+  for (const w of String(text).split(/\s+/).filter(Boolean)) { const t = cur ? cur + " " + w : w; if (cur && textW(t, size, weight) > maxW) { out.push(cur); cur = w; } else cur = t; }
+  if (cur) out.push(cur);
+  return out.length ? out : [""];
+}
 
 /* =====================================================================
    Model
@@ -591,6 +644,7 @@ function upgradeProject(p) {
     const def = clone(DEFAULT_STYLES.find(s => s.shape === shape)); if (p.styles.some(s => s.name === def.name)) def.name += "_2";
     p.styles.splice(i < 0 ? p.styles.length : i, 0, def);
   }
+  tidyLaneGroups(p);
   compactRows(p);   // a lane whose rows ran away (thousands of empty rows) is closed up again
   adoptGeometricChildren(p); syncContainers(p);
   // a side-panel bug stored tab names ("Activity", "Progress"…) as label positions; positions are lowercase words
@@ -898,6 +952,7 @@ function changed(opts = {}) {
     const moved = pushSuccessors(P);
     if (moved.size) toast(`Moved ${moved.size} successor${moved.size === 1 ? "" : "s"} later to keep ${moved.size === 1 ? "its" : "their"} links.`, 3500);
   }
+  tidyLaneGroups(P);
   syncContainers(P);
   try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
   showStatus();
@@ -933,6 +988,7 @@ function findSel() {
   if (!sel) return null;
   if (sel.type === "item") return P.items.find(i => i.id === sel.id);
   if (sel.type === "style") return P.styles.find(s => s.name === sel.id);
+  if (sel.type === "lanegroup") return (P.laneGroups || []).find(g => g.id === sel.id);
   return P.lanes.find(l => l.id === sel.id);
 }
 
@@ -1035,6 +1091,7 @@ function img(parent, href, x, y, w, h, align) {
 
 /* Draws the whole sheet into svg. opts.print strips interaction affordances; opts.font overrides the face. */
 function draw(svg, opts) {
+  refreshHead(P);
   // Show: Planned draws the baseline as the programme; Actual leaves the baseline bars off
   const mode = showMode();
   if (!opts.inner && mode !== "both") {
@@ -1072,7 +1129,10 @@ function draw(svg, opts) {
     }
   }
   eachMonth(L, (x) => el("line", { x1: x, x2: x, y1: L.stripTop, y2: L.bodyBottom, stroke: BRAND.grid, "stroke-width": .7, "stroke-dasharray": "3 3" }, gg));
-  L.lanes.forEach(ln => el("line", { x1: 0, x2: L.W, y1: ln.y + ln.h, y2: ln.y + ln.h, stroke: BRAND.navy, "stroke-width": .9 }, gg));
+  L.lanes.forEach((ln, k) => {
+    const g = laneGroupOf(P, ln.l), inside = g && L.lanes[k + 1] && laneGroupOf(P, L.lanes[k + 1].l) === g;   // another sub-lane of the same group follows
+    el("line", { x1: inside ? GROUP_W : 0, x2: L.W, y1: ln.y + ln.h, y2: ln.y + ln.h, stroke: inside ? "#9AA6B6" : BRAND.navy, "stroke-width": inside ? .6 : .9 }, gg);
+  });
 
   const today = todayISO();   // a data date, when set, takes the today line's place
   if (!prog().dataDate && toDays(today) >= L.t0 && toDays(today) < L.t1) {
@@ -1103,12 +1163,33 @@ function draw(svg, opts) {
   // lane titles (vertical, in the swimlane colour)
   const gh = el("g", {}, svg);
   if (L.stripH) el("rect", { x: 0, y: L.stripTop, width: G.headW, height: L.stripH, fill: "#F7F8FA", stroke: BRAND.navy, "stroke-width": .9 }, gh);
+  const subs = hasSubLanes(P), pointer = opts.print ? null : "cursor:pointer";
   L.lanes.forEach(ln => {
-    el("rect", { x: 0, y: ln.y, width: G.headW, height: ln.h, fill: laneHeader(ln.l.colour), stroke: BRAND.navy, "stroke-width": .9, "data-lanehead": ln.l.id, style: opts.print ? null : "cursor:pointer" }, gh);
-    vText(gh, ln.l.name.toUpperCase(), G.headW / 2, ln.y + ln.h / 2, ln.h - 10, 9.5, 700, BRAND.navy, F, ln.l.id);
+    const g = laneGroupOf(P, ln.l), x0 = g ? GROUP_W : 0, w = G.headW - x0;
+    el("rect", { x: x0, y: ln.y, width: w, height: ln.h, fill: g ? tint(ln.l.colour, .86) : laneHeader(ln.l.colour), stroke: BRAND.navy, "stroke-width": g ? .6 : .9, "data-lanehead": ln.l.id, style: pointer }, gh);
+    if (g || subs) {   // names across: a sub-lane's left-aligned, a lane on its own centred across both columns
+      const fs = g ? 9 : 9.5, fw = g ? 600 : 700, lh = fs * 1.2, room = Math.max(1, Math.floor((ln.h - 4) / lh));
+      let lines = wrapText(g ? ln.l.name : ln.l.name.toUpperCase(), w - 12, fs, fw);
+      if (!g && lines.length > room) vText(gh, ln.l.name.toUpperCase(), G.headW / 2, ln.y + ln.h / 2, ln.h - 10, 9.5, 700, BRAND.navy, F, ln.l.id);
+      else {
+        if (lines.length > room) { lines = lines.slice(0, room); lines[room - 1] += "…"; }
+        lines.forEach((t, i) => el("text", { x: g ? x0 + 6 : x0 + w / 2, y: ln.y + ln.h / 2 + fs * .36 + (i - (lines.length - 1) / 2) * lh, "text-anchor": g ? "start" : "middle", fill: BRAND.navy, "font-size": fs, "font-weight": fw, "font-family": F.font, "data-lanehead": ln.l.id, style: pointer }, gh, t));
+      }
+    } else vText(gh, ln.l.name.toUpperCase(), G.headW / 2, ln.y + ln.h / 2, ln.h - 10, 9.5, 700, BRAND.navy, F, ln.l.id);
     if (!opts.print && sel && sel.type === "lane" && sel.id === ln.l.id)
-      el("rect", { x: 1.5, y: ln.y + 1.5, width: L.W - 3, height: ln.h - 3, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, gh);
+      el("rect", { x: x0 + 1.5, y: ln.y + 1.5, width: L.W - x0 - 3, height: ln.h - 3, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, gh);
   });
+  // each group's name down the first column, over all its sub-lanes
+  for (let k = 0; k < L.lanes.length;) {
+    const g = laneGroupOf(P, L.lanes[k].l); if (!g) { k++; continue; }
+    let e = k; while (e + 1 < L.lanes.length && laneGroupOf(P, L.lanes[e + 1].l) === g) e++;
+    const y = L.lanes[k].y, h = L.lanes[e].y + L.lanes[e].h - y;
+    el("rect", { x: 0, y, width: GROUP_W, height: h, fill: laneHeader(g.colour), stroke: BRAND.navy, "stroke-width": .9, "data-lanegroup": g.id, style: pointer }, gh);
+    vText(gh, g.name.toUpperCase(), GROUP_W / 2, y + h / 2, h - 10, 9.5, 700, BRAND.navy, F, g.id, "data-lanegroup");
+    if (!opts.print && sel && sel.type === "lanegroup" && sel.id === g.id)
+      el("rect", { x: 1.5, y: y + 1.5, width: L.W - 3, height: h - 3, fill: "none", stroke: BRAND.orange, "stroke-width": 2, "pointer-events": "none" }, gh);
+    k = e + 1;
+  }
   if (!L.lanes.length) el("text", { x: G.headW + 16, y: L.bodyTop + 40, fill: "#5A6A7E", "font-size": 13, "font-family": F.font }, svg, "Start by adding a swimlane with “+ Lane”.");
 
   drawBand(svg, L, L.bandTop, F);
@@ -1516,11 +1597,11 @@ function laneTitleLen(name) {
   const lines = titleLines(name, 0);
   return Math.max(...lines.map(s => textW(s, TITLE.size, TITLE.weight)));
 }
-function vText(parent, text, cx, cy, maxW, size, weight, fill, F, laneId) {
+function vText(parent, text, cx, cy, maxW, size, weight, fill, F, laneId, attr = "data-lanehead") {
   const lines = titleLines(text, maxW);
   const lh = size * 1.2;
   const g = el("g", { transform: `rotate(-90 ${cx} ${cy})` }, parent);
-  lines.forEach((ln, i) => el("text", { x: cx, y: cy + size * .36 + (i - (lines.length - 1) / 2) * lh, "text-anchor": "middle", fill, "font-size": size, "font-weight": weight, "font-family": F.font, "letter-spacing": ".03em", "data-lanehead": laneId, style: "cursor:pointer" }, g, ln));
+  lines.forEach((ln, i) => el("text", { x: cx, y: cy + size * .36 + (i - (lines.length - 1) / 2) * lh, "text-anchor": "middle", fill, "font-size": size, "font-weight": weight, "font-family": F.font, "letter-spacing": ".03em", [attr]: laneId, style: "cursor:pointer" }, g, ln));
 }
 
 /* ---------- bar labels: inside, right, above, numbered key, or hidden ---------- */
@@ -2033,6 +2114,7 @@ function paperMM() {
 /* Draws the sheet as it prints on the chosen paper: the timeline fills the printable width and rows
    spread (up to 2x) to fill the height. fit < 1 means the content is taller than the page and prints smaller. */
 function drawPage(svg, extra = {}) {
+  refreshHead(P);
   applySpacing();
   const { pg, PW, PH } = paperMM(), M = +pg.margin || 7, availW = PW - 2 * M, availH = PH - 2 * M;
   const span = toDays(P.timeline.end) - toDays(P.timeline.start) + 1;
@@ -2152,6 +2234,7 @@ $("chart").addEventListener("pointerdown", e => {
   const t = e.target, p = svgPt(e);
   const id = t.getAttribute("data-id") || t.closest("[data-id]")?.getAttribute("data-id");
   const head = t.getAttribute("data-lanehead") || t.closest("[data-lanehead]")?.getAttribute("data-lanehead");
+  const ghead = t.getAttribute("data-lanegroup") || t.closest("[data-lanegroup]")?.getAttribute("data-lanegroup");
   if (id && t.getAttribute("data-part") === "toggle") {   // the arrow beside a summary's title
     sel = { type: "item", id };
     commit(p => { const c = p.items.find(i => i.id === id); c.collapsed = !c.collapsed; }, true);
@@ -2190,6 +2273,7 @@ $("chart").addEventListener("pointerdown", e => {
       drag.group = withChildren([...MULTI]).filter(g => !skip.has(g)).map(g => ({ id: g, orig: clone(P.items.find(i => i.id === g)) }));
     }
   } else if (head) { sel = { type: "lane", id: head }; MULTI.clear(); }
+  else if (ghead) { sel = { type: "lanegroup", id: ghead }; MULTI.clear(); }
   else if (t.getAttribute("data-zone")) {   // title block, timeline or legend: open where it's edited
     const [tab, field] = t.getAttribute("data-zone").split(":");
     MULTI.clear(); return openSideTab(tab, field);
@@ -2534,6 +2618,7 @@ let sideTop = null, lastSelKey = null, wantSelTab = false;
 const saveSideTabs = () => { try { localStorage.setItem(SIDE_TAB_KEY, JSON.stringify(SIDE_TAB)); } catch (err) {} };
 function selLabel(cur) {
   if (sel.type === "lane") return "Lane";
+  if (sel.type === "lanegroup") return "Lane group";
   if (sel.type === "style") return "Type";
   return isCurtain(P, cur.style) ? "Curtain" : isMs(P, cur.style) ? "Milestone" : isContainer(P, cur) ? "Summary" : "Bar";
 }
@@ -2724,8 +2809,38 @@ function renderSideInner() {
     return;
   }
   if (sel && sel.type === "style" && cur) { renderTypeSide(side, cur); return; }
+  if (sel && sel.type === "lanegroup" && cur) {
+    const kids = P.lanes.filter(l => l.group === cur.id), first = kids[0], bl = laneBlocks(P), bi = bl.findIndex(b => b.g === cur);
+    const custom = !lanePresets().some(([, c]) => c.toUpperCase() === cur.colour.toUpperCase());
+    side.innerHTML = `
+      <h2>Lane group</h2>
+      <div class="f"><label for="gName">Name</label><input id="gName" value="${esc(cur.name)}"></div>
+      <div class="f"><label>Colour</label>
+        <div class="swatches">${lanePresets().map(([n, c]) => `<button class="sw" data-c="${c}" title="${n}" aria-label="${n}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${laneHeader(c)}"></button>`).join("")}
+          <input id="gColour" type="color" value="${cur.colour}" title="Custom colour" aria-label="Custom group colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
+      </div>
+      <p class="note">The colour goes to all its sub-lanes and their bars.</p>
+      <div class="f"><label>Sub-lanes</label><ul class="sublist">${kids.map(l => `<li><a href="#" data-sub="${esc(l.id)}">${esc(l.name)}</a></li>`).join("")}</ul></div>
+      <div class="actions">
+        <button class="btn" id="gUp" ${bi > 0 ? "" : "disabled"}>Move up</button>
+        <button class="btn" id="gDown" ${bi < bl.length - 1 ? "" : "disabled"}>Move down</button>
+        <button class="btn" id="gAdd">+ Sub-lane</button>
+      </div>
+      <div class="actions"><button class="btn" id="gUngroup">Ungroup (keep the lanes)</button></div>`;
+    const upd = f => commit(p => f(p.laneGroups.find(g => g.id === cur.id), p), true);
+    $("gName").onchange = e => upd(g => g.name = e.target.value || "Group");
+    const colour = c => upd((g, p) => { g.colour = c; p.lanes.forEach(l => { if (l.group === g.id) l.colour = c; }); });
+    side.querySelectorAll(".sw").forEach(b => b.onclick = () => colour(b.dataset.c));
+    $("gColour").onchange = e => colour(e.target.value.toUpperCase());
+    side.querySelectorAll("[data-sub]").forEach(a => a.onclick = e => { e.preventDefault(); sel = { type: "lane", id: a.dataset.sub }; render(); renderSide(); });
+    $("gUp").onclick = () => commit(p => moveBlock(p, p.lanes.find(l => l.id === first.id), -1), true);
+    $("gDown").onclick = () => commit(p => moveBlock(p, p.lanes.find(l => l.id === first.id), 1), true);
+    $("gAdd").onclick = () => { let n; commit(p => n = addSubLane(p, kids[kids.length - 1].id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+    $("gUngroup").onclick = () => { commit(p => { p.lanes.forEach(l => { if (l.group === cur.id) delete l.group; }); p.laneGroups = p.laneGroups.filter(g => g.id !== cur.id); }); sel = null; renderSide(); };
+    return;
+  }
   if (sel && sel.type === "lane" && cur) {
-    const idx = P.lanes.indexOf(cur), n = P.items.filter(i => i.lane === cur.id).length;
+    const idx = P.lanes.indexOf(cur), n = P.items.filter(i => i.lane === cur.id).length, grp = laneGroupOf(P, cur), groups = P.laneGroups || [];
     const custom = !lanePresets().some(([, c]) => c.toUpperCase() === cur.colour.toUpperCase());
     side.innerHTML = `
       <h2>Swimlane</h2>
@@ -2737,14 +2852,18 @@ function renderSideInner() {
       <div class="preview">Title <i style="background:${laneHeader(cur.colour)}"></i> Bars <i style="background:${laneBar(cur.colour)}"></i></div>
       <div class="f"><label for="lRows">Minimum rows</label><input id="lRows" type="number" min="1" max="30" value="${cur.minRows || 1}"></div>
       <div class="actions">
-        <button class="btn" id="lUp" ${idx === 0 ? "disabled" : ""}>Move up</button>
-        <button class="btn" id="lDown" ${idx === P.lanes.length - 1 ? "disabled" : ""}>Move down</button>
+        <button class="btn" id="lUp" ${canMoveLane(P, cur, -1) ? "" : "disabled"}>Move up</button>
+        <button class="btn" id="lDown" ${canMoveLane(P, cur, 1) ? "" : "disabled"}>Move down</button>
         <button class="btn" id="lPack">Tidy rows</button>
       </div>
       <div class="actions">
         <button class="btn" id="lBar">+ Bar here</button>
         <button class="btn" id="lMs">+ Milestone here</button>
       </div>
+      <h2>Sub-lanes</h2>
+      <div class="f"><label for="lGroup">Sub-lane of</label><select id="lGroup"><option value="">(none: a lane of its own)</option>${groups.map(g => `<option value="${esc(g.id)}" ${cur.group === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
+      <div class="actions"><button class="btn" id="lSub">+ Sub-lane below</button>${grp ? `<button class="btn" id="lGrp">Group: ${esc(grp.name)}</button>` : ""}</div>
+      <p class="note">${grp ? `Its name sits beside the group's, with its own rows. Moving it up or down keeps it in the group.` : `Splits this lane: it becomes a group named “${esc(cur.name)}” with this lane as its first sub-lane (rename it) and a new one below.`}</p>
       <div class="actions"><button class="btn danger" id="lDel">Delete lane${n ? ` and ${n} item${n>1?"s":""}` : ""}</button></div>
       <p class="note">Bars without a custom colour use a lighter shade of the lane colour. Tidy rows packs items upward without overlaps.</p>`;
     const upd = f => commit(p => f(p.lanes.find(l => l.id === cur.id)), true);
@@ -2752,7 +2871,10 @@ function renderSideInner() {
     side.querySelectorAll(".sw").forEach(b => b.onclick = () => upd(l => l.colour = b.dataset.c));
     $("lColour").onchange = e => upd(l => l.colour = e.target.value.toUpperCase());
     $("lRows").onchange = e => upd(l => l.minRows = Math.max(1, Math.min(30, +e.target.value || 1)));
-    const move = d => commit(p => { const a = p.lanes, i = a.findIndex(l => l.id === cur.id); [a[i], a[i+d]] = [a[i+d], a[i]]; }, true);
+    const move = d => commit(p => moveLane(p, cur.id, d), true);
+    $("lGroup").onchange = e => commit(p => { const l = p.lanes.find(x => x.id === cur.id), g = (p.laneGroups || []).find(x => x.id === e.target.value); if (g) { l.group = g.id; l.colour = g.colour; } else delete l.group; }, true);
+    $("lSub").onclick = () => { let n; commit(p => n = addSubLane(p, cur.id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+    if ($("lGrp")) $("lGrp").onclick = () => { sel = { type: "lanegroup", id: grp.id }; render(); renderSide(); };
     $("lUp").onclick = () => move(-1); $("lDown").onclick = () => move(1);
     $("lPack").onclick = () => commit(p => packLane(p, cur.id), true);
     $("lBar").onclick = () => addItem(defaultStyle("Stretch"), cur.id);
@@ -3916,8 +4038,8 @@ function buildExcelBlob() {
   ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13,24,14].map(w => ({ wch: w }));
   ws["!autofilter"] = { ref: `A1:S${rowsOut.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
-  const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows"]].concat(P.lanes.map((l,i) => [l.name, i+1, l.colour, l.minRows || 1])));
-  lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }];
+  const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows","Group","GroupColour"]].concat(P.lanes.map((l,i) => { const g = laneGroupOf(P, l); return [l.name, i+1, l.colour, l.minRows || 1, g ? g.name : "", g ? g.colour : ""]; })));
+  lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }, { wch: 24 }, { wch: 11 }];
   XLSX.utils.book_append_sheet(wb, lanes, "Lanes");
   // (the type exactly as it is, in "More"; the columns before it are for reading and hand edits)
   const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration","TagPosition","TagAlign","TagSize","TagStyle","TagColour","TagTextColour","More"]].concat(P.styles.map(s => {
@@ -3986,7 +4108,7 @@ function parseWorkbook(buf) {
   const lsh = wb.Sheets["Lanes"];
   if (lsh) {
     const la = XLSX.utils.sheet_to_json(lsh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
-    lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0 }));
+    lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0, group: x.group != null && String(x.group).trim() ? String(x.group).trim() : "", groupColour: hex(x.groupcolour) }));
   }
   let meta = {}, timeline = null, page = null, fromTool = false, progress, view = "", brand = null;
   const psh = wb.Sheets["Project"];
@@ -4133,6 +4255,7 @@ function previewImport(parsed, fname) {
       const cur = P.lanes.find(l => key(l.name) === key(sl.name));
       if (!cur) laneDiffs.push([sl.name, "New lane", null, sl.name]);
       else if (sl.colour && sl.colour.toUpperCase() !== String(cur.colour).toUpperCase()) laneDiffs.push([cur.name, "Lane colour", cur.colour, sl.colour]);
+      if (cur && key(laneGroupOf(P, cur)?.name || "") !== key(sl.group || "")) laneDiffs.push([cur.name, "Sub-lane of", laneGroupOf(P, cur)?.name || "(none)", sl.group || "(none)"]);
     }
     const kept = P.lanes.filter(l => inSheet.has(key(l.name))).map(l => key(l.name)), wanted = sheetLanes.map(l => key(l.name)).filter(n => kept.includes(n));
     if (kept.join("|") !== wanted.join("|")) laneDiffs.push(["", "Lane order", null, sheetLanes.map(l => l.name).join(" → ")]);
@@ -4235,6 +4358,13 @@ function previewImport(parsed, fname) {
             const l = p.lanes.find(x => key(x.name) === key(sl.name)) || p.lanes.find(x => x.id === laneFor(sl.name));
             if (sl.colour) l.colour = sl.colour;
             if (sl.minRows) l.minRows = sl.minRows;
+            // its group, by name: made when it isn't there yet
+            if (sl.group) {
+              let g = (p.laneGroups || []).find(x => key(x.name) === key(sl.group));
+              if (!g) { g = { id: "G" + uid(), name: sl.group, colour: sl.groupColour || sl.colour || l.colour }; (p.laneGroups = p.laneGroups || []).push(g); }
+              else if (sl.groupColour) g.colour = sl.groupColour;
+              l.group = g.id;
+            } else delete l.group;
           }
           const order = sheetLanes.map(sl => key(sl.name));
           const rank = l => { const i = order.indexOf(key(l.name)); return i < 0 ? order.length : i; };

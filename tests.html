@@ -863,6 +863,35 @@ const TESTS = {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "0", ctrlKey: true, bubbles: true }));
     T.ok(Math.abs($("chart").getBoundingClientRect().width - w0) < 1, "Ctrl+0 back to normal");
   },
+  "Sub-lanes: split a lane, names beside the group, moves stay together, Excel round trip": async () => {
+    loadDoc(seedProject(), null);
+    const w0 = G.headW, first = P.lanes[0], other = P.lanes[1];
+    let n; commit(p => n = addSubLane(p, first.id));
+    T.ok(P.laneGroups && P.laneGroups.length === 1, "a group is made");
+    const g = P.laneGroups[0];
+    T.eq(g.name, first.name, "named after the lane it came from");
+    T.eq(P.lanes.slice(0, 2).map(l => l.group), [g.id, g.id], "the lane and the new one are its sub-lanes");
+    T.ok(G.headW > w0, "the lane heads get a second column");
+    T.ok(document.querySelector(`#chart [data-lanegroup="${g.id}"]`), "the group's head is drawn");
+    T.ok([...document.querySelectorAll(`#chart text[data-lanehead="${n.id}"]`)].some(x => x.textContent === "New sub-lane"), "the sub-lane's name is written across");
+    // an ordinary lane steps over the whole group
+    commit(p => moveLane(p, other.id, -1), true);
+    T.eq(P.lanes.map(l => l.id).slice(0, 3), [other.id, first.id, n.id], "moved above the group, the group intact");
+    // a sub-lane moves within its group only
+    commit(p => moveLane(p, n.id, -1), true);
+    T.eq(P.lanes.map(l => l.id).slice(0, 3), [other.id, n.id, first.id], "swapped inside the group");
+    T.ok(!canMoveLane(P, P.lanes.find(l => l.id === n.id), -1), "can't leave the group by moving");
+    // a bar in a sub-lane lands in that sub-lane
+    commit(p => p.items.push({ id: "SUB1", name: "Sub bar", style: defaultStyle("Stretch"), lane: n.id, start: P.timeline.start, end: addDays(P.timeline.start, 20), row: 0, status: "Active", fill: "", stroke: "" }));
+    T.ok(document.querySelector('#chart [data-id="SUB1"]'), "drawn");
+    // Excel keeps the groups
+    const rows = XLSX.utils.sheet_to_json(XLSX.read(await buildExcelBlob().arrayBuffer()).Sheets["Lanes"]);
+    T.eq(rows.filter(r => r.Group === g.name).length, 2, "the Lanes sheet names the group");
+    // ungroup: the lanes stay
+    commit(p => { p.lanes.forEach(l => delete l.group); }, true);
+    T.ok(!P.laneGroups, "an empty group goes");
+    T.eq(G.headW, w0, "back to one column");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();
