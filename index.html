@@ -5790,7 +5790,7 @@ function channelCard() {
     <a class="btn" href="${esc(beta ? CHANNEL.stableUrl : CHANNEL.betaUrl)}">${beta ? "Back to the standard version" : "Open the beta"}</a>
   </div>`;
 }
-if (CHANNEL && CHANNEL.channel !== "stable") {   // a small BETA / CHARLIE tag by the name, back to the standard version
+if (CHANNEL && (CHANNEL.channel === "beta" || CHANNEL.channel === "charlie")) {   // a small BETA / CHARLIE tag by the name, back to the standard version
   const tag = document.createElement("a"); tag.className = "betatag"; tag.href = CHANNEL.stableUrl; tag.textContent = CHANNEL.channel.toUpperCase(); tag.title = `You're on ${CHANNEL.channel === "charlie" ? "Charlie" : "the beta"}. Click for the standard version.`;
   ROOT.querySelector(".brand b")?.after(tag);
 }
@@ -5803,7 +5803,7 @@ if (CHANNEL && CHANNEL.channel !== "stable") {   // a small BETA / CHARLIE tag b
    ===================================================================== */
 const SUPABASE_URL = "https://frhtvxjpcesbuqkusuuu.supabase.co";
 const SUPABASE_KEY = "sb_publishable_p3h2ySkb0crmHXDYX5H-Kw_In7buCFC";   // publishable by design: access is enforced by sign-in and the database rules
-const cloudOn = () => !HOST && !!CHANNEL && (CHANNEL.channel === "beta" || CHANNEL.channel === "charlie") && !!SUPABASE_URL && !!SUPABASE_KEY;
+const cloudOn = () => !HOST && !!CHANNEL && CHANNEL.channel !== "stable" && !!SUPABASE_URL && !!SUPABASE_KEY;
 const TBL = { projects: "poap_projects", members: "poap_members", invites: "poap_invites", entities: "poap_entities", history: "poap_entity_history" };
 const KINDS = { item: "items", lane: "lanes", style: "styles" }, COLLS = Object.values(KINDS);
 const ekey = (kind, o) => kind === "style" ? o.name : o.id;
