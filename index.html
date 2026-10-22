@@ -596,7 +596,8 @@ function moveBlock(p, first, d) {
    in place of the bands at the top and bottom. Each lane (a group's sub-lanes together) says which side it's on. */
 const centreLine = p => !!(p && p.page && p.page.timelinePos === "centre");
 const YEAR_H = 22;   // the year bar in a timeline band; the months take the rest of G.topH
-const midBandH = () => G.topH + (G.topH - YEAR_H);   // the centre band: months, the year bar, months again
+const midDouble = () => !(P && P.page && P.page.midMonths === "single");   // months on both sides of the year bar (the default), or under it only
+const midBandH = () => midDouble() ? G.topH + (G.topH - YEAR_H) : G.topH;   // the centre band: months, the year bar, months again
 const laneBelow = l => !!(l && l.side === "below");
 function setLaneSide(p, l, below) {
   const g = laneGroupOf(p, l), all = g ? p.lanes.filter(x => x.group === g.id) : [l];
@@ -1654,6 +1655,7 @@ function drawBand(svg, L, y0, F, centre) {
   const g = el("g", { "pointer-events": "none" }, svg);
   const yh = YEAR_H, mh = G.topH - yh;
   // the rows top to bottom: years over months, or (down the centre) months, years, months
+  if (centre && !midDouble()) centre = false;   // a single row of months: drawn like the top band
   const yearY = centre ? y0 + mh : y0, monthYs = centre ? [y0, y0 + mh + yh] : [y0 + yh], H = centre ? midBandH() : G.topH;
   el("rect", { x: 0, y: y0, width: L.W, height: H, fill: "#FFFFFF" }, g);
   if (P.page.header === "bold") {   // summary style: large years, months alternating black and white
@@ -3076,6 +3078,7 @@ function renderSideInner() {
     <p class="note">${P.page.fillBy !== "space" ? "Keeps the row spacing and adds empty rows to the lanes until the page is full: Compact fits more rows than Normal or Roomy." : "Spreads the rows out until the page is full; the bars keep their size."}</p>` : ""}
     <div class="f"><label>Font</label><div class="seg" role="group" aria-label="Sheet font">${[["montserrat", "Montserrat"], ["condensed", "Condensed (summary)"]].map(([v, n]) => `<button type="button" data-font="${v}" aria-pressed="${(P.page.font || "montserrat") === v}">${n}</button>`).join("")}</div></div>
     <div class="f"><label>Timeline position</label><div class="seg" role="group" aria-label="Timeline position">${[["", "Top and bottom"], ["centre", "Down the centre"]].map(([v, n]) => `<button type="button" data-tlpos="${v}" aria-pressed="${(P.page.timelinePos || "") === v}">${n}</button>`).join("")}</div></div>
+    ${centreLine(P) ? `<label class="check"><input type="checkbox" id="pgMidMonths" ${midDouble() ? "checked" : ""}> Months above and below the year</label>` : ""}
     ${centreLine(P) ? `<p class="note">One timeline between the lanes. Choose each lane's side in its panel (Above / Below), or move a lane up or down past the timeline.</p>` : ""}
     <div class="f"><label>Timeline header</label><div class="seg" role="group" aria-label="Timeline header">${[["classic", "Martinus"], ["bold", "Bold months"]].map(([v, n]) => `<button type="button" data-header="${v}" aria-pressed="${(P.page.header || "classic") === v}">${n}</button>`).join("")}</div></div>
     <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
@@ -3118,6 +3121,7 @@ function renderSideInner() {
   $("pgFill").onchange = e => commit(p => p.page.fill = e.target.checked, true);
   side.querySelectorAll("[data-fillby]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.fillby === "space") p.page.fillBy = "space"; else delete p.page.fillBy; }, true));
   side.querySelectorAll("[data-font]").forEach(b => b.onclick = () => commit(p => p.page.font = b.dataset.font, true));
+  if ($("pgMidMonths")) $("pgMidMonths").onchange = e => commit(p => { if (e.target.checked) delete p.page.midMonths; else p.page.midMonths = "single"; }, true);
   side.querySelectorAll("[data-tlpos]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.tlpos === "centre") { p.page.timelinePos = "centre"; splitLanesAtCentre(p); } else delete p.page.timelinePos; }, true));
   side.querySelectorAll("[data-header]").forEach(b => b.onclick = () => commit(p => p.page.header = b.dataset.header, true));
   $("pgTidy").onclick = () => {

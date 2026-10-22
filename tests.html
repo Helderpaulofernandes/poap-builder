@@ -939,6 +939,10 @@ const TESTS = {
     // months over and under the year bar: every month name twice
     const nov = [...document.querySelectorAll("#chart text")].filter(x => x.textContent === "Nov").map(x => +x.getAttribute("y"));
     T.ok(nov.length === 2 && nov[0] < LAY.midTop + midBandH() / 2 && nov[1] > LAY.midTop + midBandH() / 2, "months above and below the years: " + nov);
+    commit(p => { p.page.midMonths = "single"; }, true);
+    const nov1 = [...document.querySelectorAll("#chart text")].filter(x => x.textContent === "Nov");
+    T.ok(nov1.length === 1 && midBandH() === G.topH, "unticked: one row of months");
+    commit(p => { delete p.page.midMonths; }, true);
     T.eq(LAY.phaseTop, LAY.bandTop, "no band at the top");
     T.ok(PLAN.L.H * PLAN.k > PLAN.availH * .98, "the page is still full");
     // the last lane above, moved down, crosses to below (first under the timeline)
