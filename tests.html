@@ -926,6 +926,37 @@ const TESTS = {
     const q = clone(p); q.page.fillBy = "space"; loadDoc(q, null);
     T.eq(PLAN.L.lanes.map(ln => ln.rows), [1, 2, 3], "taller rows add none");
   },
+  "Timeline down the centre: lanes above and below one band, and they cross over when moved": async () => {
+    loadDoc(seedProject(), null);
+    const n = P.lanes.length;
+    commit(p => { p.page.timelinePos = "centre"; splitLanesAtCentre(p); }, true);
+    const above = P.lanes.filter(l => !laneBelow(l)), below = P.lanes.filter(laneBelow);
+    T.ok(above.length && below.length, `split: ${above.length} above, ${below.length} below`);
+    T.eq(P.lanes.map(l => l.id), [...above, ...below].map(l => l.id), "above first, then below");
+    T.ok(LAY.centre && LAY.midTop > LAY.bodyTop && LAY.midTop < LAY.bodyBottom, "the band is between the lanes");
+    const lastAbove = LAY.lanes.filter(ln => !laneBelow(ln.l)).pop(), firstBelow = LAY.lanes.find(ln => laneBelow(ln.l));
+    T.ok(Math.abs(lastAbove.y + lastAbove.h - LAY.midTop) < .5 && Math.abs(firstBelow.y - (LAY.midTop + G.topH)) < .5, "lanes meet the band on both sides");
+    T.eq(LAY.phaseTop, LAY.bandTop, "no band at the top");
+    T.ok(PLAN.L.H * PLAN.k > PLAN.availH * .98, "the page is still full");
+    // the last lane above, moved down, crosses to below (first under the timeline)
+    const x = lastAbove.l.id;
+    T.ok(canMoveLane(P, P.lanes.find(l => l.id === x), 1), "can move down");
+    commit(p => moveLane(p, x, 1), true);
+    T.ok(laneBelow(P.lanes.find(l => l.id === x)), "now below");
+    T.eq(P.lanes.find(laneBelow).id, x, "first below the timeline");
+    commit(p => moveLane(p, x, -1), true);
+    T.ok(!laneBelow(P.lanes.find(l => l.id === x)), "and back above");
+    // a click on the band goes to the lane next to it
+    const sAbove = slotAt(LAY.midTop + 2), sBelow = slotAt(LAY.midTop + G.topH - 2);
+    T.ok(!laneBelow(P.lanes.find(l => l.id === sAbove.lane)) && laneBelow(P.lanes.find(l => l.id === sBelow.lane)), "band clicks go to the nearer side");
+    // Excel keeps the sides
+    const rows = XLSX.utils.sheet_to_json(XLSX.read(await buildExcelBlob().arrayBuffer()).Sheets["Lanes"]);
+    T.eq(rows.filter(r => r.Side === "Below").length, P.lanes.filter(laneBelow).length, "the Lanes sheet says which side");
+    // back to top and bottom: the sides are kept for next time, the bands come back
+    commit(p => { delete p.page.timelinePos; }, true);
+    T.ok(!LAY.centre && LAY.phaseTop > LAY.bandTop, "top band back");
+    T.eq(P.lanes.length, n, "no lanes lost");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();

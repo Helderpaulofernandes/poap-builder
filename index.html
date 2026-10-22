@@ -585,10 +585,33 @@ function moveLane(p, id, d) {
   moveBlock(p, l, d);
 }
 function moveBlock(p, first, d) {
-  const bl = laneBlocks(p), i = bl.findIndex(b => b.lanes.includes(first)), j = i + d; if (i < 0 || j < 0 || j >= bl.length) return;
+  const bl = laneBlocks(p), i = bl.findIndex(b => b.lanes.includes(first)), j = i + d;
+  if (i >= 0 && (j < 0 || j >= bl.length) && centreLine(p) && laneBelow(first) !== d > 0) { setLaneSide(p, first, d > 0); return; }   // nothing on the other side yet
+  if (i < 0 || j < 0 || j >= bl.length) return;
+  // with the timeline down the centre, the lane next to it crosses over instead of swapping with the lane on the other side
+  if (centreLine(p) && laneBelow(bl[i].lanes[0]) !== laneBelow(bl[j].lanes[0])) { setLaneSide(p, bl[i].lanes[0], d > 0); return; }
   [bl[i], bl[j]] = [bl[j], bl[i]]; p.lanes = bl.flatMap(b => b.lanes);
 }
-const canMoveLane = (p, l, d) => { const g = laneGroupOf(p, l); if (g) { const sib = p.lanes.filter(x => x.group === g.id), j = sib.indexOf(l) + d; return j >= 0 && j < sib.length; } const bl = laneBlocks(p), j = bl.findIndex(b => b.lanes.includes(l)) + d; return j >= 0 && j < bl.length; };
+/* A timeline down the centre (Sheet: Timeline position): one band between the lanes above it and the lanes below it,
+   in place of the bands at the top and bottom. Each lane (a group's sub-lanes together) says which side it's on. */
+const centreLine = p => !!(p && p.page && p.page.timelinePos === "centre");
+const laneBelow = l => !!(l && l.side === "below");
+function setLaneSide(p, l, below) {
+  const g = laneGroupOf(p, l), all = g ? p.lanes.filter(x => x.group === g.id) : [l];
+  all.forEach(x => { if (below) x.side = "below"; else delete x.side; });
+  orderBySide(p);
+}
+/* the lanes above the centre timeline first, then those below, each keeping its order */
+function orderBySide(p) { if (centreLine(p)) p.lanes = [...p.lanes.filter(l => !laneBelow(l)), ...p.lanes.filter(laneBelow)]; }
+/* switching to a centre timeline: if no lane has a side yet, the second half of the lanes goes below */
+function splitLanesAtCentre(p) {
+  if (p.lanes.some(laneBelow)) return orderBySide(p);
+  const bl = laneBlocks(p), rows = b => b.lanes.reduce((n, l) => n + laneRows(l, false), 0), total = bl.reduce((n, b) => n + rows(b), 0);
+  let acc = 0;
+  bl.forEach(b => { const mid = acc + rows(b) / 2; acc += rows(b); if (mid > total / 2) b.lanes.forEach(l => l.side = "below"); });
+  orderBySide(p);
+}
+const canMoveLane = (p, l, d) => { const g = laneGroupOf(p, l); if (g) { const sib = p.lanes.filter(x => x.group === g.id), j = sib.indexOf(l) + d; return j >= 0 && j < sib.length; } const bl = laneBlocks(p), j = bl.findIndex(b => b.lanes.includes(l)) + d; return j >= 0 && j < bl.length || (centreLine(p) && (d > 0 ? !laneBelow(l) : laneBelow(l))); };
 /* a new sub-lane below this lane; a lane not in a group yet becomes the group (its name and colour) with itself as the first sub-lane */
 function addSubLane(p, laneId) {
   const l = p.lanes.find(x => x.id === laneId);
@@ -1003,7 +1026,7 @@ function changed(opts = {}) {
     const moved = pushSuccessors(P);
     if (moved.size) toast(`Moved ${moved.size} successor${moved.size === 1 ? "" : "s"} later to keep ${moved.size === 1 ? "its" : "their"} links.`, 3500);
   }
-  tidyLaneGroups(P);
+  tidyLaneGroups(P); orderBySide(P);
   syncContainers(P);
   saveLocalCopy();
   showStatus();
@@ -1091,15 +1114,18 @@ function layout(opts) {
   const phaseH = P.items.some(i => isCurtain(P, i.style) && isShape(P, i, "band")) ? 24 : 0;
   // curtain tag strip: a band of its own between the timeline and the first lane, only when used
   const sc = opts.chrome || 1;   // the title block and footer drawn larger by this, so they print at their own size however the sheet shrinks
-  const bandTop = G.hdrH * sc, phaseTop = bandTop + G.topH, stripTop = phaseTop + phaseH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
+  const centre = centreLine(P);   // one timeline between the lanes, none at the top and bottom
+  const bandTop = G.hdrH * sc, phaseTop = bandTop + (centre ? 0 : G.topH), stripTop = phaseTop + phaseH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
   const bodyTop = stripTop + stripH;
-  let y = bodyTop; const lanes = [];
+  let y = bodyTop, midTop = null; const lanes = [];
   for (const l of P.lanes) {
+    if (centre && midTop === null && laneBelow(l)) { midTop = y; y += G.topH; }
     const rows = laneRows(l, opts.spare) + ((opts.addRows && opts.addRows.get(l.id)) || 0);   // + empty rows that fill the page
     const h = Math.max(rows * G.rowH + G.pad * 2, laneTitleLen(l.name) + 14);   // tall enough for the vertical title
     lanes.push({ l, y, h, rows, ...rowMaps(l.id) }); y += h;
   }
   if (!lanes.length) y += 70;
+  if (centre && midTop === null) { midTop = y; y += G.topH; }   // every lane above: the timeline goes under them
   const bodyBottom = y, g = tags.groups;
   // vertical position of each tag now that the lanes are laid out
   for (const t of tags.list) {
@@ -1110,7 +1136,7 @@ function layout(opts) {
         : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
   }
   const ftrH = opts.ftrH || G.ftrH;   // the footer grows when the legend and key need more lines
-  return { ppd, t0, t1, W, bandTop, phaseTop, phaseH, stripTop, stripH, bodyTop, bodyBottom, H: y + G.botH + ftrH * sc, ftrH, chrome: sc, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
+  return { ppd, t0, t1, W, bandTop, phaseTop, phaseH, stripTop, stripH, bodyTop, bodyBottom, centre, midTop, H: y + (centre ? 0 : G.botH) + ftrH * sc, ftrH, chrome: sc, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
 }
 
 /* ---------- curtain tags: position, alignment, size, style and colours ---------- */
@@ -1275,8 +1301,10 @@ function draw(svg, opts) {
   }
   if (!L.lanes.length) el("text", { x: G.headW + 16, y: L.bodyTop + 40, fill: "#5A6A7E", "font-size": 13, "font-family": F.font }, svg, "Start by adding a swimlane with “+ Lane”.");
 
-  drawBand(svg, L, L.bandTop, F);
-  drawBand(svg, L, L.bodyBottom, F);
+  if (L.centre) {
+    drawBand(svg, L, L.midTop, F);
+    for (const y of [L.midTop, L.midTop + G.topH]) el("line", { x1: 0, x2: L.W, y1: y, y2: y, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+  } else { drawBand(svg, L, L.bandTop, F); drawBand(svg, L, L.bodyBottom, F); }
   drawPhaseBands(svg, L, F, opts);
   el("line", { x1: 0, x2: L.W, y1: L.stripTop, y2: L.stripTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   if (L.stripH) el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": .9, "pointer-events": "none" }, svg);
@@ -1287,8 +1315,7 @@ function draw(svg, opts) {
   if (!opts.print) {   // on screen, the title block, timelines and legend open their settings when clicked
     const gz = el("g", {}, svg), zone = (x, y, w, h, z, tip) => el("title", {}, el("rect", { x, y, width: w, height: h, class: "zone", "data-zone": z }, gz), tip);
     zone(0, 0, L.W, G.hdrH * sc, "sheet:mProg", "Edit the title block");
-    zone(G.headW, L.bandTop, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
-    zone(G.headW, L.bodyBottom, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
+    for (const y of L.centre ? [L.midTop] : [L.bandTop, L.bodyBottom]) zone(G.headW, y, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
     zone(0, L.H - L.ftrH * sc, L.W - FOOTER_BOX_W * sc, L.ftrH * sc, "types", "Legend: edit the milestone, bar and curtain types");
     zone(L.W - FOOTER_BOX_W * sc, L.H - L.ftrH * sc, FOOTER_BOX_W * sc, L.ftrH * sc, "sheet:mAuthor", "Edit the author and revision");
   }
@@ -2329,6 +2356,11 @@ function slotAt(y) {
   for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: ln.toStored(Math.max(0, Math.min(ln.rows - (LAY.spare ? 1 : 0), Math.floor((y - ln.y - G.pad) / LAY.rowH)))) };
   if (!LAY.lanes.length) return null;
   if (y >= LAY.bodyBottom) { const ln = LAY.lanes[LAY.lanes.length-1]; return { lane: ln.l.id, row: ln.rows - 1 }; }
+  if (LAY.centre && y >= LAY.midTop && y < LAY.midTop + G.topH) {   // on the centre timeline: the lane next to it on the nearer side
+    const above = LAY.lanes.filter(ln => ln.y < LAY.midTop), below = LAY.lanes.filter(ln => ln.y >= LAY.midTop);
+    const up = y < LAY.midTop + G.topH / 2 ? above[above.length - 1] || below[0] : below[0] || above[above.length - 1];
+    return { lane: up.l.id, row: up === above[above.length - 1] ? up.toStored(Math.max(0, up.rows - 1 - (LAY.spare ? 1 : 0))) : up.toStored(0) };
+  }
   return { lane: LAY.lanes[0].l.id, row: 0 };
 }
 
@@ -2942,6 +2974,7 @@ function renderSideInner() {
         <button class="btn" id="gDown" ${bi < bl.length - 1 ? "" : "disabled"}>Move down</button>
         <button class="btn" id="gAdd">+ Sub-lane</button>
       </div>
+      ${centreLine(P) ? `<div class="f"><label>Side of the timeline</label><div class="seg" role="group" aria-label="Side of the timeline">${[["", "Above"], ["below", "Below"]].map(([v, n]) => `<button type="button" data-gside="${v}" aria-pressed="${(laneBelow(first) ? "below" : "") === v}">${n}</button>`).join("")}</div></div>` : ""}
       <div class="actions"><button class="btn" id="gUngroup">Ungroup (keep the lanes)</button></div>`;
     const upd = f => commit(p => f(p.laneGroups.find(g => g.id === cur.id), p), true);
     $("gName").onchange = e => upd(g => g.name = e.target.value || "Group");
@@ -2952,6 +2985,7 @@ function renderSideInner() {
     $("gUp").onclick = () => commit(p => moveBlock(p, p.lanes.find(l => l.id === first.id), -1), true);
     $("gDown").onclick = () => commit(p => moveBlock(p, p.lanes.find(l => l.id === first.id), 1), true);
     $("gAdd").onclick = () => { let n; commit(p => n = addSubLane(p, kids[kids.length - 1].id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+    side.querySelectorAll("[data-gside]").forEach(b => b.onclick = () => commit(p => setLaneSide(p, p.lanes.find(l => l.id === first.id), b.dataset.gside === "below"), true));
     $("gUngroup").onclick = () => { commit(p => { p.lanes.forEach(l => { if (l.group === cur.id) delete l.group; }); p.laneGroups = p.laneGroups.filter(g => g.id !== cur.id); }); sel = null; renderSide(); };
     return;
   }
@@ -2976,6 +3010,7 @@ function renderSideInner() {
         <button class="btn" id="lBar">+ Bar here</button>
         <button class="btn" id="lMs">+ Milestone here</button>
       </div>
+      ${centreLine(P) ? `<div class="f"><label>Side of the timeline</label><div class="seg" role="group" aria-label="Side of the timeline">${[["", "Above"], ["below", "Below"]].map(([v, n]) => `<button type="button" data-lside="${v}" aria-pressed="${(laneBelow(cur) ? "below" : "") === v}">${n}</button>`).join("")}</div></div>${grp ? `<p class="note">The whole group (${esc(grp.name)}) moves to that side.</p>` : ""}` : ""}
       <h2>Sub-lanes</h2>
       <div class="f"><label for="lGroup">Sub-lane of</label><select id="lGroup"><option value="">(none: a lane of its own)</option>${groups.map(g => `<option value="${esc(g.id)}" ${cur.group === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
       ${grp ? `<div class="f"><label>Name</label><div class="seg" role="group" aria-label="Sub-lane name direction">${[["", "Across"], ["up", "Upright"]].map(([v, n]) => `<button type="button" data-ldir="${v}" aria-pressed="${(cur.upright ? "up" : "") === v}">${n}</button>`).join("")}</div></div>` : ""}
@@ -2990,6 +3025,7 @@ function renderSideInner() {
     $("lRows").onchange = e => upd(l => l.minRows = Math.max(1, Math.min(30, +e.target.value || 1)));
     const move = d => commit(p => moveLane(p, cur.id, d), true);
     $("lGroup").onchange = e => commit(p => { const l = p.lanes.find(x => x.id === cur.id), g = (p.laneGroups || []).find(x => x.id === e.target.value); if (g) { l.group = g.id; l.colour = g.colour; } else delete l.group; }, true);
+    side.querySelectorAll("[data-lside]").forEach(b => b.onclick = () => commit(p => setLaneSide(p, p.lanes.find(l => l.id === cur.id), b.dataset.lside === "below"), true));
     side.querySelectorAll("[data-ldir]").forEach(b => b.onclick = () => upd(l => { if (b.dataset.ldir === "up") l.upright = true; else delete l.upright; }));
     $("lSub").onclick = () => { let n; commit(p => n = addSubLane(p, cur.id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
     if ($("lGrp")) $("lGrp").onclick = () => { sel = { type: "lanegroup", id: grp.id }; render(); renderSide(); };
@@ -3031,6 +3067,8 @@ function renderSideInner() {
     ${P.page.fill !== false ? `<div class="f"><label>Fill it with</label><div class="seg" role="group" aria-label="Fill the page with">${[["space", "Taller rows"], ["rows", "More rows"]].map(([v, n]) => `<button type="button" data-fillby="${v}" aria-pressed="${(P.page.fillBy || "rows") === v}">${n}</button>`).join("")}</div></div>
     <p class="note">${P.page.fillBy !== "space" ? "Keeps the row spacing and adds empty rows to the lanes until the page is full: Compact fits more rows than Normal or Roomy." : "Spreads the rows out until the page is full; the bars keep their size."}</p>` : ""}
     <div class="f"><label>Font</label><div class="seg" role="group" aria-label="Sheet font">${[["montserrat", "Montserrat"], ["condensed", "Condensed (summary)"]].map(([v, n]) => `<button type="button" data-font="${v}" aria-pressed="${(P.page.font || "montserrat") === v}">${n}</button>`).join("")}</div></div>
+    <div class="f"><label>Timeline position</label><div class="seg" role="group" aria-label="Timeline position">${[["", "Top and bottom"], ["centre", "Down the centre"]].map(([v, n]) => `<button type="button" data-tlpos="${v}" aria-pressed="${(P.page.timelinePos || "") === v}">${n}</button>`).join("")}</div></div>
+    ${centreLine(P) ? `<p class="note">One timeline between the lanes. Choose each lane's side in its panel (Above / Below), or move a lane up or down past the timeline.</p>` : ""}
     <div class="f"><label>Timeline header</label><div class="seg" role="group" aria-label="Timeline header">${[["classic", "Martinus"], ["bold", "Bold months"]].map(([v, n]) => `<button type="button" data-header="${v}" aria-pressed="${(P.page.header || "classic") === v}">${n}</button>`).join("")}</div></div>
     <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
     ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%. Try Compact spacing or Tidy all lanes.</p>` : ""}
@@ -3072,6 +3110,7 @@ function renderSideInner() {
   $("pgFill").onchange = e => commit(p => p.page.fill = e.target.checked, true);
   side.querySelectorAll("[data-fillby]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.fillby === "space") p.page.fillBy = "space"; else delete p.page.fillBy; }, true));
   side.querySelectorAll("[data-font]").forEach(b => b.onclick = () => commit(p => p.page.font = b.dataset.font, true));
+  side.querySelectorAll("[data-tlpos]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.tlpos === "centre") { p.page.timelinePos = "centre"; splitLanesAtCentre(p); } else delete p.page.timelinePos; }, true));
   side.querySelectorAll("[data-header]").forEach(b => b.onclick = () => commit(p => p.page.header = b.dataset.header, true));
   $("pgTidy").onclick = () => {
     const before = P.lanes.reduce((n, l) => n + laneRows(l, false), 0);
@@ -4159,8 +4198,8 @@ function buildExcelBlob() {
   ws["!cols"] = [10,44,13,26,11,11,9,9,6,9,9,8,10,9,9,13,13,24,14].map(w => ({ wch: w }));
   ws["!autofilter"] = { ref: `A1:S${rowsOut.length}` };
   XLSX.utils.book_append_sheet(wb, ws, "Program");
-  const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows","Group","GroupColour","NameText"]].concat(P.lanes.map((l,i) => { const g = laneGroupOf(P, l); return [l.name, i+1, l.colour, l.minRows || 1, g ? g.name : "", g ? g.colour : "", l.upright ? "Upright" : ""]; })));
-  lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }, { wch: 24 }, { wch: 11 }, { wch: 10 }];
+  const lanes = XLSX.utils.aoa_to_sheet([["LaneName","Order","Colour","MinRows","Group","GroupColour","NameText","Side"]].concat(P.lanes.map((l,i) => { const g = laneGroupOf(P, l); return [l.name, i+1, l.colour, l.minRows || 1, g ? g.name : "", g ? g.colour : "", l.upright ? "Upright" : "", laneBelow(l) ? "Below" : ""]; })));
+  lanes["!cols"] = [{ wch: 28 }, { wch: 7 }, { wch: 10 }, { wch: 9 }, { wch: 24 }, { wch: 11 }, { wch: 10 }, { wch: 8 }];
   XLSX.utils.book_append_sheet(wb, lanes, "Lanes");
   // (the type exactly as it is, in "More"; the columns before it are for reading and hand edits)
   const styles = XLSX.utils.aoa_to_sheet([["StyleName","Behaviour","Shape","DefaultFill","DefaultStroke","LegendLabel","Opacity","TagDuration","TagPosition","TagAlign","TagSize","TagStyle","TagColour","TagTextColour","More"]].concat(P.styles.map(s => {
@@ -4229,7 +4268,7 @@ function parseWorkbook(buf) {
   const lsh = wb.Sheets["Lanes"];
   if (lsh) {
     const la = XLSX.utils.sheet_to_json(lsh, { defval: null }).map(x => Object.fromEntries(Object.entries(x).map(([k, v]) => [k.trim().toLowerCase(), v])));
-    lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0, group: x.group != null && String(x.group).trim() ? String(x.group).trim() : "", groupColour: hex(x.groupcolour), upright: /^up/i.test(String(x.nametext ?? "").trim()) }));
+    lanes = la.filter(x => x.lanename).sort((a,b) => (+a.order || 0) - (+b.order || 0)).map(x => ({ name: String(x.lanename).trim(), colour: hex(x.colour) || hex(x.headerfill) || hex(x.fillhex), minRows: +x.minrows || 0, group: x.group != null && String(x.group).trim() ? String(x.group).trim() : "", groupColour: hex(x.groupcolour), upright: /^up/i.test(String(x.nametext ?? "").trim()), below: /^below/i.test(String(x.side ?? "").trim()) }));
   }
   let meta = {}, timeline = null, page = null, fromTool = false, progress, view = "", brand = null;
   const psh = wb.Sheets["Project"];
@@ -4487,6 +4526,7 @@ function previewImport(parsed, fname) {
               l.group = g.id;
             } else delete l.group;
             if (sl.upright) l.upright = true; else delete l.upright;
+            if (sl.below) l.side = "below"; else delete l.side;
           }
           const order = sheetLanes.map(sl => key(sl.name));
           const rank = l => { const i = order.indexOf(key(l.name)); return i < 0 ? order.length : i; };
