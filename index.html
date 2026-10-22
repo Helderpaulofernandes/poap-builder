@@ -595,6 +595,8 @@ function moveBlock(p, first, d) {
 /* A timeline down the centre (Sheet: Timeline position): one band between the lanes above it and the lanes below it,
    in place of the bands at the top and bottom. Each lane (a group's sub-lanes together) says which side it's on. */
 const centreLine = p => !!(p && p.page && p.page.timelinePos === "centre");
+const YEAR_H = 22;   // the year bar in a timeline band; the months take the rest of G.topH
+const midBandH = () => G.topH + (G.topH - YEAR_H);   // the centre band: months, the year bar, months again
 const laneBelow = l => !!(l && l.side === "below");
 function setLaneSide(p, l, below) {
   const g = laneGroupOf(p, l), all = g ? p.lanes.filter(x => x.group === g.id) : [l];
@@ -1119,13 +1121,13 @@ function layout(opts) {
   const bodyTop = stripTop + stripH;
   let y = bodyTop, midTop = null; const lanes = [];
   for (const l of P.lanes) {
-    if (centre && midTop === null && laneBelow(l)) { midTop = y; y += G.topH; }
+    if (centre && midTop === null && laneBelow(l)) { midTop = y; y += midBandH(); }
     const rows = laneRows(l, opts.spare) + ((opts.addRows && opts.addRows.get(l.id)) || 0);   // + empty rows that fill the page
     const h = Math.max(rows * G.rowH + G.pad * 2, laneTitleLen(l.name) + 14);   // tall enough for the vertical title
     lanes.push({ l, y, h, rows, ...rowMaps(l.id) }); y += h;
   }
   if (!lanes.length) y += 70;
-  if (centre && midTop === null) { midTop = y; y += G.topH; }   // every lane above: the timeline goes under them
+  if (centre && midTop === null) { midTop = y; y += midBandH(); }   // every lane above: the timeline goes under them
   const bodyBottom = y, g = tags.groups;
   // vertical position of each tag now that the lanes are laid out
   for (const t of tags.list) {
@@ -1302,8 +1304,8 @@ function draw(svg, opts) {
   if (!L.lanes.length) el("text", { x: G.headW + 16, y: L.bodyTop + 40, fill: "#5A6A7E", "font-size": 13, "font-family": F.font }, svg, "Start by adding a swimlane with “+ Lane”.");
 
   if (L.centre) {
-    drawBand(svg, L, L.midTop, F);
-    for (const y of [L.midTop, L.midTop + G.topH]) el("line", { x1: 0, x2: L.W, y1: y, y2: y, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
+    drawBand(svg, L, L.midTop, F, true);
+    for (const y of [L.midTop, L.midTop + midBandH()]) el("line", { x1: 0, x2: L.W, y1: y, y2: y, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   } else { drawBand(svg, L, L.bandTop, F); drawBand(svg, L, L.bodyBottom, F); }
   drawPhaseBands(svg, L, F, opts);
   el("line", { x1: 0, x2: L.W, y1: L.stripTop, y2: L.stripTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
@@ -1315,7 +1317,7 @@ function draw(svg, opts) {
   if (!opts.print) {   // on screen, the title block, timelines and legend open their settings when clicked
     const gz = el("g", {}, svg), zone = (x, y, w, h, z, tip) => el("title", {}, el("rect", { x, y, width: w, height: h, class: "zone", "data-zone": z }, gz), tip);
     zone(0, 0, L.W, G.hdrH * sc, "sheet:mProg", "Edit the title block");
-    for (const y of L.centre ? [L.midTop] : [L.bandTop, L.bodyBottom]) zone(G.headW, y, L.W - G.headW, G.topH, "sheet:tStart", "Change the timeline dates");
+    for (const y of L.centre ? [L.midTop] : [L.bandTop, L.bodyBottom]) zone(G.headW, y, L.W - G.headW, L.centre ? midBandH() : G.topH, "sheet:tStart", "Change the timeline dates");
     zone(0, L.H - L.ftrH * sc, L.W - FOOTER_BOX_W * sc, L.ftrH * sc, "types", "Legend: edit the milestone, bar and curtain types");
     zone(L.W - FOOTER_BOX_W * sc, L.H - L.ftrH * sc, FOOTER_BOX_W * sc, L.ftrH * sc, "sheet:mAuthor", "Edit the author and revision");
   }
@@ -1648,39 +1650,45 @@ function eachMonth(L, fn) {
   }
 }
 /* Timeline band: years alternate steel/peach, months alternate peach/white (the Martinus PoaP look) */
-function drawBand(svg, L, y0, F) {
+function drawBand(svg, L, y0, F, centre) {
   const g = el("g", { "pointer-events": "none" }, svg);
-  const yh = 22, mh = G.topH - yh;
-  el("rect", { x: 0, y: y0, width: L.W, height: G.topH, fill: "#FFFFFF" }, g);
+  const yh = YEAR_H, mh = G.topH - yh;
+  // the rows top to bottom: years over months, or (down the centre) months, years, months
+  const yearY = centre ? y0 + mh : y0, monthYs = centre ? [y0, y0 + mh + yh] : [y0 + yh], H = centre ? midBandH() : G.topH;
+  el("rect", { x: 0, y: y0, width: L.W, height: H, fill: "#FFFFFF" }, g);
   if (P.page.header === "bold") {   // summary style: large years, months alternating black and white
     const years = [];
     eachMonth(L, (xa, xb, dt, i) => {
       const y = dt.getUTCFullYear(), last = years[years.length - 1];
       if (!last || last.y !== y) years.push({ y, a: xa, b: xb }); else last.b = xb;
       const dark = i % 2 === 1, w = xb - xa, lab = w > 22 ? MON[dt.getUTCMonth()].toUpperCase() : w > 9 ? MON[dt.getUTCMonth()][0] : "";
-      el("rect", { x: xa, y: y0 + yh, width: w, height: mh, fill: dark ? "#111111" : "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
-      if (lab) el("text", { x: (xa + xb) / 2, y: y0 + yh + mh / 2 + 4, "text-anchor": "middle", fill: dark ? "#FFFFFF" : "#111111", "font-size": 11.5, "font-weight": 700, "font-family": F.font }, g, lab);
+      for (const my of monthYs) {
+        el("rect", { x: xa, y: my, width: w, height: mh, fill: dark ? "#111111" : "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
+        if (lab) el("text", { x: (xa + xb) / 2, y: my + mh / 2 + 4, "text-anchor": "middle", fill: dark ? "#FFFFFF" : "#111111", "font-size": 11.5, "font-weight": 700, "font-family": F.font }, g, lab);
+      }
     });
     years.forEach(yr => {
-      el("line", { x1: yr.a, x2: yr.a, y1: y0, y2: y0 + yh, stroke: "#111111", "stroke-width": 1 }, g);
-      if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: y0 + yh / 2 + 7, "text-anchor": "middle", fill: "#111111", "font-size": 19, "font-weight": 700, "font-family": F.font }, g, yr.y);
+      el("line", { x1: yr.a, x2: yr.a, y1: yearY, y2: yearY + yh, stroke: "#111111", "stroke-width": 1 }, g);
+      if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: yearY + yh / 2 + 7, "text-anchor": "middle", fill: "#111111", "font-size": 19, "font-weight": 700, "font-family": F.font }, g, yr.y);
     });
-    el("line", { x1: G.headW, x2: L.W, y1: y0 + yh, y2: y0 + yh, stroke: "#111111", "stroke-width": 1 }, g);
+    for (const ly of centre ? [yearY, yearY + yh] : [yearY + yh]) el("line", { x1: G.headW, x2: L.W, y1: ly, y2: ly, stroke: "#111111", "stroke-width": 1 }, g);
     return;
   }
   const years = [];
   eachMonth(L, (xa, xb, dt, i) => {
     const y = dt.getUTCFullYear(), last = years[years.length - 1];
     if (!last || last.y !== y) years.push({ y, a: xa, b: xb }); else last.b = xb;
-    el("rect", { x: xa, y: y0 + yh, width: xb - xa, height: mh, fill: i % 2 ? "#FFFFFF" : BRAND.band2 }, g);
     const w = xb - xa, lab = w > 30 ? MON[dt.getUTCMonth()] : w > 11 ? MON[dt.getUTCMonth()][0] : "";
-    if (lab) el("text", { x: (xa + xb) / 2, y: y0 + yh + mh / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": 10, "font-weight": 500, "font-family": F.font }, g, lab);
+    for (const my of monthYs) {
+      el("rect", { x: xa, y: my, width: w, height: mh, fill: i % 2 ? "#FFFFFF" : BRAND.band2 }, g);
+      if (lab) el("text", { x: (xa + xb) / 2, y: my + mh / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": 10, "font-weight": 500, "font-family": F.font }, g, lab);
+    }
   });
   years.forEach((yr, i) => {
-    el("rect", { x: yr.a, y: y0, width: yr.b - yr.a, height: yh, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
-    if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: y0 + yh / 2 + 5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 13.5, "font-weight": 700, "font-family": F.font }, g, yr.y);
+    el("rect", { x: yr.a, y: yearY, width: yr.b - yr.a, height: yh, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
+    if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: yearY + yh / 2 + 5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 13.5, "font-weight": 700, "font-family": F.font }, g, yr.y);
   });
-  eachMonth(L, (xa) => el("line", { x1: xa, x2: xa, y1: y0 + yh, y2: y0 + G.topH, stroke: "#FFFFFF", "stroke-width": .8 }, g));
+  for (const my of monthYs) eachMonth(L, (xa) => el("line", { x1: xa, x2: xa, y1: my, y2: my + mh, stroke: "#FFFFFF", "stroke-width": .8 }, g));
 }
 
 /* lane titles: one line if it fits the lane, else split into two balanced lines */
@@ -2356,9 +2364,9 @@ function slotAt(y) {
   for (const ln of LAY.lanes) if (y >= ln.y && y < ln.y + ln.h) return { lane: ln.l.id, row: ln.toStored(Math.max(0, Math.min(ln.rows - (LAY.spare ? 1 : 0), Math.floor((y - ln.y - G.pad) / LAY.rowH)))) };
   if (!LAY.lanes.length) return null;
   if (y >= LAY.bodyBottom) { const ln = LAY.lanes[LAY.lanes.length-1]; return { lane: ln.l.id, row: ln.rows - 1 }; }
-  if (LAY.centre && y >= LAY.midTop && y < LAY.midTop + G.topH) {   // on the centre timeline: the lane next to it on the nearer side
+  if (LAY.centre && y >= LAY.midTop && y < LAY.midTop + midBandH()) {   // on the centre timeline: the lane next to it on the nearer side
     const above = LAY.lanes.filter(ln => ln.y < LAY.midTop), below = LAY.lanes.filter(ln => ln.y >= LAY.midTop);
-    const up = y < LAY.midTop + G.topH / 2 ? above[above.length - 1] || below[0] : below[0] || above[above.length - 1];
+    const up = y < LAY.midTop + midBandH() / 2 ? above[above.length - 1] || below[0] : below[0] || above[above.length - 1];
     return { lane: up.l.id, row: up === above[above.length - 1] ? up.toStored(Math.max(0, up.rows - 1 - (LAY.spare ? 1 : 0))) : up.toStored(0) };
   }
   return { lane: LAY.lanes[0].l.id, row: 0 };
