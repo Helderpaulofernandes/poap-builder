@@ -1841,15 +1841,15 @@ function drawBand(svg, L, y0, F, centre, mirror) {   // mirror: the bottom band,
       if (bold) for (const ly of [r.y, r.y + r.h]) if (ly !== y0 || centre) el("line", { x1: G.headW, x2: L.W, y1: ly, y2: ly, stroke: "#111111", "stroke-width": 1 }, g);
       continue;
     }
-    const small = r.u === "day" || r.u === "week", third = r.u === rows[2];   // the third row takes the top row's colours
+    const small = r.u === "day" || r.u === "week", third = r.u === rows[2];   // the third row: white and grey
     eachUnit(L, r.u, (xa, xb, dt, i) => {
       const w = xb - xa, lab = unitLabel(r.u, dt, w, false);
       if (third && bold) {   // white cells ruled in black, like the top row
         el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
         if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 4, "text-anchor": "middle", fill: "#111111", "font-size": small ? 9.5 : 11, "font-weight": 700, "font-family": F.font }, g, r.u === "month" ? lab.toUpperCase() : lab);
-      } else if (third) {   // steel and peach, like the years
-        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
-        if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": small ? 9 : 10, "font-weight": 600, "font-family": F.font }, g, lab);
+      } else if (third) {   // white and a light grey: quiet next to the coloured rows
+        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: i % 2 ? "#E6E9EE" : "#FFFFFF", stroke: "#D3D8E0", "stroke-width": .5 }, g);
+        if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": small ? 9 : 10, "font-weight": 500, "font-family": F.font }, g, lab);
       } else if (bold) {
         const dark = i % 2 === 1;
         el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: dark ? "#111111" : "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
