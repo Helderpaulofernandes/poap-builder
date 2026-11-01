@@ -1460,7 +1460,7 @@ function draw(svg, opts) {
   if (L.centre) {
     drawBand(svg, L, L.midTop, F, true);
     for (const y of [L.midTop, L.midTop + midBandH()]) el("line", { x1: 0, x2: L.W, y1: y, y2: y, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
-  } else { drawBand(svg, L, L.bandTop, F); drawBand(svg, L, L.bodyBottom, F); }
+  } else { drawBand(svg, L, L.bandTop, F); drawBand(svg, L, L.bodyBottom, F, false, true); }   // the bottom band mirrors the top
   drawPhaseBands(svg, L, F, opts);
   el("line", { x1: 0, x2: L.W, y1: L.stripTop, y2: L.stripTop, stroke: BRAND.navy, "stroke-width": 1.2, "pointer-events": "none" }, svg);
   if (L.stripH) el("line", { x1: 0, x2: L.W, y1: L.bodyTop, y2: L.bodyTop, stroke: BRAND.navy, "stroke-width": .9, "pointer-events": "none" }, svg);
@@ -1820,11 +1820,11 @@ function unitLabel(unit, dt, w, major) {
 }
 /* Timeline band: the top row in bold (years alternate steel/peach), the finer rows alternate peach/white (the Martinus
    PoaP look), or black and white months in the bold style. Down the centre, the finer rows sit on both sides of the top one. */
-function drawBand(svg, L, y0, F, centre) {
+function drawBand(svg, L, y0, F, centre, mirror) {   // mirror: the bottom band, its rows the other way up
   const g = el("g", { "pointer-events": "none" }, svg), rows = scaleRows(), mh = MINOR_H(), bold = P.page.header === "bold";
   if (centre && !midDouble()) centre = false;
-  const lower = rows.slice(1), order = centre ? [...lower.slice().reverse(), rows[0], ...lower] : rows;
-  let y = y0; const lines = order.map((u, k) => { const major = centre ? k === lower.length : k === 0, h = major ? YEAR_H : mh, r = { u, y, h, major }; y += h; return r; });
+  const lower = rows.slice(1), order = centre ? [...lower.slice().reverse(), rows[0], ...lower] : mirror ? rows.slice().reverse() : rows;
+  let y = y0; const lines = order.map((u, k) => { const major = centre ? k === lower.length : mirror ? k === order.length - 1 : k === 0, h = major ? YEAR_H : mh, r = { u, y, h, major }; y += h; return r; });
   el("rect", { x: 0, y: y0, width: L.W, height: y - y0, fill: "#FFFFFF" }, g);
   for (const r of lines) {
     if (r.major) {

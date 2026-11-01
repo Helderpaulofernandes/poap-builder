@@ -975,6 +975,11 @@ const TESTS = {
     T.ok(texts().some(x => /^Q[1-4]( \d{4})?$/.test(x)), "quarters shown");
     T.ok(texts().filter(x => /^\d\d$/.test(x)).length > 20, "week start days shown");
     T.ok(PLAN.L.H * PLAN.k > PLAN.availH * .98, "the page is still full");
+    // the bottom band mirrors the top: weeks next to the lanes, quarters at the very bottom
+    const ys = re => [...document.querySelectorAll("#chart text")].filter(x => re.test(x.textContent)).map(x => +x.getAttribute("y"));
+    const below = (re) => ys(re).filter(y => y > LAY.bodyBottom);
+    T.ok(Math.min(...below(/^\d\d$/)) < Math.min(...below(/^(Nov|Dec|Jan)$/)) && Math.min(...below(/^(Nov|Dec|Jan)$/)) < Math.min(...below(/^Q[1-4]/)), "bottom band: weeks, months, then quarters");
+    T.ok(Math.min(...ys(/^Q[1-4]/)) < Math.min(...ys(/^(Nov|Dec|Jan)$/)), "top band: quarters first");
     // a row can't be coarser than the one above
     commit(p => { p.page.scale = { top: "month", mid: "year" }; }, true);
     T.eq(scaleRows(), ["month", "week"], "fixed up to finer");
