@@ -239,6 +239,7 @@ aside h2:first-child { margin-top: 0; }
 .f label { font-size: 10.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .f input, .f select { width: 100%; padding: 5px 7px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); font-weight: 500; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .f input[type=color] { padding: 1px 2px; height: 30px; }
 .idtag { font: 500 12px var(--font-mono); background: var(--hover); padding: 2px 6px; border-radius: 3px; letter-spacing: 0; text-transform: none; color: var(--fg); }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -597,7 +598,20 @@ function moveBlock(p, first, d) {
 const centreLine = p => !!(p && p.page && p.page.timelinePos === "centre");
 const YEAR_H = 22;   // the year bar in a timeline band; the months take the rest of G.topH
 const midDouble = () => !(P && P.page && P.page.midMonths === "single");   // months on both sides of the year bar (the default), or under it only
-const midBandH = () => midDouble() ? G.topH + (G.topH - YEAR_H) : G.topH;   // the centre band: months, the year bar, months again
+/* Timescale (like P6): the top row and the second row of the timeline, and an optional third, each a unit of time,
+   every row finer than the one above it. The top row is the bold one (22 px), the others are 18 px. */
+const SCALE_UNITS = [["year", "Year"], ["quarter", "Quarter"], ["month", "Month"], ["week", "Week"], ["day", "Day"]];
+const unitRank = u => SCALE_UNITS.findIndex(([k]) => k === u);
+function scaleRows(p = P) {
+  const sc = (p && p.page && p.page.scale) || {}, top = sc.top || "year";
+  let mid = sc.mid || "month"; if (unitRank(mid) <= unitRank(top)) mid = SCALE_UNITS[unitRank(top) + 1]?.[0] || "day";
+  const rows = [top, mid];
+  if (sc.third && unitRank(sc.third) > unitRank(mid)) rows.push(sc.third);
+  return rows;
+}
+const MINOR_H = () => G.topH - YEAR_H;
+const bandH = () => YEAR_H + (scaleRows().length - 1) * MINOR_H();   // a timeline band at the top or bottom
+const midBandH = () => midDouble() ? YEAR_H + 2 * (scaleRows().length - 1) * MINOR_H() : bandH();   // the centre band: the finer rows on both sides of the top one
 const laneBelow = l => !!(l && l.side === "below");
 function setLaneSide(p, l, below) {
   const g = laneGroupOf(p, l), all = g ? p.lanes.filter(x => x.group === g.id) : [l];
@@ -1118,7 +1132,7 @@ function layout(opts) {
   // curtain tag strip: a band of its own between the timeline and the first lane, only when used
   const sc = opts.chrome || 1;   // the title block and footer drawn larger by this, so they print at their own size however the sheet shrinks
   const centre = centreLine(P);   // one timeline between the lanes, none at the top and bottom
-  const bandTop = G.hdrH * sc, phaseTop = bandTop + (centre ? 0 : G.topH), stripTop = phaseTop + phaseH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
+  const bandTop = G.hdrH * sc, phaseTop = bandTop + (centre ? 0 : bandH()), stripTop = phaseTop + phaseH, stripH = tags.groups.strip.height ? tags.groups.strip.height + 6 : 0;
   const bodyTop = stripTop + stripH;
   let y = bodyTop, midTop = null; const lanes = [];
   for (const l of P.lanes) {
@@ -1139,7 +1153,7 @@ function layout(opts) {
         : (bodyTop + bodyBottom) / 2 - grp.height / 2 + t.row * step;
   }
   const ftrH = opts.ftrH || G.ftrH;   // the footer grows when the legend and key need more lines
-  return { ppd, t0, t1, W, bandTop, phaseTop, phaseH, stripTop, stripH, bodyTop, bodyBottom, centre, midTop, H: y + (centre ? 0 : G.botH) + ftrH * sc, ftrH, chrome: sc, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
+  return { ppd, t0, t1, W, bandTop, phaseTop, phaseH, stripTop, stripH, bodyTop, bodyBottom, centre, midTop, H: y + (centre ? 0 : bandH()) + ftrH * sc, ftrH, chrome: sc, lanes, tags: tags.list, x, rowH: G.rowH, spare: !!opts.spare, print: !!opts.print };
 }
 
 /* ---------- curtain tags: position, alignment, size, style and colours ---------- */
@@ -1318,7 +1332,7 @@ function draw(svg, opts) {
   if (!opts.print) {   // on screen, the title block, timelines and legend open their settings when clicked
     const gz = el("g", {}, svg), zone = (x, y, w, h, z, tip) => el("title", {}, el("rect", { x, y, width: w, height: h, class: "zone", "data-zone": z }, gz), tip);
     zone(0, 0, L.W, G.hdrH * sc, "sheet:mProg", "Edit the title block");
-    for (const y of L.centre ? [L.midTop] : [L.bandTop, L.bodyBottom]) zone(G.headW, y, L.W - G.headW, L.centre ? midBandH() : G.topH, "sheet:tStart", "Change the timeline dates");
+    for (const y of L.centre ? [L.midTop] : [L.bandTop, L.bodyBottom]) zone(G.headW, y, L.W - G.headW, L.centre ? midBandH() : bandH(), "sheet:tStart", "Change the timeline dates");
     zone(0, L.H - L.ftrH * sc, L.W - FOOTER_BOX_W * sc, L.ftrH * sc, "types", "Legend: edit the milestone, bar and curtain types");
     zone(L.W - FOOTER_BOX_W * sc, L.H - L.ftrH * sc, FOOTER_BOX_W * sc, L.ftrH * sc, "sheet:mAuthor", "Edit the author and revision");
   }
@@ -1640,57 +1654,66 @@ function drawFooter(svg, L, F) {
   });
 }
 
-function eachMonth(L, fn) {
-  const s = new Date(L.t0 * DAY);
-  let d = Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1) / DAY, i = 0;
+function eachMonth(L, fn) { eachUnit(L, "month", fn); }
+/* every year, quarter, month, week (from Monday) or day on the timeline, clipped to it: fn(x from, x to, start date, index) */
+function eachUnit(L, unit, fn) {
+  const at = d => new Date(d * DAY), utc = (y, m, dd = 1) => Date.UTC(y, m, dd) / DAY;
+  const s0 = at(L.t0), y = s0.getUTCFullYear(), m = s0.getUTCMonth(), dow = (s0.getUTCDay() + 6) % 7;
+  let d = unit === "year" ? utc(y, 0) : unit === "quarter" ? utc(y, m - m % 3) : unit === "month" ? utc(y, m) : unit === "week" ? L.t0 - dow : L.t0, i = 0;
+  const next = d => { const t = at(d), Y = t.getUTCFullYear(), M = t.getUTCMonth();
+    return unit === "year" ? utc(Y + 1, 0) : unit === "quarter" ? utc(Y, M + 3) : unit === "month" ? utc(Y, M + 1) : d + (unit === "week" ? 7 : 1); };
   while (d < L.t1) {
-    const dt = new Date(d*DAY), nx = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth()+1, 1) / DAY;
-    const a = Math.max(d, L.t0), b = Math.min(nx, L.t1);
-    fn(G.headW + (a - L.t0) * L.ppd, G.headW + (b - L.t0) * L.ppd, dt, i++);
+    const nx = next(d), a = Math.max(d, L.t0), b = Math.min(nx, L.t1);
+    fn(G.headW + (a - L.t0) * L.ppd, G.headW + (b - L.t0) * L.ppd, at(d), i++);
     d = nx;
   }
 }
-/* Timeline band: years alternate steel/peach, months alternate peach/white (the Martinus PoaP look) */
+/* a unit's label for the room it has */
+function unitLabel(unit, dt, w, major) {
+  const Y = dt.getUTCFullYear(), M = dt.getUTCMonth(), D = dt.getUTCDate(), q = Math.floor(M / 3) + 1;
+  if (unit === "year") return w > (major ? 34 : 26) ? String(Y) : w > 16 ? "'" + String(Y).slice(2) : "";
+  if (unit === "quarter") return w > 52 ? `Q${q} ${Y}` : w > 18 ? `Q${q}` : w > 8 ? String(q) : "";
+  if (unit === "month") return w > (major ? 60 : 30) ? (major ? `${MON[M]} ${Y}` : MON[M]) : w > 11 ? MON[M][0] : "";
+  if (unit === "week") return w > 38 ? `${D} ${MON[M]}` : w > 12 ? String(D).padStart(2, "0") : "";
+  return w > 12 ? String(D) : w > 6 ? "MTWTFSS"[(dt.getUTCDay() + 6) % 7] : "";
+}
+/* Timeline band: the top row in bold (years alternate steel/peach), the finer rows alternate peach/white (the Martinus
+   PoaP look), or black and white months in the bold style. Down the centre, the finer rows sit on both sides of the top one. */
 function drawBand(svg, L, y0, F, centre) {
-  const g = el("g", { "pointer-events": "none" }, svg);
-  const yh = YEAR_H, mh = G.topH - yh;
-  // the rows top to bottom: years over months, or (down the centre) months, years, months
-  if (centre && !midDouble()) centre = false;   // a single row of months: drawn like the top band
-  const yearY = centre ? y0 + mh : y0, monthYs = centre ? [y0, y0 + mh + yh] : [y0 + yh], H = centre ? midBandH() : G.topH;
-  el("rect", { x: 0, y: y0, width: L.W, height: H, fill: "#FFFFFF" }, g);
-  if (P.page.header === "bold") {   // summary style: large years, months alternating black and white
-    const years = [];
-    eachMonth(L, (xa, xb, dt, i) => {
-      const y = dt.getUTCFullYear(), last = years[years.length - 1];
-      if (!last || last.y !== y) years.push({ y, a: xa, b: xb }); else last.b = xb;
-      const dark = i % 2 === 1, w = xb - xa, lab = w > 22 ? MON[dt.getUTCMonth()].toUpperCase() : w > 9 ? MON[dt.getUTCMonth()][0] : "";
-      for (const my of monthYs) {
-        el("rect", { x: xa, y: my, width: w, height: mh, fill: dark ? "#111111" : "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
-        if (lab) el("text", { x: (xa + xb) / 2, y: my + mh / 2 + 4, "text-anchor": "middle", fill: dark ? "#FFFFFF" : "#111111", "font-size": 11.5, "font-weight": 700, "font-family": F.font }, g, lab);
+  const g = el("g", { "pointer-events": "none" }, svg), rows = scaleRows(), mh = MINOR_H(), bold = P.page.header === "bold";
+  if (centre && !midDouble()) centre = false;
+  const lower = rows.slice(1), order = centre ? [...lower.slice().reverse(), rows[0], ...lower] : rows;
+  let y = y0; const lines = order.map((u, k) => { const major = centre ? k === lower.length : k === 0, h = major ? YEAR_H : mh, r = { u, y, h, major }; y += h; return r; });
+  el("rect", { x: 0, y: y0, width: L.W, height: y - y0, fill: "#FFFFFF" }, g);
+  for (const r of lines) {
+    if (r.major) {
+      eachUnit(L, r.u, (xa, xb, dt, i) => {
+        const lab = unitLabel(r.u, dt, xb - xa, true);
+        if (bold) {
+          el("line", { x1: xa, x2: xa, y1: r.y, y2: r.y + r.h, stroke: "#111111", "stroke-width": 1 }, g);
+          if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 7, "text-anchor": "middle", fill: "#111111", "font-size": 19, "font-weight": 700, "font-family": F.font }, g, lab);
+        } else {
+          el("rect", { x: xa, y: r.y, width: xb - xa, height: r.h, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
+          if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 13.5, "font-weight": 700, "font-family": F.font }, g, lab);
+        }
+      });
+      if (bold) for (const ly of [r.y, r.y + r.h]) if (ly !== y0 || centre) el("line", { x1: G.headW, x2: L.W, y1: ly, y2: ly, stroke: "#111111", "stroke-width": 1 }, g);
+      continue;
+    }
+    const small = r.u === "day" || r.u === "week";
+    eachUnit(L, r.u, (xa, xb, dt, i) => {
+      const w = xb - xa, lab = unitLabel(r.u, dt, w, false);
+      if (bold) {
+        const dark = i % 2 === 1;
+        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: dark ? "#111111" : "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
+        if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 4, "text-anchor": "middle", fill: dark ? "#FFFFFF" : "#111111", "font-size": small ? 9.5 : 11.5, "font-weight": 700, "font-family": F.font }, g, r.u === "month" ? lab.toUpperCase() : lab);
+      } else {
+        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: i % 2 ? "#FFFFFF" : BRAND.band2 }, g);
+        if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": small ? 9 : 10, "font-weight": 500, "font-family": F.font }, g, lab);
       }
     });
-    years.forEach(yr => {
-      el("line", { x1: yr.a, x2: yr.a, y1: yearY, y2: yearY + yh, stroke: "#111111", "stroke-width": 1 }, g);
-      if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: yearY + yh / 2 + 7, "text-anchor": "middle", fill: "#111111", "font-size": 19, "font-weight": 700, "font-family": F.font }, g, yr.y);
-    });
-    for (const ly of centre ? [yearY, yearY + yh] : [yearY + yh]) el("line", { x1: G.headW, x2: L.W, y1: ly, y2: ly, stroke: "#111111", "stroke-width": 1 }, g);
-    return;
+    if (!bold) eachUnit(L, r.u, xa => el("line", { x1: xa, x2: xa, y1: r.y, y2: r.y + r.h, stroke: "#FFFFFF", "stroke-width": .8 }, g));
   }
-  const years = [];
-  eachMonth(L, (xa, xb, dt, i) => {
-    const y = dt.getUTCFullYear(), last = years[years.length - 1];
-    if (!last || last.y !== y) years.push({ y, a: xa, b: xb }); else last.b = xb;
-    const w = xb - xa, lab = w > 30 ? MON[dt.getUTCMonth()] : w > 11 ? MON[dt.getUTCMonth()][0] : "";
-    for (const my of monthYs) {
-      el("rect", { x: xa, y: my, width: w, height: mh, fill: i % 2 ? "#FFFFFF" : BRAND.band2 }, g);
-      if (lab) el("text", { x: (xa + xb) / 2, y: my + mh / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": 10, "font-weight": 500, "font-family": F.font }, g, lab);
-    }
-  });
-  years.forEach((yr, i) => {
-    el("rect", { x: yr.a, y: yearY, width: yr.b - yr.a, height: yh, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
-    if (yr.b - yr.a > 34) el("text", { x: (yr.a + yr.b) / 2, y: yearY + yh / 2 + 5, "text-anchor": "middle", fill: BRAND.navy, "font-size": 13.5, "font-weight": 700, "font-family": F.font }, g, yr.y);
-  });
-  for (const my of monthYs) eachMonth(L, (xa) => el("line", { x1: xa, x2: xa, y1: my, y2: my + mh, stroke: "#FFFFFF", "stroke-width": .8 }, g));
 }
 
 /* lane titles: one line if it fits the lane, else split into two balanced lines */
@@ -3084,6 +3107,10 @@ function renderSideInner() {
     <div class="actions"><button class="btn" id="pgTidy" title="Move every lane's bars and milestones up into the fewest rows without overlaps">Tidy all lanes</button></div>
     ${PLAN && PLAN.fit < 0.98 ? `<p class="note" style="color:var(--warn)">The content is taller than this page and prints at ${Math.round(PLAN.fit * 100)}%. Try Compact spacing or Tidy all lanes.</p>` : ""}
     <h2>Timeline</h2>
+    ${(() => { const r = scaleRows(), opt = (from, v, none) => `${none ? `<option value="">(none)</option>` : ""}${SCALE_UNITS.filter((_, i) => i > from).map(([k, n]) => `<option value="${k}" ${v === k ? "selected" : ""}>${n}</option>`).join("")}`;
+      return `<div class="row3"><div class="f"><label for="scTop">Top row</label><select id="scTop">${opt(-1, r[0]).replace(/<option value="day"[^>]*>Day<\/option>/, "")}</select></div>
+        <div class="f"><label for="scMid">Second row</label><select id="scMid">${opt(unitRank(r[0]), r[1])}</select></div>
+        <div class="f"><label for="scThird">Third row</label><select id="scThird" ${unitRank(r[1]) >= SCALE_UNITS.length - 1 ? "disabled" : ""}>${opt(unitRank(r[1]), r[2] || "", true)}</select></div></div>`; })()}
     <div class="row2">
       <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
       <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${P.timeline.end}"></div>
@@ -3122,6 +3149,11 @@ function renderSideInner() {
   side.querySelectorAll("[data-fillby]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.fillby === "space") p.page.fillBy = "space"; else delete p.page.fillBy; }, true));
   side.querySelectorAll("[data-font]").forEach(b => b.onclick = () => commit(p => p.page.font = b.dataset.font, true));
   if ($("pgMidMonths")) $("pgMidMonths").onchange = e => commit(p => { if (e.target.checked) delete p.page.midMonths; else p.page.midMonths = "single"; }, true);
+  const setScale = f => commit(p => { const r = scaleRows(p), sc = { top: r[0], mid: r[1], third: r[2] || "" }; f(sc);
+    if (unitRank(sc.mid) <= unitRank(sc.top)) sc.mid = SCALE_UNITS[unitRank(sc.top) + 1][0];
+    if (sc.third && unitRank(sc.third) <= unitRank(sc.mid)) sc.third = "";
+    if (sc.top === "year" && sc.mid === "month" && !sc.third) delete p.page.scale; else p.page.scale = { top: sc.top, mid: sc.mid, ...(sc.third ? { third: sc.third } : {}) }; }, true);
+  if ($("scTop")) { $("scTop").onchange = e => setScale(sc => sc.top = e.target.value); $("scMid").onchange = e => setScale(sc => sc.mid = e.target.value); $("scThird").onchange = e => setScale(sc => sc.third = e.target.value); }
   side.querySelectorAll("[data-tlpos]").forEach(b => b.onclick = () => commit(p => { if (b.dataset.tlpos === "centre") { p.page.timelinePos = "centre"; splitLanesAtCentre(p); } else delete p.page.timelinePos; }, true));
   side.querySelectorAll("[data-header]").forEach(b => b.onclick = () => commit(p => p.page.header = b.dataset.header, true));
   $("pgTidy").onclick = () => {
@@ -4223,7 +4255,7 @@ function buildExcelBlob() {
   XLSX.utils.book_append_sheet(wb, styles, "StyleRegister");
   const m = P.meta;
   const proj = XLSX.utils.aoa_to_sheet([["Field","Value"],["Program",m.program],["Number",m.number],["Title",m.title],["Subtitle",m.subtitle],["Client",m.client],["Author",m.author],["Revision",m.revision],["TimelineStart",xDate(P.timeline.start)],["TimelineEnd",xDate(P.timeline.end)],["PageSize",P.page.size],["Orientation",P.page.orient],["MarginMM",P.page.margin],["RowHeightPx",P.page.rowH],["FillPage",P.page.fill !== false ? "Yes" : "No"],["DataDate",prog().dataDate ? xDate(prog().dataDate) : ""],["BaselineName",prog().baselineName],["Format","poap/2"],
-    ["Font",P.page.font || ""],["Header",P.page.header || ""],["View",(P.view && P.view.mode) || ""],["Status",m.status || ""],["Date",m.date || ""],
+    ["Font",P.page.font || ""],["Header",P.page.header || ""],["PageMore",(o => Object.keys(o).length ? JSON.stringify(o) : "")(Object.fromEntries(["fillBy", "timelinePos", "midMonths", "scale"].filter(k => P.page[k] != null).map(k => [k, P.page[k]])))],["View",(P.view && P.view.mode) || ""],["Status",m.status || ""],["Date",m.date || ""],
     ["ClientLogoCrop",m.clientLogoCrop ? JSON.stringify(m.clientLogoCrop) : ""]], { cellDates: true });
   ["B9","B10","B16"].forEach(a => { if (proj[a] && proj[a].t !== "s") proj[a].z = "dd-mmm-yy"; });
   proj["!cols"] = [{ wch: 14 }, { wch: 44 }];
@@ -4299,6 +4331,7 @@ function parseWorkbook(buf) {
       rowH: +kv.rowheightpx >= 14 && +kv.rowheightpx <= 40 ? +kv.rowheightpx : 26, fill: !/^no$/i.test(String(kv.fillpage ?? "").trim()) };
     if (page && /^(montserrat|condensed)$/.test(String(kv.font ?? ""))) page.font = String(kv.font);
     if (page && /^(classic|bold)$/.test(String(kv.header ?? ""))) page.header = String(kv.header);
+    const pm = moreIn(kv.pagemore); if (page && pm) for (const k of ["fillBy", "timelinePos", "midMonths", "scale"]) if (pm[k] != null) page[k] = pm[k];
   }
   const lgs = wb.Sheets["Images"] || wb.Sheets["ClientLogo"];   // the client logo and the brand, in pieces
   if (lgs) {

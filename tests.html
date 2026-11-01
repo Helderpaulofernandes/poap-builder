@@ -964,6 +964,27 @@ const TESTS = {
     T.ok(!LAY.centre && LAY.phaseTop > LAY.bandTop, "top band back");
     T.eq(P.lanes.length, n, "no lanes lost");
   },
+  "Timescale: choose the rows like P6, with an optional third row": async () => {
+    loadDoc(seedProject(), null);
+    const texts = () => [...document.querySelectorAll("#chart text")].map(x => x.textContent);
+    T.eq(scaleRows(), ["year", "month"], "default: years over months");
+    const h0 = LAY.phaseTop - LAY.bandTop;
+    commit(p => { p.page.scale = { top: "quarter", mid: "month", third: "week" }; }, true);
+    T.eq(scaleRows(), ["quarter", "month", "week"], "three rows");
+    T.ok(LAY.phaseTop - LAY.bandTop > h0 + 15, "the band is a row taller");
+    T.ok(texts().some(x => /^Q[1-4]( \d{4})?$/.test(x)), "quarters shown");
+    T.ok(texts().filter(x => /^\d\d$/.test(x)).length > 20, "week start days shown");
+    T.ok(PLAN.L.H * PLAN.k > PLAN.availH * .98, "the page is still full");
+    // a row can't be coarser than the one above
+    commit(p => { p.page.scale = { top: "month", mid: "year" }; }, true);
+    T.eq(scaleRows(), ["month", "week"], "fixed up to finer");
+    // centre timeline with three rows: the finer rows mirror round the top row
+    commit(p => { p.page.scale = { top: "year", mid: "month", third: "week" }; p.page.timelinePos = "centre"; splitLanesAtCentre(p); }, true);
+    T.eq(midBandH(), 22 + 4 * 18, "centre band: 2 rows each side of the year");
+    // Excel keeps it
+    const parsed = parseWorkbook(await buildExcelBlob().arrayBuffer());
+    T.eq([parsed.page.scale, parsed.page.timelinePos], [{ top: "year", mid: "month", third: "week" }, "centre"], "round trip");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();
