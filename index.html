@@ -1848,7 +1848,7 @@ function drawBand(svg, L, y0, F, centre, mirror) {   // mirror: the bottom band,
         el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
         if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 4, "text-anchor": "middle", fill: "#111111", "font-size": small ? 9.5 : 11, "font-weight": 700, "font-family": F.font }, g, r.u === "month" ? lab.toUpperCase() : lab);
       } else if (third) {   // white and a light grey: quiet next to the coloured rows
-        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: i % 2 ? "#E6E9EE" : "#FFFFFF", stroke: "#D3D8E0", "stroke-width": .5 }, g);
+        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: i % 2 ? "#E0E3EA" : "#FFFFFF", stroke: "#D3D8E0", "stroke-width": .5 }, g);
         if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": small ? 9 : 10, "font-weight": 500, "font-family": F.font }, g, lab);
       } else if (bold) {
         const dark = i % 2 === 1;
