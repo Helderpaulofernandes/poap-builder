@@ -998,7 +998,7 @@ const TESTS = {
    app windows signed in as different people. No network, no real accounts.
    --------------------------------------------------------------------------------------------- */
 function makeMockSupabase() {
-  const db = { poap_projects: [], poap_members: [], poap_invites: [], poap_entities: [], poap_entity_history: [] };
+  const db = { poap_projects: [], poap_members: [], poap_invites: [], poap_entities: [], poap_entity_history: [], poap_logos: [] };
   const users = new Map(), channels = new Set(), presence = {}, offline = new Set();
   const mock = { db, users, offline, codes: {}, clients: [] };
   const copy = o => JSON.parse(JSON.stringify(o));
@@ -1013,7 +1013,7 @@ function makeMockSupabase() {
     const uid = () => client.session && client.session.user.id, email = () => client.session && client.session.user.email;
     const role = pid => (db.poap_members.find(m => m.project_id === pid && m.user_id === uid()) || {}).role;
     const canEdit = pid => role(pid) === "owner" || role(pid) === "editor";
-    const visible = (t, r) => t === "poap_invites" ? role(r.project_id) === "owner" || r.email === email()
+    const visible = (t, r) => t === "poap_logos" ? true : t === "poap_invites" ? role(r.project_id) === "owner" || r.email === email()
       : t === "poap_projects" ? !!role(r.id) : !!role(r.project_id);
     const emit = (table, row) => { for (const ch of channels) for (const h of ch.handlers)
       if (h.type === "postgres_changes" && h.filter.table === table) { const [col, v] = h.filter.filter.split("=eq."); if (String(row[col]) === v) setTimeout(() => h.cb({ new: copy(row) }), 5); } };
@@ -1036,6 +1036,7 @@ function makeMockSupabase() {
         if (offline.has(client)) return fail("Failed to fetch");
         if (!uid()) return fail("not signed in");
         const T = db[this.t], t = this.t;
+        if (t === "poap_logos" && mock.noLogos) return fail('relation "public.poap_logos" does not exist');
         if (this.op === "select") {
           let out = T.filter(r => visible(t, r) && this.f.every(f => f(r)));
           if (this.ord) out.sort((a, b) => (a[this.ord[0]] > b[this.ord[0]] ? 1 : -1) * (this.ord[1] ? 1 : -1));
@@ -1064,6 +1065,12 @@ function makeMockSupabase() {
             if (!same) db.poap_entity_history.push({ seq: db.poap_entity_history.length + 1, project_id: r.project_id, kind: r.kind, id: r.id, data: copy(r.data), deleted: r.deleted, changed_at: now(), changed_by: uid(), changed_by_email: email() });
             emit(t, r);
           }
+          return { data: null, error: null };
+        }
+        if (t === "poap_logos" && (this.op === "upsert" || this.op === "delete")) {   // anyone signed in (on the access list)
+          if (mock.noLogos) return fail('relation "public.poap_logos" does not exist');
+          if (this.op === "delete") { db.poap_logos = db.poap_logos.filter(r => !this.f.every(f => f(r))); return { data: null, error: null }; }
+          for (const r of this.rows) { const i = db.poap_logos.findIndex(x => x.id === r.id); if (i >= 0) db.poap_logos[i] = copy(r); else db.poap_logos.push(copy(r)); }
           return { data: null, error: null };
         }
         if (t === "poap_invites" && this.op === "upsert") {
@@ -1174,6 +1181,25 @@ const TEAM_TESTS = {
     // a sub-lane made by Bob reaches Alice in its group
     ev(B, `commit(p => { const n = addSubLane(p, p.lanes.find(l => l.name === "Sub A").id); n.name = "Sub B"; })`);
     await until(() => ev(A, `(P.lanes.find(l => l.name === "Sub B") || {}).group`) === ev(A, `P.laneGroups[0].id`), 3000, "Bob's sub-lane to reach Alice in the group");
+  },
+  "Team: client logos used by one person are in everyone's library": async () => {
+    const A = await openApp("alice@x.com"), B = await openApp("bob@x.com");
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const where = await ev(A, `saveLogoToLibrary({ name: "Acme Rail", logo: "${png}", src: "${png}", crop: { x: 0 } })`);
+    if (where !== "team") throw new Error("not saved to the team: " + where);
+    const lib = await ev(B, `logoLibrary().then(r => JSON.stringify({ names: r.list.map(l => l.name), team: r.team }))`);
+    if (!/Acme Rail/.test(lib) || !/"team":true/.test(lib)) throw new Error("Bob doesn't see it: " + lib);
+    // Bob uses it: the programme gets the logo as adjusted
+    await ev(B, `logoLibrary().then(r => { const l = r.list[0]; commit(p => { p.meta.clientLogo = l.logo; p.meta.clientLogoSrc = l.src; p.meta.clientLogoCrop = l.crop; }, true); })`);
+    if (ev(B, `P.meta.clientLogo`) !== png) throw new Error("logo not applied");
+    // a database without the table: the library still works on this computer
+    MOCK.noLogos = true;
+    const where2 = await ev(A, `saveLogoToLibrary({ name: "Local Co", logo: "${png}x", src: "${png}x" })`);
+    if (where2 !== "local") throw new Error("expected a local save: " + where2);
+    const lib2 = await ev(A, `logoLibrary().then(r => JSON.stringify({ names: r.list.map(l => l.name), err: !!r.teamError }))`);
+    if (!/Local Co/.test(lib2) || !/"err":true/.test(lib2)) throw new Error("local fallback: " + lib2);
+    MOCK.noLogos = false;
+    await ev(A, `idbSet("logos", null)`);   // this browser's own library isn't the test's to keep
   },
   "Team: undo only takes back your own edits": async () => {
     const A = await openApp("alice@x.com"), B = await openApp("bob@x.com");

@@ -284,6 +284,13 @@ aside h2:first-child { margin-top: 0; }
 .logo-editor canvas:active { cursor: grabbing; }
 .logo-slot .thumb { width: 92px; height: 34px; border: 1px dashed var(--line); border-radius: 3px; background: #FFFFFF; display: grid; place-items: center; overflow: hidden; color: #8794A6; font-size: 10px; }
 .logo-slot .thumb img { max-width: 100%; max-height: 100%; }
+.logogrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; max-height: 55vh; overflow: auto; }
+.logocard { border: 1px solid var(--line); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.logocard .pick { height: 56px; background: #FFFFFF; border: 1px solid var(--line); border-radius: 4px; display: grid; place-items: center; cursor: pointer; padding: 4px; }
+.logocard .pick:hover { outline: 2px solid var(--accent, #F37021); }
+.logocard .pick img { max-width: 100%; max-height: 46px; }
+.logocard .lname { font-size: 12px; padding: 3px 5px; }
+.logocard .lmeta { font-size: 11px; color: var(--muted, #8794A6); display: flex; justify-content: space-between; }
 .note { font-size: 11.5px; color: var(--muted); margin: 0; }
 
 /* ---------- modal ---------- */
@@ -3086,7 +3093,7 @@ function renderSideInner() {
     </div>
     <div class="f"><label>Client logo</label>
       <div class="logo-slot"><span class="thumb">${m.clientLogo ? `<img src="${m.clientLogo}" alt="Client logo">` : "None"}</span>
-      <div class="actions"><button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoEdit">Adjust</button><button class="btn" id="mLogoX">Remove</button>` : ""}</div></div>
+      <div class="actions"><button class="btn" id="mLogoLib" title="Pick a logo used before">Library…</button><button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoEdit">Adjust</button><button class="btn" id="mLogoX">Remove</button>` : ""}</div></div>
     </div>
     <h2>Page</h2>
     <div class="row2">
@@ -3163,6 +3170,7 @@ function renderSideInner() {
     toast(after < before ? `Packed ${before} rows into ${after}.` : "Already as tight as it goes without overlaps.");
   };
   $("mLogo").onclick = () => $("fLogo").click();
+  $("mLogoLib").onclick = () => openLogoLibrary();
   if ($("mLogoX")) $("mLogoX").onclick = () => commit(p => { p.meta.clientLogo = ""; delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; }, true);
   if ($("mLogoEdit")) $("mLogoEdit").onclick = () => openLogoEditor(m.clientLogoSrc || m.clientLogo, m.clientLogoSrc ? m.clientLogoCrop : null);
   side.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sel = { type: "style", id: b.dataset.type }; render(); renderSide(); });
@@ -3824,6 +3832,56 @@ $("fLogo").onchange = e => {
   r.readAsDataURL(f);
 };
 
+/* ---------- client logo library: every logo used is kept, adjusted as it was, to pick again in one click.
+   Kept in this browser and, when signed in, shared with the team (table poap_logos, supabase/poap_002_logos.sql).
+   Until that table exists, or when signed out, the library is this computer's only. ---------- */
+const LOGO_TBL = "poap_logos";
+const logoKey = src => { let h = 5381; const s = String(src); for (let i = 0; i < s.length; i += Math.max(1, Math.floor(s.length / 4000))) h = (h * 33 + s.charCodeAt(i)) >>> 0; return "lg" + h.toString(36) + s.length.toString(36); };
+const teamLogos = () => !!(me && SB);
+async function logoLibrary() {
+  const local = (await idbGet("logos")) || [];
+  let team = null, teamError = null;
+  if (teamLogos()) { const { data, error } = await SB.from(LOGO_TBL).select("id, name, logo, src, crop, updated_at").order("name"); if (error) teamError = error.message; else team = data || []; }
+  const all = new Map(local.map(l => [l.id, { ...l, where: "local" }]));
+  (team || []).forEach(l => all.set(l.id, { ...l, where: "team" }));
+  return { list: [...all.values()].sort((a, b) => a.name.localeCompare(b.name)), team: !!team, teamError };
+}
+/* keep a logo (by its original image, so the same one is stored once); returns where it went: "team" or "local" */
+async function saveLogoToLibrary(e) {
+  const entry = { id: e.id || logoKey(e.src || e.logo), name: (e.name || "Client logo").trim() || "Client logo", logo: e.logo, src: e.src || null, crop: e.crop || null };
+  const local = ((await idbGet("logos")) || []).filter(l => l.id !== entry.id);
+  await idbSet("logos", [...local, entry]);
+  if (teamLogos()) { const { error } = await SB.from(LOGO_TBL).upsert({ ...entry, updated_at: new Date().toISOString() }); if (!error) return "team"; }
+  return "local";
+}
+async function removeLogoFromLibrary(id) {
+  await idbSet("logos", ((await idbGet("logos")) || []).filter(l => l.id !== id));
+  if (teamLogos()) await SB.from(LOGO_TBL).delete().eq("id", id).then(() => {}, () => {});
+}
+async function openLogoLibrary() {
+  const m = showModal(`<header><h3>Client logos</h3><p>Logos used before, ready as they were adjusted. Click one to use it.</p></header>
+    <div class="body"><p class="note" id="lgLibNote">Loading…</p><div class="logogrid" id="lgLib"></div></div>
+    <footer><button class="btn" data-act="upload">Upload a new logo…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Close</button></footer>`,
+    { upload: () => { $("fLogo").click(); } });
+  const paint = async () => {
+    const { list, team, teamError } = await logoLibrary(), grid = m.querySelector("#lgLib"), note = m.querySelector("#lgLibNote");
+    note.textContent = !list.length ? "No logos yet. Upload one: every logo you use is kept here." : team ? "Shared with everyone signed in to the team." : me && teamError ? "Kept on this computer only: the team's library isn't set up yet (supabase/poap_002_logos.sql)." : "Kept on this computer only. Sign in to share them with the team.";
+    grid.innerHTML = list.map(l => `<div class="logocard" data-id="${esc(l.id)}">
+      <button type="button" class="pick" data-use="${esc(l.id)}" title="Use this logo"><img src="${l.logo}" alt=""></button>
+      <input class="lname" value="${esc(l.name)}" aria-label="Logo name" data-name="${esc(l.id)}">
+      <span class="lmeta">${l.where === "team" ? "Team" : "This computer"} <a href="#" data-del="${esc(l.id)}">Remove</a></span></div>`).join("");
+    grid.querySelectorAll("[data-use]").forEach(b => b.onclick = () => {
+      const l = list.find(x => x.id === b.dataset.use);
+      commit(p => { p.meta.clientLogo = l.logo; if (l.src) { p.meta.clientLogoSrc = l.src; p.meta.clientLogoCrop = l.crop || undefined; } else { delete p.meta.clientLogoSrc; delete p.meta.clientLogoCrop; } }, true);
+      m.remove(); toast(`Using the ${l.name} logo.`);
+    });
+    grid.querySelectorAll("[data-name]").forEach(i => i.onchange = async () => { const l = list.find(x => x.id === i.dataset.name); await saveLogoToLibrary({ ...l, name: i.value }); });
+    grid.querySelectorAll("[data-del]").forEach(a => a.onclick = async e => { e.preventDefault(); const l = list.find(x => x.id === a.dataset.del); if (!confirm(`Remove the ${l.name} logo from the library? Programmes already using it keep it.`)) return; await removeLogoFromLibrary(l.id); paint(); });
+  };
+  paint();
+  return m;
+}
+
 /* ---------- client logo editor: fit, fill, trim white edges, zoom and drag, cropped to the header box ---------- */
 const loadImage = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("that file isn't an image this browser can read")); i.src = src; });
 /* bounding box of the visible (not white, not transparent) pixels */
@@ -3903,7 +3961,7 @@ async function openLogoEditor(src, crop) {
     apply: () => {
       const out = paint(true);
       commit(p => { p.meta.clientLogo = out; p.meta.clientLogoSrc = src; p.meta.clientLogoCrop = { ...v, ...look }; }, true);
-      toast("Logo updated.");
+      saveLogoToLibrary({ name: P.meta.client || "Client logo", logo: out, src, crop: { ...v, ...look } }).then(where => toast(`Logo updated and kept in ${where === "team" ? "the team's" : "this computer's"} logo library.`, 3500));
     },
   });
   const cv = m.querySelector("#lgCanvas"), ctx = cv.getContext("2d"), zoom = m.querySelector("#lgZoom");
