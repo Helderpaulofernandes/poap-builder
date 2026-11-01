@@ -985,6 +985,53 @@ const TESTS = {
     const parsed = parseWorkbook(await buildExcelBlob().arrayBuffer());
     T.eq([parsed.page.scale, parsed.page.timelinePos], [{ top: "year", mid: "month", third: "week" }, "centre"], "round trip");
   },
+  "Pages: a blank page and a copy, each with its own lanes, bars and dates": async () => {
+    loadDoc(seedProject(), null);
+    const n0 = P.items.length, lanes0 = P.lanes.length, onSheet = () => document.querySelectorAll("#chart [data-id]").length;
+    const ids0 = new Set(P.items.map(i => i.id)), shown0 = onSheet();
+    // a blank page
+    let pg; commit(p => { pg = addPage(p, false); }, true); showPage(pg.id);
+    T.eq(P.pages.length, 2, "two pages");
+    T.ok(P.lanes.every(l => l.page === P.pages[0].id), "the first page's lanes are marked as page 1");
+    T.eq(onSheet(), 0, "the new page is empty");
+    T.ok(document.querySelector("#pageTabs [aria-selected=true]").textContent === "Page 2", "its tab is selected");
+    // a lane and a bar on it stay on page 2
+    $("bLane").click();
+    const lane = P.lanes[P.lanes.length - 1];
+    T.eq(lane.page, pg.id, "a new lane goes on the page in view");
+    addItem(defaultStyle("Stretch"), lane.id, P.pages[1].timeline.start);
+    T.eq(P.items.filter(i => onPage(P, i)).length, 1, "one bar on page 2");
+    // its own dates
+    commit(p => { pageTl(p).start = "2027-01-01"; }, true);
+    T.eq([P.pages[1].timeline.start === "2027-01-01", P.timeline.start !== "2027-01-01"], [true, true], "page 2's dates are its own");
+    // page 1 unchanged
+    showPage(P.pages[0].id);
+    T.eq(onSheet(), shown0, "page 1 shows what it did");
+    // a copy of page 1: new ShapeIDs, summaries and links kept inside the copy
+    let cp; commit(p => { cp = addPage(p, true); }, true);
+    const copy = P.items.filter(i => onPage(P, i, cp.id));
+    T.eq(copy.length, n0, "every item copied");
+    T.ok(copy.every(i => !ids0.has(i.id)), "with new ShapeIDs");
+    T.ok(copy.filter(i => i.parent).every(i => copy.some(c => c.id === i.parent)), "summaries point inside the copy");
+    T.ok(copy.filter(i => i.preds).every(i => i.preds.every(r => copy.some(c => c.id === r.id))), "links point inside the copy");
+    T.eq(P.pages.map(g => g.name), ["Page 1", "Page 1 (copy)", "Page 2"], "the copy sits next to its page");
+    // Excel: one page
+    showPage(cp.id);
+    const rows = XLSX.utils.sheet_to_json(XLSX.read(await buildExcelBlob().arrayBuffer()).Sheets["Program"]);
+    T.eq(rows.length, n0, "the workbook holds this page only");
+    // PDF: every page
+    const r = await buildPdfBlob(); const pdfText = await r.blob.text();
+    T.eq((pdfText.match(/\/Type \/Page[^s]/g) || []).length, 3, "the PDF has three pages");
+    // deleting pages back to one
+    commit(p => deletePage(p, cp.id)); commit(p => deletePage(p, pg.id));
+    T.ok(!P.pages && P.lanes.length === lanes0 && P.items.length === n0, "back to one page, as it was");
+    T.ok(!document.querySelector("#pgMenu"), "no page menu with one page");
+  },
+  "Pages: someone switching pages doesn't change the page for the team": async () => {
+    // the page in view is in P.view, which is never shared
+    const p = seedProject(); ensurePages(p); p.pages.push({ id: "pgB", name: "B", timeline: clone(p.timeline) }); p.view = { ...p.view, page: "pgB" };
+    T.ok(!("view" in settingsOf(p)) && "pages" in settingsOf(p), "pages are shared, the page in view is not");
+  },
   "PDF builds": async () => {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();

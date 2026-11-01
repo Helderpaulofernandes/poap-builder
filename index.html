@@ -284,6 +284,11 @@ aside h2:first-child { margin-top: 0; }
 .logo-editor canvas:active { cursor: grabbing; }
 .logo-slot .thumb { width: 92px; height: 34px; border: 1px dashed var(--line); border-radius: 3px; background: #FFFFFF; display: grid; place-items: center; overflow: hidden; color: #8794A6; font-size: 10px; }
 .logo-slot .thumb img { max-width: 100%; max-height: 100%; }
+.pagetabs { display: flex; gap: 2px; align-items: flex-end; flex-wrap: wrap; margin: 0 auto 6px; }
+.ptab { border: 1px solid var(--line); border-bottom: none; background: var(--panel, #1D2B40); color: inherit; padding: 5px 12px; border-radius: 6px 6px 0 0; font: inherit; font-size: 12.5px; cursor: pointer; opacity: .75; }
+.ptab[aria-selected="true"] { opacity: 1; background: var(--accent, #F37021); color: #FFFFFF; border-color: var(--accent, #F37021); font-weight: 600; }
+.ptab.more, .ptab.add { opacity: .9; }
+.ptab.add { border-style: dashed; }
 .logogrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; max-height: 55vh; overflow: auto; }
 .logocard { border: 1px solid var(--line); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
 .logocard .pick { height: 56px; background: #FFFFFF; border: 1px solid var(--line); border-radius: 4px; display: grid; place-items: center; cursor: pointer; padding: 4px; }
@@ -461,6 +466,7 @@ form.invite select { padding: 5px 6px; border: 1px solid var(--line); border-rad
 
 <main>
   <div class="stage" id="stage">
+    <div class="pagetabs" id="pageTabs" role="tablist" aria-label="Pages"></div>
     <div class="pageinfo" id="pageInfo"><span id="pageLabel"></span><span class="pagewarn" id="pageWarn" hidden></span></div>
     <div class="paper" id="paper"><div class="sheet" id="sheet"><svg id="chart" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg></div></div>
     <p class="hint">Drag a bar to move it in time or to another row or lane. Drag a bar's ends to change its start or finish. Double-click an empty spot in a lane to add a bar there. Click a lane title to change its colour; click the title block, timeline or legend to edit them. <kbd>Shift</kbd>-click or drag a box to select several. Press <kbd>?</kbd> for all shortcuts.</p>
@@ -645,6 +651,126 @@ function addSubLane(p, laneId) {
   p.lanes.splice(p.lanes.indexOf(l) + 1, 0, n);
   return n;
 }
+/* Pages: a programme can have several pages (sheets), each with its own lanes, bars, curtains and timeline; the types,
+   branding and title block are shared. P.pages = [{ id, name, timeline? }]. A lane says which page it's on (lane.page)
+   and a bar is on its lane's page; a curtain, which has no lane, says so itself. The page someone is looking at is
+   their own (P.view.page, never shared), so switching pages changes nothing for the team. One page: no P.pages. */
+let PAGE_OVER = null;   // a page drawn for a moment (each page of the PDF)
+let REAL_P = null;      // while one page is being drawn, the whole programme (for the page's name)
+const PAGE_NAME = () => { const r = REAL_P || P; return hasPages(r) ? (pageOf(r, curPageId(r)) || {}).name || "" : ""; };
+const hasPages = p => !!(p && p.pages && p.pages.length > 1);
+const pageIds = p => (p.pages || []).map(g => g.id);
+function curPageId(p = P) {
+  if (!p || !p.pages || !p.pages.length) return null;
+  const want = PAGE_OVER || (p.view && p.view.page);
+  return pageIds(p).includes(want) ? want : p.pages[0].id;
+}
+const pageOf = (p, id) => (p.pages || []).find(g => g.id === id) || null;
+/* a lane's page: its own if that page exists, else the first */
+const lanePage = (p, l) => pageIds(p).includes(l.page) ? l.page : p.pages && p.pages[0] ? p.pages[0].id : null;
+function onPage(p, it, pid = curPageId(p)) {
+  if (!hasPages(p)) return true;
+  if (isCurtain(p, it.style)) return (pageIds(p).includes(it.page) ? it.page : p.pages[0].id) === pid;
+  const l = p.lanes.find(x => x.id === it.lane); return !!l && lanePage(p, l) === pid;
+}
+/* the timeline of a page: its own, or the programme's (the page the programme started with) */
+const pageTl = (p, pid = curPageId(p)) => (pageOf(p, pid) && pageOf(p, pid).timeline) || p.timeline;
+/* the programme as one page sees it: that page's lanes, bars, curtains and timeline (the same objects, not copies) */
+function pageView(p, pid = curPageId(p)) {
+  if (!hasPages(p)) return p;
+  return { ...p, timeline: pageTl(p, pid), lanes: p.lanes.filter(l => lanePage(p, l) === pid), items: p.items.filter(i => onPage(p, i, pid)) };
+}
+const pageLanes = (p = P) => hasPages(p) ? p.lanes.filter(l => lanePage(p, l) === curPageId(p)) : p.lanes;
+/* the first extra page: the programme so far becomes page 1, everything on it marked as such */
+function ensurePages(p) {
+  if (!p.pages || !p.pages.length) p.pages = [{ id: "pg" + uid(), name: "Page 1" }];
+  const first = p.pages[0].id, ids = pageIds(p);
+  p.lanes.forEach(l => { if (!ids.includes(l.page)) l.page = first; });
+  p.items.forEach(i => { if (isCurtain(p, i.style) && !ids.includes(i.page)) i.page = first; });
+  return p.pages;
+}
+/* a new page: blank (no lanes yet, the same dates as this one) or a copy of this page with new ShapeIDs */
+function addPage(p, copyOf) {
+  ensurePages(p);
+  const from = curPageId(p), src = pageOf(p, from), pg = { id: "pg" + uid(), name: copyOf ? `${src.name} (copy)` : `Page ${p.pages.length + 1}`, timeline: clone(pageTl(p, from)) };
+  p.pages.splice(p.pages.indexOf(src) + 1, 0, pg);
+  if (copyOf) {
+    const laneMap = new Map(), groupMap = new Map(), idMap = new Map(), reserved = new Set();
+    const lanes = p.lanes.filter(l => lanePage(p, l) === from);
+    for (const l of lanes) {
+      const c = { ...clone(l), id: "L" + uid(), page: pg.id };
+      if (l.group) { if (!groupMap.has(l.group)) { const g = (p.laneGroups || []).find(x => x.id === l.group); if (g) { const ng = { ...clone(g), id: "G" + uid() }; p.laneGroups.push(ng); groupMap.set(l.group, ng.id); } } c.group = groupMap.get(l.group); if (!c.group) delete c.group; }
+      laneMap.set(l.id, c.id); p.lanes.push(c);
+    }
+    const items = p.items.filter(i => onPage(p, i, from));
+    for (const it of items) { const id = nextId(p, it.style, it.id, reserved); reserved.add(id); idMap.set(it.id, id); }
+    for (const it of items) {
+      const c = { ...clone(it), id: idMap.get(it.id) };
+      if (c.lane) c.lane = laneMap.get(it.lane) || c.lane;
+      if (isCurtain(p, c.style)) c.page = pg.id;
+      if (c.parent) { if (idMap.has(c.parent)) c.parent = idMap.get(c.parent); else delete c.parent; }
+      if (c.preds) c.preds = c.preds.filter(r => idMap.has(r.id)).map(r => ({ ...r, id: idMap.get(r.id) }));
+      if (c.p6path || c.x) {}   // P6 links stay: an update from P6 then reaches both pages' copies only through the original
+      p.items.push(c);
+    }
+  }
+  return pg;
+}
+/* delete a page and everything on it; the last page left takes the programme back to one page */
+function deletePage(p, pid) {
+  if (!hasPages(p)) return;
+  const gone = new Set(p.lanes.filter(l => lanePage(p, l) === pid).map(l => l.id));
+  p.items = p.items.filter(i => !onPage(p, i, pid));
+  p.lanes = p.lanes.filter(l => !gone.has(l.id));
+  p.pages = p.pages.filter(g => g.id !== pid);
+  if (p.pages.length === 1) { const only = p.pages[0]; if (only.timeline) p.timeline = only.timeline; delete p.pages; p.lanes.forEach(l => delete l.page); p.items.forEach(i => delete i.page); }
+}
+function movePage(p, pid, d) { const a = p.pages, i = a.findIndex(g => g.id === pid), j = i + d; if (i < 0 || j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; }
+/* the tabs above the sheet: one per page, + Page, and ⋯ for the page in view */
+function renderPageTabs() {
+  const box = $("pageTabs"); if (!box) return;
+  const ro = typeof viewOnly === "function" && viewOnly(), cur = curPageId(P);
+  const pages = hasPages(P) ? P.pages : [{ id: "", name: "Page 1" }];
+  box.innerHTML = pages.map(g => `<button type="button" role="tab" class="ptab" data-page="${esc(g.id)}" aria-selected="${(g.id || null) === (cur || null) || pages.length === 1}">${esc(g.name)}</button>`).join("")
+    + (hasPages(P) && !ro ? `<button type="button" class="ptab more" id="pgMenu" title="Rename, move, duplicate or delete this page" aria-label="Page options">⋯</button>` : "")
+    + (ro ? "" : `<button type="button" class="ptab add" id="pgAdd" title="Add a page to this programme">+ Page</button>`);
+  box.querySelectorAll("[data-page]").forEach(b => {
+    b.onclick = () => { if (b.dataset.page && b.dataset.page !== cur) showPage(b.dataset.page); };
+    b.ondblclick = () => { if (!ro) openPageMenu(); };
+  });
+  if ($("pgAdd")) $("pgAdd").onclick = () => showModal(`<header><h3>Add a page</h3><p>A page has its own lanes, bars and dates. The types, branding and title block are shared, and the PDF prints every page.</p></header>
+    <div class="body choices">
+      <button type="button" class="choice" data-act="blank"><b>Blank page</b><span>No lanes yet, the same dates as this page.</span></button>
+      <button type="button" class="choice" data-act="copy"><b>Copy of this page</b><span>Its lanes, bars and curtains, with new ShapeIDs (e.g. a second scenario).</span></button>
+    </div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button></footer>`, {
+      blank: () => { let pg; commit(p => { pg = addPage(p, false); }, true); showPage(pg.id); },
+      copy: () => { let pg; commit(p => { pg = addPage(p, true); }, true); showPage(pg.id); },
+    });
+  if ($("pgMenu")) $("pgMenu").onclick = openPageMenu;
+}
+function openPageMenu() {
+  if (!hasPages(P)) return;
+  const pid = curPageId(P), pg = pageOf(P, pid), i = P.pages.indexOf(pg), n = P.items.filter(x => onPage(P, x, pid)).length;
+  const m = showModal(`<header><h3>Page</h3></header>
+    <div class="body">
+      <div class="f"><label for="pgName">Name</label><input id="pgName" value="${esc(pg.name)}"></div>
+      <div class="actions"><button class="btn" data-act="left" ${i ? "" : "disabled"}>◀ Move left</button><button class="btn" data-act="right" ${i < P.pages.length - 1 ? "" : "disabled"}>Move right ▶</button><button class="btn" data-act="dup">Duplicate</button></div>
+      <div class="actions"><button class="btn danger" data-act="del">Delete this page${n ? ` and its ${n} item${n > 1 ? "s" : ""}` : ""}</button></div>
+    </div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn primary" data-act="close">Done</button></footer>`, {
+      left: () => { commit(p => movePage(p, pid, -1), true); },
+      right: () => { commit(p => movePage(p, pid, 1), true); },
+      dup: () => { let ng; commit(p => { ng = addPage(p, true); }, true); showPage(ng.id); },
+      del: () => { if (!confirm(`Delete the page “${pg.name}”${n ? ` and its ${n} item${n > 1 ? "s" : ""}` : ""}? Undo brings it back.`)) return false; commit(p => deletePage(p, pid)); render(); renderSide(); },
+    });
+  const name = m.querySelector("#pgName");
+  name.onchange = () => commit(p => { const g = pageOf(p, pid); if (g) g.name = name.value.trim() || g.name; }, true);
+  name.onkeydown = e => { if (e.key === "Enter") { name.onchange(); m.remove(); } };
+  setTimeout(() => { name.focus(); name.select(); }, 0);
+}
+function showPage(pid) { P.view = { ...(P.view || {}), page: pid }; sel = null; MULTI.clear(); try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {} render(); renderSide(); }
+
 /* lines of text that fit a width, split at spaces */
 function wrapText(text, maxW, size, weight) {
   const out = []; let cur = "";
@@ -1040,7 +1166,12 @@ upgradeProject(P);
 function commit(mutator, keepSel) {
   if (viewOnly()) return;
   past.push(undoEntry()); if (past.length > 200) past.shift(); future = [];
+  const pid = curPageId(P), had = hasPages(P) ? new Set([...P.lanes.map(l => l.id), ...P.items.map(i => i.id)]) : null;
   mutator(P);
+  if (had && hasPages(P)) {   // whatever this change made (a lane, a curtain, an import) goes on the page in view
+    P.lanes.forEach(l => { if (!had.has(l.id) && !pageIds(P).includes(l.page)) l.page = pid; });
+    P.items.forEach(i => { if (!had.has(i.id) && isCurtain(P, i.style) && !pageIds(P).includes(i.page)) i.page = pid; });
+  }
   if (!keepSel && sel && !findSel()) sel = null;
   changed();
 }
@@ -1217,6 +1348,7 @@ function img(parent, href, x, y, w, h, align) {
 
 /* Draws the whole sheet into svg. opts.print strips interaction affordances; opts.font overrides the face. */
 function draw(svg, opts) {
+  if (!opts.paged && hasPages(P)) { const real = P; P = pageView(real); REAL_P = real; try { return draw(svg, { ...opts, paged: true }); } finally { P = real; REAL_P = null; } }
   refreshHead(P);
   // Show: Planned draws the baseline as the programme; Actual leaves the baseline bars off
   const mode = showMode();
@@ -1559,7 +1691,7 @@ function drawHeader(svg, L, F, opts) {
   el("line", { x1: clientW, x2: clientW, y1: 8, y2: H - 8, stroke: "#C9D2DD", "stroke-width": 1 }, g);
   const tx = clientW + 14;
   if (brandLogoSrc()) {   // as large as fits beside the title text, never over it
-    const titleW = Math.max(textW((m.program || "").toUpperCase(), 15, 700) * 1.03, textW(`${m.number || ""} ${m.title || ""}`, 14, 700) + (m.subtitle ? textW(`  –  ${m.subtitle}`, 11, 600) : 0));
+    const titleW = Math.max(textW((m.program || "").toUpperCase(), 15, 700) * 1.03, textW(`${m.number || ""} ${m.title || ""}`, 14, 700) + (m.subtitle ? textW(`  –  ${m.subtitle}`, 11, 600) : 0) + (PAGE_NAME() ? textW(`  ·  ${PAGE_NAME()}`, 11, 600) : 0));
     // wide logos (JV pairs) are limited by width, squarer ones by the header height
     const ratio = brandRatio(), maxH = H - 22;
     const logoW = Math.max(70, Math.min(420, maxH * ratio, L.W - (tx + titleW) - 40)), logoH = logoW / ratio;
@@ -1568,6 +1700,8 @@ function drawHeader(svg, L, F, opts) {
   el("text", { x: tx, y: 32, fill: BRAND.navy, "font-size": 15, "font-weight": 700, "font-family": F.font, "letter-spacing": ".02em" }, g, (m.program || "").toUpperCase());
   const t2 = el("text", { x: tx, y: 55, fill: BRAND.orange, "font-size": 14, "font-weight": 700, "font-family": F.font }, g, `${m.number || ""} ${m.title || ""}`.trim());
   if (m.subtitle) el("tspan", { "font-size": 11, "font-weight": 600 }, t2, `  –  ${m.subtitle}`);
+  const pgName = PAGE_NAME();
+  if (pgName) el("tspan", { "font-size": 11, "font-weight": 600, fill: BRAND.orange }, t2, `  ·  ${pgName}`);
   // which programme this sheet shows, once there's a plan to compare against
   const pr = prog(), mode = P.plannedView ? "planned" : showMode();   // (no baseline any more: no "Planned" or "Actual vs" in the title)
   const shown = mode === "planned" ? planName()
@@ -1707,10 +1841,16 @@ function drawBand(svg, L, y0, F, centre) {
       if (bold) for (const ly of [r.y, r.y + r.h]) if (ly !== y0 || centre) el("line", { x1: G.headW, x2: L.W, y1: ly, y2: ly, stroke: "#111111", "stroke-width": 1 }, g);
       continue;
     }
-    const small = r.u === "day" || r.u === "week";
+    const small = r.u === "day" || r.u === "week", third = r.u === rows[2];   // the third row takes the top row's colours
     eachUnit(L, r.u, (xa, xb, dt, i) => {
       const w = xb - xa, lab = unitLabel(r.u, dt, w, false);
-      if (bold) {
+      if (third && bold) {   // white cells ruled in black, like the top row
+        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
+        if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 4, "text-anchor": "middle", fill: "#111111", "font-size": small ? 9.5 : 11, "font-weight": 700, "font-family": F.font }, g, r.u === "month" ? lab.toUpperCase() : lab);
+      } else if (third) {   // steel and peach, like the years
+        el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: i % 2 ? tint(BRAND.band2, .4) : BRAND.band1, stroke: "#FFFFFF", "stroke-width": .8 }, g);
+        if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": small ? 9 : 10, "font-weight": 600, "font-family": F.font }, g, lab);
+      } else if (bold) {
         const dark = i % 2 === 1;
         el("rect", { x: xa, y: r.y, width: w, height: r.h, fill: dark ? "#111111" : "#FFFFFF", stroke: "#111111", "stroke-width": .5 }, g);
         if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 4, "text-anchor": "middle", fill: dark ? "#FFFFFF" : "#111111", "font-size": small ? 9.5 : 11.5, "font-weight": 700, "font-family": F.font }, g, r.u === "month" ? lab.toUpperCase() : lab);
@@ -1719,7 +1859,7 @@ function drawBand(svg, L, y0, F, centre) {
         if (lab) el("text", { x: (xa + xb) / 2, y: r.y + r.h / 2 + 3.6, "text-anchor": "middle", fill: BRAND.navy, "font-size": small ? 9 : 10, "font-weight": 500, "font-family": F.font }, g, lab);
       }
     });
-    if (!bold) eachUnit(L, r.u, xa => el("line", { x1: xa, x2: xa, y1: r.y, y2: r.y + r.h, stroke: "#FFFFFF", "stroke-width": .8 }, g));
+    if (!bold && !third) eachUnit(L, r.u, xa => el("line", { x1: xa, x2: xa, y1: r.y, y2: r.y + r.h, stroke: "#FFFFFF", "stroke-width": .8 }, g));
   }
 }
 
@@ -2264,6 +2404,7 @@ function paperMM() {
 /* Draws the sheet as it prints on the chosen paper: the timeline fills the printable width and rows
    spread (up to 2x) to fill the height. fit < 1 means the content is taller than the page and prints smaller. */
 function drawPage(svg, extra = {}) {
+  if (!extra.paged && hasPages(P)) { const real = P; P = pageView(real); REAL_P = real; try { return drawPage(svg, { ...extra, paged: true }); } finally { P = real; REAL_P = null; } }
   refreshHead(P);
   applySpacing();
   const { pg, PW, PH } = paperMM(), M = +pg.margin || 7, availW = PW - 2 * M, availH = PH - 2 * M;
@@ -2338,6 +2479,7 @@ function render() {
   if (mode === "free") { PLAN = null; applySpacing(); LAY = draw($("chart"), { ppd: P.view.zoom, spare: true }); }
   else { PLAN = drawPage($("chart")); LAY = PLAN.L; }
   placePaper(mode);
+  renderPageTabs();
   $("bUndo").disabled = !past.length; $("bRedo").disabled = !future.length;
 }
 /* Ctrl + scroll (or a trackpad pinch) over the sheet zooms the programme on screen, around the pointer; elsewhere the
@@ -2624,10 +2766,10 @@ $("chart").addEventListener("dblclick", e => {
 
 let lastLane = null;   // the lane last clicked on (empty space), for + Bar / + Milestone
 function addItem(styleName, laneId, start, row) {
-  if (!P.lanes.length) { toast("Add a swimlane first."); return; }
+  if (!pageLanes().length) { toast(hasPages(P) ? "Add a swimlane to this page first." : "Add a swimlane first."); return; }
   const ms = isMs(P, styleName), curtain = isCurtain(P, styleName);
   laneId = curtain ? "" : laneId || (sel && sel.type === "lane" ? sel.id : sel && sel.type === "item" ? P.items.find(i => i.id === sel.id)?.lane : null)
-    || (P.lanes.some(l => l.id === lastLane) ? lastLane : null) || P.lanes[0].id;
+    || (pageLanes().some(l => l.id === lastLane) ? lastLane : null) || pageLanes()[0].id;
   if (!start) start = visibleCentreDay();
   const name = ms ? "New milestone" : curtain ? styleOf(P, styleName).notes : "New activity";
   const it = { id: nextId(P, styleName), name, style: styleName, lane: laneId, start, end: ms ? start : addDays(start, curtain ? 9 : 13), status: "Active", row: 0, fill: "", stroke: "" };
@@ -2703,7 +2845,7 @@ document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && k === "s") { e.preventDefault(); saveDoc(); return; }
   if (e.key === "Escape") { sel = null; MULTI.clear(); render(); renderSide(); return; }
   if (e.key === "?") { e.preventDefault(); openHelp(); return; }
-  if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectItems(P.items.filter(i => !hiddenByCollapse(P, i)).map(i => i.id)); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectItems(P.items.filter(i => onPage(P, i) && !hiddenByCollapse(P, i)).map(i => i.id)); return; }
   const ids = selectedIds(); if (!ids.length) return;
   if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteItems(ids); }
   if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); duplicateItems(ids); }
@@ -3119,8 +3261,8 @@ function renderSideInner() {
         <div class="f"><label for="scMid">Second row</label><select id="scMid">${opt(unitRank(r[0]), r[1])}</select></div>
         <div class="f"><label for="scThird">Third row</label><select id="scThird" ${unitRank(r[1]) >= SCALE_UNITS.length - 1 ? "disabled" : ""}>${opt(unitRank(r[1]), r[2] || "", true)}</select></div></div>`; })()}
     <div class="row2">
-      <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${P.timeline.start}"></div>
-      <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${P.timeline.end}"></div>
+      <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${pageTl(P).start}"></div>
+      <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${pageTl(P).end}"></div>
     </div>
     ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${dupes.join(", ")}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
     <p class="note">${P.items.length} items in ${P.lanes.length} lanes. Select a bar or lane title to edit it.</p>
@@ -3143,8 +3285,8 @@ function renderSideInner() {
   um("mProg", (p,v) => p.meta.program = v); um("mNum", (p,v) => p.meta.number = v); um("mRev", (p,v) => p.meta.revision = v);
   um("mTitle", (p,v) => p.meta.title = v); um("mSub", (p,v) => p.meta.subtitle = v);
   um("mClient", (p,v) => p.meta.client = v); um("mAuthor", (p,v) => p.meta.author = v);
-  um("tStart", (p,v) => { if (v && toDays(v) < toDays(p.timeline.end)) p.timeline.start = v; });
-  um("tEnd", (p,v) => { if (v && toDays(v) > toDays(p.timeline.start)) p.timeline.end = v; });
+  um("tStart", (p,v) => { const tl = pageTl(p); if (v && toDays(v) < toDays(tl.end)) tl.start = v; });
+  um("tEnd", (p,v) => { const tl = pageTl(p); if (v && toDays(v) > toDays(tl.start)) tl.end = v; });
   um("pgSize", (p, v) => p.page.size = v);
   um("pgMargin", (p, v) => p.page.margin = +v);
   side.querySelectorAll("[data-orient]").forEach(b => b.onclick = () => commit(p => p.page.orient = b.dataset.orient, true));
@@ -4202,10 +4344,10 @@ $("viewMode").onchange = e => { P.view.mode = e.target.value; MAG = 1; changed()
 $("zoom").oninput = e => { P.view.zoom = +e.target.value; render(); };
 $("zoom").onchange = () => changed();
 $("bFit").onclick = () => {
-  if (!P.items.length) return;
-  const a = Math.min(...P.items.map(i => toDays(i.start))), b = Math.max(...P.items.map(i => toDays(i.end)));
+  const its = P.items.filter(i => onPage(P, i)); if (!its.length) return;   // this page's
+  const a = Math.min(...its.map(i => toDays(i.start))), b = Math.max(...its.map(i => toDays(i.end)));
   const s = new Date(a*DAY), e = new Date(b*DAY);
-  commit(p => { p.timeline.start = fromDays(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1)/DAY); p.timeline.end = fromDays(Date.UTC(e.getUTCFullYear(), e.getUTCMonth()+2, 0)/DAY); }, true);
+  commit(p => { const tl = pageTl(p); tl.start = fromDays(Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), 1)/DAY); tl.end = fromDays(Date.UTC(e.getUTCFullYear(), e.getUTCMonth()+2, 0)/DAY); }, true);
 };
 $("bNew").onclick = () => guardUnsaved(() => { hadDraft = false; showStartScreen({ back: true }); });   // a programme is open: offer the way back to it
 const fileBase = () => `${P.meta.number} ${P.meta.title} PoaP Rev${P.meta.revision}`.replace(/[\\/:*?"<>|]+/g, "-").trim();
@@ -4278,8 +4420,9 @@ function showModal(html, acts) {
    ===================================================================== */
 const xDate = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
 function exportExcel() {
-  download(buildExcelBlob(), fileBase() + ".xlsx");
-  toast("Exported " + fileBase() + ".xlsx");
+  const name = fileBase() + (hasPages(P) ? ` - ${(pageOf(P, curPageId(P)) || {}).name || "page"}`.replace(/[\\/:*?"<>|]+/g, "-") : "") + ".xlsx";
+  download(buildExcelBlob(), name);
+  toast(hasPages(P) ? `Exported this page (${(pageOf(P, curPageId(P)) || {}).name}) as ${name}. Each page is its own workbook.` : "Exported " + name);
 }
 /* What the workbook's own columns don't hold, kept as JSON in a "More" column so a workbook from PoaP Builder
    rebuilds the programme exactly: tag and title settings, zones, second lines, P6 links, stage versions… */
@@ -4287,7 +4430,8 @@ const XL_ITEM_KEYS = new Set(["id", "name", "style", "lane", "start", "end", "st
 const itemMore = i => { const o = {}; for (const [k, v] of Object.entries(i)) if (!XL_ITEM_KEYS.has(k) && v !== undefined) o[k] = v; return o; };
 const moreText = o => { if (!Object.keys(o).length) return ""; let t = JSON.stringify(o); if (t.length > 32000) { const { stageSets, ...rest } = o; t = JSON.stringify(rest); } return t.length > 32000 ? "" : t; };
 const moreIn = v => { if (v == null || v === "") return undefined; try { const o = JSON.parse(String(v)); return o && typeof o === "object" && !Array.isArray(o) ? o : undefined; } catch (e) { return undefined; } };
-function buildExcelBlob() {
+function buildExcelBlob(paged) {   // with several pages: the page in view (a workbook is one page)
+  if (!paged && hasPages(P)) { const real = P; P = pageView(real); REAL_P = real; try { return buildExcelBlob(true); } finally { P = real; REAL_P = null; } }
   const wb = XLSX.utils.book_new();
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const ordered = [...P.items].sort((a,b) => P.lanes.findIndex(l => l.id === a.lane) - P.lanes.findIndex(l => l.id === b.lane) || a.row - b.row || toDays(a.start) - toDays(b.start));
@@ -4461,7 +4605,8 @@ function newTypesFrom(parsed, existing) {
   return out;
 }
 
-function previewImport(parsed, fname) {
+function previewImport(parsed, fname, paged) {
+  if (!paged && hasPages(P)) { const real = P; P = pageView(real); REAL_P = real; try { return previewImport(parsed, fname, true); } finally { P = real; REAL_P = null; } }
   const laneName = id => P.lanes.find(l => l.id === id)?.name || "";
   const byId = new Map(P.items.map(i => [i.id, i]));
   const seen = new Set(), changes = [], adds = [], dupes = [];
@@ -4577,13 +4722,13 @@ function previewImport(parsed, fname) {
         if (whole) {
           Object.assign(p.meta, clone(parsed.meta || {}));
           if (parsed.page) p.page = { ...p.page, ...parsed.page };
-          if (parsed.timeline) p.timeline = { ...parsed.timeline };
+          if (parsed.timeline) Object.assign(pageTl(p), parsed.timeline);   // this page's dates
           if (parsed.view) p.view = { ...(p.view || {}), mode: parsed.view };
           if (parsed.brand) p.brand = clone(parsed.brand);
           mergeWorkbookTypes(p, parsed.styles);
         }
         p.styles.push(...clone(newTypes).filter(t => !p.styles.some(x => x.name.toLowerCase() === t.name.toLowerCase())));
-        const laneFor = name => { let l = p.lanes.find(x => x.name.toLowerCase() === name.toLowerCase()); if (!l) l = newLane(p, name); return l.id; };
+        const laneFor = name => { let l = pageLanes(p).find(x => x.name.toLowerCase() === name.toLowerCase()); if (!l) l = newLane(p, name); return l.id; };   // this page's lanes
         for (const c of changes) {
           const it = p.items.find(i => i.id === c.cur.id), r = c.r, st = styleOf(p, r.style).name;
           const oldLane = it.lane;
@@ -4618,7 +4763,7 @@ function previewImport(parsed, fname) {
         if (sheetLanes.length && parsed.keepLook) { /* lanes come with the new items that need them */ }
         else if (sheetLanes.length) {
           for (const sl of sheetLanes) {
-            const l = p.lanes.find(x => key(x.name) === key(sl.name)) || p.lanes.find(x => x.id === laneFor(sl.name));
+            const l = pageLanes(p).find(x => key(x.name) === key(sl.name)) || p.lanes.find(x => x.id === laneFor(sl.name));
             if (sl.colour) l.colour = sl.colour;
             if (sl.minRows) l.minRows = sl.minRows;
             // its group, by name: made when it isn't there yet
@@ -5185,7 +5330,7 @@ function p6UpdateRows(M, rec, fname) {
 /* the programme as it is, with an update's rows on it (keeping its look): for the importer's preview */
 function p6MergedProject(rows) {
   const p = clone(P); ensureSummaryStyles(p);
-  const laneFor = name => { let l = p.lanes.find(x => x.name.toLowerCase() === String(name).toLowerCase()); if (!l) l = newLane(p, name); return l.id; };
+  const laneFor = name => { let l = pageLanes(p).find(x => x.name.toLowerCase() === String(name).toLowerCase()); if (!l) l = newLane(p, name); return l.id; };
   const reserved = new Set(rows.map(r => r.id)), allIds = new Set([...p.items.map(i => i.id), ...reserved]);
   for (const r of rows) { const it = p.items.find(i => i.id === r.id); if (it) p6RefreshItem(p, it, r); else rowToNewItem(p, r, { laneFor, allIds, reserved, keepLook: true }); }
   syncContainers(p, { noPush: false });
@@ -5737,10 +5882,16 @@ async function buildPdfBlob() {
   const holder = document.createElement("div"); holder.style.cssText = "position:fixed;left:-99999px;top:0";
   const svg = document.createElementNS(NS, "svg"); holder.appendChild(svg); ROOT.appendChild(holder);
   try {
-    const plan = drawPage(svg, { print: true, font: face }), { L, k, M, availW } = plan;
     const lib = (HOST && HOST.svg2pdf) || window.svg2pdf;
     const svgFn = lib?.svg2pdf || lib;
-    await svgFn(svg, doc, { x: M + (availW - L.W * k) / 2, y: M, width: L.W * k, height: L.H * k });
+    let plan;
+    for (const [n, pid] of (hasPages(P) ? pageIds(P) : [null]).entries()) {   // one PDF page per page, in order
+      if (n) { doc.addPage([PW, PH], PW >= PH ? "landscape" : "portrait"); svg.innerHTML = ""; }
+      PAGE_OVER = pid;
+      try { plan = drawPage(svg, { print: true, font: face }); } finally { PAGE_OVER = null; }
+      const { L, k, M, availW } = plan;
+      await svgFn(svg, doc, { x: M + (availW - L.W * k) / 2, y: M, width: L.W * k, height: L.H * k });
+    }
     doc.setProperties({ title: `${P.meta.number} ${P.meta.title} PoaP Rev ${P.meta.revision}`, author: P.meta.author || "", creator: "PoaP Builder" });
     return { blob: doc.output("blob"), fonts, fit: plan.fit };
   } finally { holder.remove(); }
