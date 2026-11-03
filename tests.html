@@ -829,6 +829,41 @@ const TESTS = {
     T.ok(document.querySelectorAll(`#chart [data-id="${it.id}"]`).length, "bar on the sheet");
     T.ok(document.querySelectorAll("#chart polygon").length >= 2, "bar and its progress drawn as chevrons");
   },
+  "A hostile programme, brand or logo can't run script in the panels": async () => {
+    // what a teammate or a sent file could hold: text that tries to break out of the HTML it's written into
+    const bad = `x"><img src=nothing onerror="window.__pwn=1">'`, badImg = `data:text/html,"><img src=nothing onerror="window.__pwn=1">`;
+    window.__pwn = undefined;
+    const p = seedProject();
+    p.meta.clientLogo = badImg;
+    const ms = p.styles.find(s => s.behaviour === "Move"); ms.notes = bad;
+    const it = p.items.find(i => i.style === ms.name); delete it.fill;
+    it.bStart = bad; p.lanes[0].colour = bad;
+    p.items.find(i => i.style !== ms.name && !i.parent).fill = bad;
+    loadDoc(p, null);
+    const shown = [];
+    sel = { type: "item", id: it.id }; renderSide(); shown.push($("side").innerHTML);
+    for (const pane of document.querySelectorAll("#side [data-tab]")) { pane.click(); shown.push($("side").innerHTML); }
+    sel = { type: "lane", id: p.lanes[0].id }; renderSide(); shown.push($("side").innerHTML);
+    sel = null; renderSide();
+    for (const pane of document.querySelectorAll("#side [data-tab]")) { pane.click(); shown.push($("side").innerHTML); }
+    // a logo in the library and a saved brand
+    const keepBrands = localStorage.getItem(BRANDS_KEY);
+    localStorage.setItem(BRANDS_KEY, JSON.stringify([{ id: "evil", name: bad, logo: badImg, primary: bad, accent: bad }]));
+    await idbSet("logos", [{ id: "evil", name: bad, logo: badImg, src: badImg }]);
+    try {
+      openBrandMenu(); shown.push(document.querySelector(".modal").innerHTML); document.querySelector(".modal").remove();
+      openBrandEditor(loadBrands().find(b => b.id === "evil")); shown.push(document.querySelector(".modal").innerHTML); document.querySelector(".modal").remove();
+      openLogoLibrary(); await new Promise(r => setTimeout(r, 300)); shown.push(document.querySelector(".modal").innerHTML); document.querySelector(".modal").remove();
+    } finally {
+      if (keepBrands == null) localStorage.removeItem(BRANDS_KEY); else localStorage.setItem(BRANDS_KEY, keepBrands);
+      await idbSet("logos", null);
+    }
+    await new Promise(r => setTimeout(r, 300));   // a broken image reports its error a moment later
+    T.ok(!document.querySelector("[onerror]"), "no element from the data got into the page");
+    T.ok(window.__pwn === undefined, "no script ran");
+    T.ok(shown.every(h => !/<img src=nothing/.test(h)), "the text is shown as text");
+    loadDoc(seedProject(), null);
+  },
   "A dialog stays open when a text selection ends on the backdrop": () => {
     const m = showModal(`<div class="body"><input id="tSel" value="Planned (Rev A)"></div>`, {});
     const fire = (t, type) => t.dispatchEvent(new MouseEvent(type, { bubbles: true }));

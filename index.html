@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- fonts and the Excel / PDF libraries load in the background: the page opens at once, even on a slow connection -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Roboto+Condensed:wght@500;700&display=swap" media="print" onload="this.media='all'">
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="vendor/xlsx-0.20.3.full.min.js"></script>   <!-- SheetJS 0.20.3, from cdn.sheetjs.com (0.18.5 had known issues reading crafted files) -->
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script defer src="https://unpkg.com/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
 <script src="brand-logo.js"></script>
@@ -2929,7 +2929,11 @@ function shiftItems(ids, n) {
 /* =====================================================================
    Inspector
    ===================================================================== */
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+/* Programmes, types, brands and logos can come from teammates or from a file someone sent, so anything of theirs
+   written into the panels as HTML goes through esc(), img() or col(): text can't become markup there. */
+const safeImg = s => /^(data:image\/(png|jpe?g|gif|webp|svg\+xml)[;,]|https:\/\/)/i.test(String(s ?? "")) ? esc(s) : "";
+const safeCol = c => { const t = String(c ?? "").trim(); return /^#[0-9a-f]{3,8}$|^(rgb|hsl)a?\([\d\s.,%\/]+\)$|^[a-z]{3,20}$/i.test(t) ? t : ""; };
 /* The side panel: programme settings in tabs when nothing is selected; the selected item's settings
    (also in tabs, with a way back) otherwise. The last tab used is remembered for each. */
 const SIDE_TAB_KEY = "poap-builder-sidetab";
@@ -3019,12 +3023,12 @@ function renderMultiSide(side) {
       <div style="display:flex;gap:6px;align-items:center"><input id="mxDays" type="number" min="1" value="7" style="width:70px" aria-label="Days"><span class="note">days</span>
       <button class="btn" id="mxEarlier">◀ Earlier</button><button class="btn" id="mxLater">Later ▶</button></div></div>
     <div class="row2">
-      <div class="f"><label for="mxLane">Lane</label><select id="mxLane"><option value="">(as they are)</option>${P.lanes.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("")}</select></div>
+      <div class="f"><label for="mxLane">Lane</label><select id="mxLane"><option value="">(as they are)</option>${P.lanes.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("")}</select></div>
       ${bars.length ? `<div class="f"><label for="mxStyle">Bar type</label><select id="mxStyle"><option value="">(as they are)</option>${P.styles.filter(s => s.behaviour === "Stretch" && !/^container/.test(s.shape)).map(s => `<option value="${esc(s.name)}">${esc(s.notes || s.name)}</option>`).join("")}</select></div>` : ""}
     </div>
     ${bars.length || umbs.length || mss.length ? `<div class="f"><label>Labels</label><div class="seg" role="group" aria-label="Label position">${LABEL_MODES.map(([v, n]) => `<button type="button" data-mxlabel="${v}">${n}</button>`).join("")}</div></div>` : ""}
     <div class="row2">
-      <div class="f"><label for="mxFill">Fill</label><input id="mxFill" type="color" value="${itemColours(its[0], P.lanes.find(l => l.id === its[0].lane)).fill}"></div>
+      <div class="f"><label for="mxFill">Fill</label><input id="mxFill" type="color" value="${safeCol(itemColours(its[0], P.lanes.find(l => l.id === its[0].lane)).fill)}"></div>
       <div class="f"><label>&nbsp;</label><button class="btn" id="mxReset" title="Back to the lane and type colours">Default colours</button></div>
     </div>
     <h2>Progress</h2>
@@ -3084,24 +3088,24 @@ function renderSideInner() {
     const st = styleOf(P, cur.style), ms = st.behaviour === "Move";
     const lane = P.lanes.find(l => l.id === cur.lane), eff = itemColours(cur, lane);
     const dur = toDays(cur.end) - toDays(cur.start) + 1;
-    const colourNote = cur.fill ? "Custom colour" : ms ? `${st.notes} colour` : "Follows the lane colour";
+    const colourNote = cur.fill ? "Custom colour" : ms ? `${esc(st.notes)} colour` : "Follows the lane colour";
     const nLinks = (cur.preds || []).length + P.items.filter(i => (i.preds || []).some(r => r.id === cur.id)).length;
     side.innerHTML = `
       <h2>${ms ? "Milestone" : isContainer(P, cur) ? "Summary bar" : "Bar"} <span class="idtag">${esc(cur.id)}</span></h2>
       <section class="pane" data-pane="activity" data-label="${ms ? "Milestone" : isContainer(P, cur) ? "Summary" : "Activity"}">
       <div class="f"><label for="iName">Name</label><input id="iName" value="${esc(cur.name)}"></div>
       <div class="row2">
-        <div class="f"><label for="iStart">${ms ? "Date" : "Start"}</label><input id="iStart" type="date" value="${cur.start}"></div>
-        ${ms ? "" : `<div class="f"><label for="iEnd">Finish</label><input id="iEnd" type="date" value="${cur.end}"></div>`}
+        <div class="f"><label for="iStart">${ms ? "Date" : "Start"}</label><input id="iStart" type="date" value="${esc(cur.start)}"></div>
+        ${ms ? "" : `<div class="f"><label for="iEnd">Finish</label><input id="iEnd" type="date" value="${esc(cur.end)}"></div>`}
       </div>
       ${ms ? "" : `<p class="note">${dur} calendar days</p>`}
       <div class="row2">
         <div class="f"><label for="iStyle">Style</label><select id="iStyle">${P.styles.filter(s => s.behaviour !== "Curtain").map(s => `<option value="${esc(s.name)}" ${s.name === cur.style ? "selected" : ""}>${esc(s.notes || s.name)}</option>`).join("")}</select></div>
-        <div class="f"><label for="iLane">Lane</label><select id="iLane">${P.lanes.map(l => `<option value="${l.id}" ${l.id === cur.lane ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
+        <div class="f"><label for="iLane">Lane</label><select id="iLane">${P.lanes.map(l => `<option value="${esc(l.id)}" ${l.id === cur.lane ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
       </div>
       <div class="row2">
-        <div class="f"><label for="iFill">Fill</label><input id="iFill" type="color" value="${eff.fill}"></div>
-        <div class="f"><label for="iStroke">Outline</label><input id="iStroke" type="color" value="${eff.stroke}"></div>
+        <div class="f"><label for="iFill">Fill</label><input id="iFill" type="color" value="${safeCol(eff.fill)}"></div>
+        <div class="f"><label for="iStroke">Outline</label><input id="iStroke" type="color" value="${safeCol(eff.stroke)}"></div>
       </div>
       <p class="note">${colourNote}${cur.fill || cur.stroke ? ` · <a href="#" id="iReset">reset</a>` : ""}</p>
       <div class="row2">
@@ -3146,8 +3150,8 @@ function renderSideInner() {
       <h2>Lane group</h2>
       <div class="f"><label for="gName">Name</label><input id="gName" value="${esc(cur.name)}"></div>
       <div class="f"><label>Colour</label>
-        <div class="swatches">${lanePresets().map(([n, c]) => `<button class="sw" data-c="${c}" title="${n}" aria-label="${n}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${laneHeader(c)}"></button>`).join("")}
-          <input id="gColour" type="color" value="${cur.colour}" title="Custom colour" aria-label="Custom group colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
+        <div class="swatches">${lanePresets().map(([n, c]) => `<button class="sw" data-c="${safeCol(c)}" title="${esc(n)}" aria-label="${esc(n)}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${safeCol(laneHeader(c))}"></button>`).join("")}
+          <input id="gColour" type="color" value="${safeCol(cur.colour)}" title="Custom colour" aria-label="Custom group colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
       </div>
       <p class="note">The colour goes to all its sub-lanes and their bars.</p>
       <div class="f"><label>Sub-lanes</label><ul class="sublist">${kids.map(l => `<li><a href="#" data-sub="${esc(l.id)}">${esc(l.name)}</a></li>`).join("")}</ul></div>
@@ -3178,10 +3182,10 @@ function renderSideInner() {
       <h2>Swimlane</h2>
       <div class="f"><label for="lName">Name</label><input id="lName" value="${esc(cur.name)}"></div>
       <div class="f"><label>Lane colour</label>
-        <div class="swatches">${lanePresets().map(([n, c]) => `<button class="sw" data-c="${c}" title="${n}" aria-label="${n}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${laneHeader(c)}"></button>`).join("")}
-          <input id="lColour" type="color" value="${cur.colour}" title="Custom colour" aria-label="Custom lane colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
+        <div class="swatches">${lanePresets().map(([n, c]) => `<button class="sw" data-c="${safeCol(c)}" title="${esc(n)}" aria-label="${esc(n)}" aria-pressed="${c.toUpperCase() === cur.colour.toUpperCase()}" style="background:${safeCol(laneHeader(c))}"></button>`).join("")}
+          <input id="lColour" type="color" value="${safeCol(cur.colour)}" title="Custom colour" aria-label="Custom lane colour" ${custom ? 'style="outline:2px solid var(--fg)"' : ""}></div>
       </div>
-      <div class="preview">Title <i style="background:${laneHeader(cur.colour)}"></i> Bars <i style="background:${laneBar(cur.colour)}"></i></div>
+      <div class="preview">Title <i style="background:${safeCol(laneHeader(cur.colour))}"></i> Bars <i style="background:${safeCol(laneBar(cur.colour))}"></i></div>
       <div class="f"><label for="lRows">Minimum rows</label><input id="lRows" type="number" min="1" max="30" value="${cur.minRows || 1}"></div>
       <div class="actions">
         <button class="btn" id="lUp" ${canMoveLane(P, cur, -1) ? "" : "disabled"}>Move up</button>
@@ -3234,7 +3238,7 @@ function renderSideInner() {
       <div class="f"><label for="mClient">Client</label><input id="mClient" value="${esc(m.client)}"></div>
     </div>
     <div class="f"><label>Client logo</label>
-      <div class="logo-slot"><span class="thumb">${m.clientLogo ? `<img src="${m.clientLogo}" alt="Client logo">` : "None"}</span>
+      <div class="logo-slot"><span class="thumb">${m.clientLogo ? `<img src="${safeImg(m.clientLogo)}" alt="Client logo">` : "None"}</span>
       <div class="actions"><button class="btn" id="mLogoLib" title="Pick a logo used before">Library…</button><button class="btn" id="mLogo">${m.clientLogo ? "Replace" : "Upload"}</button>${m.clientLogo ? `<button class="btn" id="mLogoEdit">Adjust</button><button class="btn" id="mLogoX">Remove</button>` : ""}</div></div>
     </div>
     <h2>Page</h2>
@@ -3261,10 +3265,10 @@ function renderSideInner() {
         <div class="f"><label for="scMid">Second row</label><select id="scMid">${opt(unitRank(r[0]), r[1])}</select></div>
         <div class="f"><label for="scThird">Third row</label><select id="scThird" ${unitRank(r[1]) >= SCALE_UNITS.length - 1 ? "disabled" : ""}>${opt(unitRank(r[1]), r[2] || "", true)}</select></div></div>`; })()}
     <div class="row2">
-      <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${pageTl(P).start}"></div>
-      <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${pageTl(P).end}"></div>
+      <div class="f"><label for="tStart">From</label><input id="tStart" type="date" value="${esc(pageTl(P).start)}"></div>
+      <div class="f"><label for="tEnd">To</label><input id="tEnd" type="date" value="${esc(pageTl(P).end)}"></div>
     </div>
-    ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${dupes.join(", ")}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
+    ${dupes.length ? `<p class="note" style="color:var(--danger)">Duplicate ShapeIDs: ${esc(dupes.join(", "))}. Excel updates match on ShapeID, so give each item its own.</p>` : ""}
     <p class="note">${P.items.length} items in ${P.lanes.length} lanes. Select a bar or lane title to edit it.</p>
     </section>
     <section class="pane" data-pane="progress" data-label="Progress">${progressSection()}</section>
@@ -3355,8 +3359,8 @@ function progressFields(cur) {
   if (dd) { const v = Math.round(progressPoint(cur, ddPoint()) - ddPoint()); state = v < 0 ? `${-v} day${v === -1 ? "" : "s"} behind at the data date` : v > 0 ? `${v} day${v === 1 ? "" : "s"} ahead at the data date` : "On track at the data date"; }
   // the actual dates, to update with the progress (the baseline below is set once and stays)
   const actual = `<div class="row2">
-      <div class="f"><label for="iAStart">${ms ? "Actual date" : "Actual start"}</label><input id="iAStart" type="date" value="${cur.start}"></div>
-      ${ms ? "" : `<div class="f"><label for="iAEnd">${p >= 100 ? "Actual finish" : "Forecast finish"}</label><input id="iAEnd" type="date" value="${cur.end}"></div>`}
+      <div class="f"><label for="iAStart">${ms ? "Actual date" : "Actual start"}</label><input id="iAStart" type="date" value="${esc(cur.start)}"></div>
+      ${ms ? "" : `<div class="f"><label for="iAEnd">${p >= 100 ? "Actual finish" : "Forecast finish"}</label><input id="iAEnd" type="date" value="${esc(cur.end)}"></div>`}
     </div>`;
   return `${actual}${ms ? `<label class="check"><input type="checkbox" id="iDone" ${p >= 100 ? "checked" : ""}> Achieved</label>`
       : `<div class="f"><label for="iPct">Complete: <span id="iPctVal">${p}</span>%</label>
@@ -3372,8 +3376,8 @@ function baselineFields(cur, ms) {
   const shown = `<p class="baseline-ro"><b>${ms ? fmt(cur.bStart) : `${fmt(cur.bStart)} – ${fmt(cur.bEnd || cur.bStart)}`}</b><br><span class="note">${ms ? `${signedDays(st)} against it.` : `Starts ${signedDays(st)}, finishes ${signedDays(fin)} against it.`}</span>
       <a href="#" id="iBEdit" class="note" title="Correct this activity's baseline (it normally stays as it was set)">change</a></p>`;
   return shown + `<div id="iBForm" hidden><div class="row2">
-      <div class="f"><label for="iBStart">${ms ? "Baseline date" : "Baseline start"}</label><input id="iBStart" type="date" value="${cur.bStart || ""}"></div>
-      ${ms ? "" : `<div class="f"><label for="iBEnd">Baseline finish</label><input id="iBEnd" type="date" value="${cur.bEnd || ""}"></div>`}
+      <div class="f"><label for="iBStart">${ms ? "Baseline date" : "Baseline start"}</label><input id="iBStart" type="date" value="${esc(cur.bStart)}"></div>
+      ${ms ? "" : `<div class="f"><label for="iBEnd">Baseline finish</label><input id="iBEnd" type="date" value="${esc(cur.bEnd)}"></div>`}
     </div>
     </div>`;
 }
@@ -3441,7 +3445,7 @@ function logicSection() {
   const lg = logic(), cp = criticalPath();
   const stats = cp && cp.fromP6 ? `Critical path from P6: ${cp.critical.size} item${cp.critical.size === 1 ? "" : "s"} on the driving path or with no float left. Links you add here take over from it.`
     : cp ? `${cp.links.length} relationship${cp.links.length === 1 ? "" : "s"} · ${cp.critical.size} critical · finish ${fmt(fromDays(cp.finish - 1))}`
-    + (cp.broken.length ? ` · <span style="color:${LINK_BROKEN}">${cp.broken.length} broken by the dates</span>` : "") + (cp.loops.size ? ` · <span style="color:var(--danger)">loop through ${[...cp.loops].join(", ")}</span>` : "")
+    + (cp.broken.length ? ` · <span style="color:${LINK_BROKEN}">${cp.broken.length} broken by the dates</span>` : "") + (cp.loops.size ? ` · <span style="color:var(--danger)">loop through ${esc([...cp.loops].join(", "))}</span>` : "")
     : "No relationships yet. Use Find links, or select an activity and drag the dot at its end onto the next one.";
   return `<h2>Relationships</h2>
     <div class="actions"><button class="btn primary" id="lgFind">Find links automatically…</button>${cp && cp.links.length ? `<button class="btn" id="lgClear">Remove all links</button>` : ""}</div>
@@ -3530,7 +3534,7 @@ function progressSection() {
     <p class="note">Makes this programme the plan (baseline) of a new revision that you progress as the actual.</p>
     <h2>Data date</h2>
     <div class="row2">
-      <div class="f"><label for="prDate">Data date</label><input id="prDate" type="date" value="${pr.dataDate}"></div>
+      <div class="f"><label for="prDate">Data date</label><input id="prDate" type="date" value="${esc(pr.dataDate)}"></div>
       <div class="f"><label>&nbsp;</label><div class="actions" style="margin:0"><button class="btn" id="prToday">Today</button>${pr.dataDate ? `<button class="btn" id="prClear" title="Remove the data date and progress line">Clear</button>` : ""}</div></div>
     </div>
     ${s ? `<p class="note">${s.behind} behind and ${s.ahead} ahead of the data date.</p>` : `<p class="note">Set a data date to show the progress line. Set progress by selecting a bar or milestone.</p>`}
@@ -3589,7 +3593,7 @@ function startProgressUpdate() {
     <div class="body">
       <div class="row2">
         <div class="f"><label for="puRev">New revision</label><input id="puRev" value="${esc(next)}"></div>
-        <div class="f"><label for="puDate">Data date</label><input id="puDate" type="date" value="${prog().dataDate && toDays(prog().dataDate) > toDays(todayISO()) ? prog().dataDate : todayISO()}"></div>
+        <div class="f"><label for="puDate">Data date</label><input id="puDate" type="date" value="${esc(prog().dataDate && toDays(prog().dataDate) > toDays(todayISO()) ? prog().dataDate : todayISO())}"></div>
       </div>
       <div class="f"><label for="puName">Baseline name (in the legend)</label><input id="puName" value="${esc(`Planned (Rev ${rev})`)}"></div>
       ${had ? `<label class="check"><input type="checkbox" id="puKeep"> Keep the existing baseline instead (“${esc(prog().baselineName || "Baseline")}”)</label>` : ""}
@@ -3648,7 +3652,7 @@ function itemExtras(cur) {
       ${(() => { const pl = LAY?.labels?.get(cur.id); return !cur.labelMode && pl ? `<p class="note">Auto puts it ${{ inside: "inside the bar", right: "to the right of the bar", left: "to the left of the bar", key: `as no. ${pl.n}, listed in the key at the bottom of the page` }[pl.mode] || "inside"}.</p>` : ""; })()}
       ${tseg("titleAlign", "Inside, aligned", [["left", "Left"], ["centre", "Centre"], ["right", "Right"]], tf.align)}` : tseg("titleAlign", "Title position", [...(tf.def === "auto" ? [["auto", "Auto"]] : []), ["left", "Left"], ["centre", "Centre"], ["right", "Right"]], tf.align)}
       <div class="row2">${tseg("titleSize", "Title size", [["S", "S"], ["M", "M"], ["L", "L"]], tf.size)}${tseg("titleWeight", "Weight", [["bold", "Bold"], ["regular", "Regular"]], tf.bold ? "bold" : "regular")}</div>
-      <div class="f"><label for="cTitleCol">Title colour</label><input id="cTitleCol" type="color" value="${tf.colour || (isUmbrella(P, cur) ? textOn(umbrellaColour(cur, P.lanes.find(l => l.id === cur.lane) || null)) : BRAND.navy)}"></div>
+      <div class="f"><label for="cTitleCol">Title colour</label><input id="cTitleCol" type="color" value="${safeCol(tf.colour || (isUmbrella(P, cur) ? textOn(umbrellaColour(cur, P.lanes.find(l => l.id === cur.lane) || null)) : BRAND.navy))}"></div>
       ${cur.titleAlign || cur.titleSize || cur.titleWeight || cur.titleColour || (isUmbrella(P, cur) && cur.labelMode) ? `<p class="note"><a href="#" id="cTitleReset">Default title</a></p>` : ""}
     </div>`;
     const sets = cur.stageSets, stageCtl = sets ? `<div class="tagfmt">
@@ -3745,7 +3749,7 @@ function tagControls(f, kind) {
   // a phase band or a large upright zone: its name sits in the shade; where, how big, what colour (default centred)
   const segAt = (label, names, val) => `<div class="f"><label>${label}</label><div class="seg" role="group" aria-label="${label}">${TAG_CHOICES.tagAlign.map(([v]) =>
     `<button type="button" data-tag="tagAlign" data-val="${v}" aria-pressed="${val === v}">${names[v]}</button>`).join("")}</div></div>`;
-  const colour = (auto, autoLabel) => `<div class="f"><label for="tagText">Label colour</label><input id="tagText" type="color" value="${f.tagText || auto}"></div>
+  const colour = (auto, autoLabel) => `<div class="f"><label for="tagText">Label colour</label><input id="tagText" type="color" value="${safeCol(f.tagText || auto)}"></div>
     ${f.tagText ? `<p class="note"><a href="#" id="tagAuto">${autoLabel}</a></p>` : ""}`;
   if (kind === "band") return `<div class="tagfmt">
     <div class="row2">${segAt("Label in the band", { left: "Left", centre: "Centre", right: "Right" }, f.rawAlign || "centre")}${seg("tagSize", "Label size")}</div>
@@ -3759,7 +3763,7 @@ function tagControls(f, kind) {
   </div>`;
   if (kind === "gate") return `<div class="tagfmt">
     <div class="row2">${seg("tagAlign", "Label along the line", { left: "Top", centre: "Middle", right: "Bottom" })}${seg("tagSize", "Label size")}</div>
-    <div class="f"><label for="tagText">Label colour</label><input id="tagText" type="color" value="${f.tagText || f.lineColour}"></div>
+    <div class="f"><label for="tagText">Label colour</label><input id="tagText" type="color" value="${safeCol(f.tagText || f.lineColour)}"></div>
     ${f.tagText ? `<p class="note"><a href="#" id="tagAuto">Same colour as the line</a></p>` : ""}
   </div>`;
   return `<div class="tagfmt">
@@ -3768,8 +3772,8 @@ function tagControls(f, kind) {
     ${seg("tagAlign", "Tag alignment")}
     <div class="row2">${seg("tagSize", "Tag size")}${seg("tagStyle", "Tag style")}</div>
     <div class="row2">
-      <div class="f"><label for="tagFill">Tag colour</label><input id="tagFill" type="color" value="${f.fillColour}"></div>
-      <div class="f"><label for="tagText">Text colour</label><input id="tagText" type="color" value="${f.textColour}"></div>
+      <div class="f"><label for="tagFill">Tag colour</label><input id="tagFill" type="color" value="${safeCol(f.fillColour)}"></div>
+      <div class="f"><label for="tagText">Text colour</label><input id="tagText" type="color" value="${safeCol(f.textColour)}"></div>
     </div>
     ${f.tagFill || f.tagText ? `<p class="note"><a href="#" id="tagAuto">Automatic tag colours</a></p>` : ""}
   </div>`;
@@ -3791,7 +3795,7 @@ function zoneLanes(it) {   // [top lane index, bottom lane index], -1 for the ed
 }
 function coverControls(cur) {
   if (curtainKind(P, cur) === "band") return "";   // the phase band has its own row under the timeline
-  const z = zoneLanes(cur), opt = (k, sel) => P.lanes.map((l, i) => `<option value="${l.id}" ${sel === i ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  const z = zoneLanes(cur), opt = (k, sel) => P.lanes.map((l, i) => `<option value="${esc(l.id)}" ${sel === i ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   return `<div class="row2">
       <div class="f"><label for="cTop">Covers from</label><select id="cTop"><option value="">Top of the sheet</option>${opt("t", z ? z[0] : -1)}</select></div>
       <div class="f"><label for="cBot">down to</label><select id="cBot"><option value="">Bottom of the sheet</option>${opt("b", z ? z[1] : -1)}</select></div>
@@ -3815,16 +3819,16 @@ function renderCurtainSide(side, cur) {
     <h2>Curtain <span class="idtag">${esc(cur.id)}</span></h2>
     <div class="f"><label for="cName">Tag</label><input id="cName" value="${esc(cur.name)}"></div>
     <div class="row2">
-      <div class="f"><label for="cStart">From</label><input id="cStart" type="date" value="${cur.start}"></div>
-      <div class="f"><label for="cEnd">To</label><input id="cEnd" type="date" value="${cur.end}"></div>
+      <div class="f"><label for="cStart">From</label><input id="cStart" type="date" value="${esc(cur.start)}"></div>
+      <div class="f"><label for="cEnd">To</label><input id="cEnd" type="date" value="${esc(cur.end)}"></div>
     </div>
     <p class="note">${curtainDays(cur)} calendar days · tag reads “${esc(curtainTag(cur, st))}”</p>
     <div class="f"><label for="cType">Type</label><select id="cType">${types.map(s => `<option value="${esc(s.name)}" ${s.name === cur.style ? "selected" : ""}>${esc(s.notes || s.name)}</option>`).join("")}</select></div>
     <div class="f"><label for="cOpacity">Shading: <span id="cPct">${pct}%</span>${cur.opacity != null ? " (this curtain)" : " (from type)"}</label>
-      <input id="cOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${fill}"></div>
+      <input id="cOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${safeCol(fill)}"></div>
     <div class="row2">
-      <div class="f"><label for="cFill">Shade colour</label><input id="cFill" type="color" value="${fill}"></div>
-      <div class="f"><label for="cStroke">Tag &amp; edges</label><input id="cStroke" type="color" value="${stroke}"></div>
+      <div class="f"><label for="cFill">Shade colour</label><input id="cFill" type="color" value="${safeCol(fill)}"></div>
+      <div class="f"><label for="cStroke">Tag &amp; edges</label><input id="cStroke" type="color" value="${safeCol(stroke)}"></div>
     </div>
     ${coverControls(cur)}
     ${tagControls({ ...tagFmt(cur, st), lineColour: fill, rawAlign: cur.tagAlign ?? st.tagAlign, autoText: textOn(fill) }, curtainKind(P, cur))}
@@ -3888,13 +3892,13 @@ function renderTypeSide(side, s) {
     ${bar ? `<label class="check"><input type="checkbox" id="sLane" ${s.fill ? "" : "checked"}> Use the lane colour</label>` : ""}
     <label class="check" title="List this type in the legend at the foot of the sheet (when something on the sheet uses it)"><input type="checkbox" id="sLegend" ${s.legend !== false ? "checked" : ""}> Show in the legend</label>
     ${bar && !s.fill && s.legend !== false ? `<p class="note">Bars in the lane colour are left out of the legend: give the type its own colour to list it.</p>` : ""}
-    ${curtain ? `<div class="f"><label for="sOpacity">Shading: <span id="sPct">${pct}%</span></label><input id="sOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${s.fill}"></div>
+    ${curtain ? `<div class="f"><label for="sOpacity">Shading: <span id="sPct">${pct}%</span></label><input id="sOpacity" type="range" min="0" max="70" step="1" value="${pct}" style="accent-color:${safeCol(s.fill)}"></div>
       <div class="f"><label for="sDays">Duration in the tag</label><select id="sDays">${DAYS_OPTIONS.map(([k, n]) => `<option value="${k}" ${k === (s.days || "") ? "selected" : ""}>${n}</option>`).join("")}</select></div>
       ${tagControls({ ...tagFmt({}, s), lineColour: s.fill || BRAND.navy, rawAlign: s.tagAlign, autoText: textOn(s.fill || "#FFFFFF") }, ["gate", "band"].includes(s.shape) ? s.shape : s.tagPos === "inside" ? "zone" : "")}
       <p class="note">These are the defaults for every curtain of this type; a curtain can override them.</p>` : ""}
     <div class="row2">
-      <div class="f"><label for="sFill">${curtain ? "Shade colour" : "Fill"}</label><input id="sFill" type="color" value="${s.fill || laneBar(BRAND.orange)}" ${bar && !s.fill ? "disabled" : ""}></div>
-      <div class="f"><label for="sStroke">${curtain ? "Tag & edges" : "Outline"}</label><input id="sStroke" type="color" value="${s.stroke || BRAND.navy}"></div>
+      <div class="f"><label for="sFill">${curtain ? "Shade colour" : "Fill"}</label><input id="sFill" type="color" value="${safeCol(s.fill || laneBar(BRAND.orange))}" ${bar && !s.fill ? "disabled" : ""}></div>
+      <div class="f"><label for="sStroke">${curtain ? "Tag & edges" : "Outline"}</label><input id="sStroke" type="color" value="${safeCol(s.stroke || BRAND.navy)}"></div>
     </div>
     <div class="type-preview"><svg width="120" height="${curtain ? 44 : 30}" viewBox="0 0 120 ${curtain ? 44 : 30}" aria-hidden="true">${typePreview(s)}</svg></div>
     <div class="f"><label for="sCode">Excel code</label><input id="sCode" value="${esc(s.name)}"></div>
@@ -4009,7 +4013,7 @@ async function openLogoLibrary() {
     const { list, team, teamError } = await logoLibrary(), grid = m.querySelector("#lgLib"), note = m.querySelector("#lgLibNote");
     note.textContent = !list.length ? "No logos yet. Upload one: every logo you use is kept here." : team ? "Shared with everyone signed in to the team." : me && teamError ? "Kept on this computer only: the team's library isn't set up yet (supabase/poap_002_logos.sql)." : "Kept on this computer only. Sign in to share them with the team.";
     grid.innerHTML = list.map(l => `<div class="logocard" data-id="${esc(l.id)}">
-      <button type="button" class="pick" data-use="${esc(l.id)}" title="Use this logo"><img src="${l.logo}" alt=""></button>
+      <button type="button" class="pick" data-use="${esc(l.id)}" title="Use this logo"><img src="${safeImg(l.logo)}" alt=""></button>
       <input class="lname" value="${esc(l.name)}" aria-label="Logo name" data-name="${esc(l.id)}">
       <span class="lmeta">${l.where === "team" ? "Team" : "This computer"} <a href="#" data-del="${esc(l.id)}">Remove</a></span></div>`).join("");
     grid.querySelectorAll("[data-use]").forEach(b => b.onclick = () => {
@@ -4087,7 +4091,7 @@ async function openLogoEditor(src, crop) {
   let v = crop ? { s: crop.s, cx: crop.cx, cy: crop.cy } : { s: fitScale(whole), cx: iw / 2, cy: ih / 2 };
   const recoloured = new Map();
   const source = () => { if (!look.whiteTo) return img; if (!recoloured.has(look.whiteTo)) recoloured.set(look.whiteTo, recolourWhite(img, look.whiteTo)); return recoloured.get(look.whiteTo); };
-  const swatchSeg = (attr, current, opts, customId) => `<div class="seg" role="group">${opts.map(([v, n]) => `<button type="button" ${attr}="${v}" aria-pressed="${(current || "") === v}">${n}</button>`).join("")}<input type="color" id="${customId}" value="${current || BRAND.navy}" title="Custom colour" aria-label="Custom colour"></div>`;
+  const swatchSeg = (attr, current, opts, customId) => `<div class="seg" role="group">${opts.map(([v, n]) => `<button type="button" ${attr}="${v}" aria-pressed="${(current || "") === v}">${n}</button>`).join("")}<input type="color" id="${customId}" value="${safeCol(current || BRAND.navy)}" title="Custom colour" aria-label="Custom colour"></div>`;
   const m = showModal(`<header><h3>Client logo</h3><p>The box is the logo area on the sheet. Drag the logo to position it; zoom to crop.</p></header>
     <div class="body logo-editor">
       <canvas id="lgCanvas" width="${W}" height="${H}" aria-label="Logo preview in the header box"></canvas>
@@ -4150,9 +4154,9 @@ function openBrandMenu() {
   const m = showModal(`<header><h3>Branding</h3><p>The logo and colours used on the sheet, for Martinus, joint ventures and alliances. Switching re-colours the lanes, bars and timeline that use the current brand's colours.</p></header>
     <div class="body"><div class="brandlist">${list.map(b => `
       <div class="brandrow" role="button" tabindex="0" data-brand="${esc(b.id)}" aria-current="${b.id === cur.id}">
-        <span class="lg"><img src="${brandLogoSrc(b)}" alt=""></span>
+        <span class="lg"><img src="${safeImg(brandLogoSrc(b))}" alt=""></span>
         <span><b>${esc(b.name)}</b>${b.id === cur.id ? ` <span class="note">· in use</span>` : ""}</span>
-        <span class="sw2" title="Main colour and accent"><i style="background:${b.primary}"></i><i style="background:${b.accent}"></i></span>
+        <span class="sw2" title="Main colour and accent"><i style="background:${safeCol(b.primary)}"></i><i style="background:${safeCol(b.accent)}"></i></span>
         <span>${b.id !== DEFAULT_BRAND.id ? `<button class="btn" data-edit="${esc(b.id)}">Edit</button>` : ""}</span>
       </div>`).join("")}</div></div>
     <footer><button class="btn primary" data-act="add">+ Add branding…</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Close</button></footer>`,
@@ -4226,8 +4230,8 @@ function openBrandEditor(existing) {
       <div class="f"><label>Logo</label><div class="actions"><button class="btn" id="brUpload">${b.logo ? "Replace logo…" : "Upload logo…"}</button><span class="note" id="brLogoNote">${b.logo ? "" : "PNG, JPG, SVG or WebP. White or transparent margins and thin frames are trimmed."}</span></div>
         <input type="file" id="brFile" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden></div>
       <div class="row2">
-        <div class="f"><label for="brPrimary">Main colour (titles, timeline, lines)</label><input id="brPrimary" type="color" value="${b.primary}"></div>
-        <div class="f"><label for="brAccent">Accent (project line, highlights)</label><input id="brAccent" type="color" value="${b.accent}"></div>
+        <div class="f"><label for="brPrimary">Main colour (titles, timeline, lines)</label><input id="brPrimary" type="color" value="${safeCol(b.primary)}"></div>
+        <div class="f"><label for="brAccent">Accent (project line, highlights)</label><input id="brAccent" type="color" value="${safeCol(b.accent)}"></div>
       </div>
       <div class="actions"><button class="btn" id="brSwap">Swap colours</button><button class="btn" id="brPicked" hidden>Use the logo's colours</button></div>
       <div class="row2">
@@ -4260,13 +4264,13 @@ function openBrandEditor(existing) {
   });
   const preview = () => {
     const p = m.querySelector("#brPreview"), M = P.meta, [t1, t2] = brandTimeline(b), [l1, l2] = brandLanes(b);
-    const lane = c => `<div style="display:flex;align-items:stretch;border:1px solid ${b.primary};border-top:0"><span style="width:16px;background:${laneHeader(c)};border-right:1px solid ${b.primary}"></span><span style="flex:1;padding:5px 8px"><span style="display:block;width:55%;height:9px;background:${laneBar(c)};border:1px solid ${b.primary}"></span></span></div>`;
-    p.innerHTML = `<div class="ph"><div><div style="font-weight:700;font-size:12px;color:${b.primary}">${esc((M.program || "PROGRAM").toUpperCase())}</div>
-        <div style="font-weight:700;font-size:11.5px;color:${b.accent}">${esc(`${M.number} ${M.title}`)}</div></div>
-        ${b.logo ? `<img src="${b.logo}" alt="">` : `<span class="note">Logo appears here</span>`}</div>
-      <div><div class="band" style="color:${b.primary};grid-template-columns:1fr 1fr"><span style="background:${t1}">2026</span><span style="background:${tint(t2, .4)}">2027</span></div>
-        <div class="band" style="color:${b.primary}"><span style="background:${t2}">Nov</span><span style="background:#fff">Dec</span><span style="background:${t2}">Jan</span><span style="background:#fff">Feb</span></div>
-        <div style="border-top:1px solid ${b.primary}">${lane(l1)}${lane(l2)}</div></div>`;
+    const lane = c => `<div style="display:flex;align-items:stretch;border:1px solid ${safeCol(b.primary)};border-top:0"><span style="width:16px;background:${safeCol(laneHeader(c))};border-right:1px solid ${safeCol(b.primary)}"></span><span style="flex:1;padding:5px 8px"><span style="display:block;width:55%;height:9px;background:${safeCol(laneBar(c))};border:1px solid ${safeCol(b.primary)}"></span></span></div>`;
+    p.innerHTML = `<div class="ph"><div><div style="font-weight:700;font-size:12px;color:${safeCol(b.primary)}">${esc((M.program || "PROGRAM").toUpperCase())}</div>
+        <div style="font-weight:700;font-size:11.5px;color:${safeCol(b.accent)}">${esc(`${M.number} ${M.title}`)}</div></div>
+        ${b.logo ? `<img src="${safeImg(b.logo)}" alt="">` : `<span class="note">Logo appears here</span>`}</div>
+      <div><div class="band" style="color:${safeCol(b.primary)};grid-template-columns:1fr 1fr"><span style="background:${safeCol(t1)}">2026</span><span style="background:${safeCol(tint(t2, .4))}">2027</span></div>
+        <div class="band" style="color:${safeCol(b.primary)}"><span style="background:${safeCol(t2)}">Nov</span><span style="background:#fff">Dec</span><span style="background:${safeCol(t2)}">Jan</span><span style="background:#fff">Feb</span></div>
+        <div style="border-top:1px solid ${safeCol(b.primary)}">${lane(l1)}${lane(l2)}</div></div>`;
     m.querySelector("#brPrimary").value = b.primary; m.querySelector("#brAccent").value = b.accent;
     m.querySelector("#brT1").value = t1; m.querySelector("#brT2").value = t2; m.querySelector("#brL1").value = l1; m.querySelector("#brL2").value = l2;
     m.querySelector("#brAuto").hidden = !b.timeline && !b.laneColours;
@@ -6540,7 +6544,7 @@ function renderTeam() {
   const others = CLOUD ? [...new Map(CLOUD.others.map(o => [o.email, o])).values()] : [];
   people.innerHTML = (CLOUD && me ? [{ email: me.email, color: colorFor(me.email), you: true }, ...others] : []).map(o => {
     const it = o.sel && P.items.find(i => i.id === o.sel.id);
-    return `<span class="avatar" style="background:${o.color}" title="${esc(o.email)}${o.you ? " (you)" : it ? ` · on ${esc(it.name || it.id)}` : ""}">${esc(initials(o.email))}</span>`;
+    return `<span class="avatar" style="background:${safeCol(o.color)}" title="${esc(o.email)}${o.you ? " (you)" : it ? ` · on ${esc(it.name || it.id)}` : ""}">${esc(initials(o.email))}</span>`;
   }).join("");
   $("bTeam").textContent = me ? "Team ▾" : "Sign in";
   $("bTeam").title = me ? `Signed in as ${me.email}` : "Sign in to work on programmes with your team";
@@ -6697,7 +6701,7 @@ async function showStartScreen(opts = {}) {
     <div class="starthead">
       <div><h2>PoaP Builder</h2><p class="note">Program of Activities and Possessions, ready to print on A3.</p></div>
       ${back ? `<button type="button" class="startx" data-start="back" title="Back to the programme (Esc)" aria-label="Back to the programme">✕</button>` : ""}
-      <button type="button" class="brandpick" data-start="brand" title="Change branding"><span class="logo"><img src="${brandLogoSrc()}" alt=""></span><span class="bname">${esc(currentBrand().name)}</span><span class="caret" aria-hidden="true">▾</span></button>
+      <button type="button" class="brandpick" data-start="brand" title="Change branding"><span class="logo"><img src="${safeImg(brandLogoSrc())}" alt=""></span><span class="bname">${esc(currentBrand().name)}</span><span class="caret" aria-hidden="true">▾</span></button>
     </div>
     ${team}
     <div class="choices">
