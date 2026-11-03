@@ -861,7 +861,9 @@ const TESTS = {
     await new Promise(r => setTimeout(r, 300));   // a broken image reports its error a moment later
     T.ok(!document.querySelector("[onerror]"), "no element from the data got into the page");
     T.ok(window.__pwn === undefined, "no script ran");
-    T.ok(shown.every(h => !/<img src=nothing/.test(h)), "the text is shown as text");
+    // each panel and dialog as it was, parsed without running anything: no element made from the data
+    const parsed = h => { const t = document.createElement("template"); t.innerHTML = h; return t.content; };
+    T.ok(shown.every(h => !parsed(h).querySelector('[onerror], img[src="nothing"]')), "the text is shown as text");
     loadDoc(seedProject(), null);
   },
   "Guest work replaced by New is kept under Recover earlier work": async () => {
