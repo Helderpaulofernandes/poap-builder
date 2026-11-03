@@ -557,7 +557,15 @@ const measureCtx = document.createElement("canvas").getContext("2d");
 /* the sheet's typeface: Montserrat, or a condensed bold face for dense summary sheets (Page › Font) */
 const FACES = { montserrat: "Montserrat, Arial, sans-serif", condensed: "'Roboto Condensed', 'Arial Narrow', Arial, sans-serif" };
 function sheetFace() { try { return FACES[(P && P.page && P.page.font) || "montserrat"] || FACES.montserrat; } catch (e) { return FACES.montserrat; } }
-function textW(t, size, weight) { measureCtx.font = `${weight||400} ${size}px ${sheetFace()}`; return measureCtx.measureText(t).width; }
+/* text widths are measured again and again while a sheet is laid out: kept until a web font finishes loading */
+const TEXT_W = new Map();
+function textW(t, size, weight) {
+  const font = `${weight||400} ${size}px ${sheetFace()}`, key = font + "\n" + t;
+  let w = TEXT_W.get(key);
+  if (w === undefined) { if (TEXT_W.size > 20000) TEXT_W.clear(); measureCtx.font = font; w = measureCtx.measureText(t).width; TEXT_W.set(key, w); }
+  return w;
+}
+if (document.fonts) document.fonts.addEventListener("loadingdone", () => TEXT_W.clear());
 
 /* mix a colour with white: t=0 original, t=1 white */
 function tint(hexIn, t) {
@@ -783,7 +791,13 @@ function wrapText(text, maxW, size, weight) {
    Model
    ===================================================================== */
 const DAY = 864e5;
-const toDays = s => { const [y,m,d] = s.split("-").map(Number); return Date.UTC(y, m-1, d) / DAY; };
+/* ISO date -> whole days since 1970; called for every date on every draw, so each answer is kept */
+const TO_DAYS = new Map();
+const toDays = s => {
+  let v = TO_DAYS.get(s);
+  if (v === undefined) { const [y,m,d] = s.split("-").map(Number); v = Date.UTC(y, m-1, d) / DAY; if (TO_DAYS.size > 50000) TO_DAYS.clear(); TO_DAYS.set(s, v); }
+  return v;
+};
 const fromDays = n => new Date(n * DAY).toISOString().slice(0,10);
 const addDays = (s, n) => fromDays(toDays(s) + n);
 const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -1405,6 +1419,7 @@ function draw(svg, opts) {
   const labels = planLabels(L), fh = footerPlan({ ...L, W: L.W / (L.chrome || 1) }, labels.keyList).height;
   if (fh !== L.ftrH) L = layout({ ...opts, ftrH: fh });
   L.labels = labels;
+  if (opts.measure) return L;   // a sizing pass (drawPage): the layout only, nothing built
   const lg = logic(); L.cp = lg.critical || lg.links ? criticalPath() : null;
   svg.innerHTML = "";
   svg.setAttribute("width", L.W); svg.setAttribute("height", L.H);
@@ -2149,14 +2164,6 @@ function drawUmbrella(g, it, ln, L, opts, F) {
     }
   }
 }
-/* a caption under a tile or short stage: up to two short lines, small and bold */
-function captionLines(text, maxW) {
-  const words = String(text || "").split(/\s+/).filter(Boolean);
-  if (textW(text, CAPTION_FONT, 700) <= maxW || words.length < 2) return [text];
-  let best = null;
-  for (let i = 1; i < words.length; i++) { const a = words.slice(0, i).join(" "), b = words.slice(i).join(" "); const m = Math.max(textW(a, CAPTION_FONT, 700), textW(b, CAPTION_FONT, 700)); if (!best || m < best.m) best = { m, lines: [a, b] }; }
-  return best.lines;
-}
 function drawItem(g, it, ln, L, opts, F) {
   if (isContainer(P, it)) return drawContainer(g, it, ln, L, opts, F);
   const st = styleOf(P, it.style);
@@ -2325,7 +2332,7 @@ function syncContainers(p, opts = {}) {
     if (kids.length && styleOf(p, c.style).shape === "container-umbrella" && kids.some(k => k.labelMode === "below" || styleOf(p, k.style).shape === "tile")) c.span += 1;
     // a summary that grows pushes whatever sat just below it down, so nothing ends up underneath it
     if (before && c.span > before && !opts.noPush) {
-      const grow = c.span - before, from = c.row + before, own = new Set(descendants(p, c).map(k => k.id));
+      const own = new Set(descendants(p, c).map(k => k.id));
       // an umbrella inside a box pushes only the box's other contents; the box then grows and pushes what's below it
       const outer = c.parent && byId.get(c.parent), within = outer ? new Set(descendants(p, outer).map(k => k.id)) : null;
       // only what it now runs into moves, and only as far as it has to: each summary moves as one block with everything in
@@ -2453,7 +2460,10 @@ function drawPage(svg, extra = {}) {
   const { pg, PW, PH } = paperMM(), M = +pg.margin || 7, availW = PW - 2 * M, availH = PH - 2 * M;
   const span = toDays(P.timeline.end) - toDays(P.timeline.start) + 1;
   const opts = { ppd: (availW * PX_PER_MM - G.headW) / span, spare: false, ...extra };
-  let L = draw(svg, opts);
+  // the sizing passes only measure (building the sheet is the slow part); the sheet is built once, at the end
+  let rowAt = G.rowH;
+  const measure = () => { rowAt = G.rowH; return draw(svg, { ...opts, measure: true }); };
+  let L = measure();
   const W0 = L.W;   // the sheet's natural width: printed at the full page width, text is its true size
   const rowsTotal = L.lanes.reduce((n, ln) => n + ln.rows, 0), slack = availH / (availW / L.W) - L.H, baseRow = G.rowH;
   // Spread rows to fill the page: the rows share out all the height left, however few lanes there are (the bars keep their size)
@@ -2471,14 +2481,14 @@ function drawPage(svg, extra = {}) {
       opts.addRows = add;
     } else G.rowH = baseRow + slack / rowsTotal;
     try {
-      L = draw(svg, opts);
+      L = measure();
       const left = availH / (availW / L.W) - L.H;   // a second pass takes up what the first didn't quite reach
       const rowsNow = L.lanes.reduce((n, ln) => n + ln.rows, 0);
-      if (Math.abs(left) > 1) { G.rowH = Math.max(baseRow, G.rowH + left / rowsNow); L = draw(svg, opts); }
+      if (Math.abs(left) > 1) { G.rowH = Math.max(baseRow, G.rowH + left / rowsNow); L = measure(); }
     } finally { G.rowH = baseRow; }
   }
   // taller than the page: it has to print smaller, so spread the timeline wider first and the shrunk sheet still fills the width
-  const widen = () => { for (let n = 0; n < 3 && L.H / L.W > availH / availW * 1.01; n++) { opts.ppd = (L.H * availW / availH - G.headW) / span; L = draw(svg, opts); } };
+  const widen = () => { for (let n = 0; n < 3 && L.H / L.W > availH / availW * 1.01; n++) { opts.ppd = (L.H * availW / availH - G.headW) / span; L = measure(); } };
   widen();
   // only the programme shrinks: the title block and the legend are drawn larger by as much as the sheet is reduced,
   // so they print at the same size on every sheet (two scenarios side by side read the same)
@@ -2486,8 +2496,10 @@ function drawPage(svg, extra = {}) {
     const kk = Math.min(availW / L.W, availH / L.H), want = (availW / W0) / kk;
     if (want <= 1.01 && !opts.chrome) break;
     if (Math.abs(want - (opts.chrome || 1)) < .01) break;
-    opts.chrome = Math.max(1, want); L = draw(svg, opts); widen();
+    opts.chrome = Math.max(1, want); L = measure(); widen();
   }
+  // build the sheet once, at the row height its last measure used
+  try { G.rowH = rowAt; L = draw(svg, opts); } finally { G.rowH = baseRow; }
   const k = Math.min(availW / L.W, availH / L.H);   // printed mm per sheet px
   return { L, k, PW, PH, M, availW, availH, pg, fit: k / (availW / W0) };   // fit: how big the text prints against its natural size
 }
@@ -2499,7 +2511,7 @@ function render() {
   // the condensed face is a web font: measure and draw again once it has loaded, so labels fit exactly
   if (P.page.font === "condensed" && !condensedReady && document.fonts) {
     condensedReady = true;
-    Promise.all([document.fonts.load("500 10px 'Roboto Condensed'"), document.fonts.load("700 10px 'Roboto Condensed'")]).then(() => render(), () => {});
+    Promise.all([document.fonts.load("500 10px 'Roboto Condensed'"), document.fonts.load("700 10px 'Roboto Condensed'")]).then(() => { TEXT_W.clear(); render(); }, () => {});
   }
   const mode = P.view.mode || "page-width";
   $("viewMode").value = mode; $("zoomBox").hidden = mode !== "free";
@@ -3213,13 +3225,13 @@ function renderSideInner() {
     side.querySelectorAll("[data-sub]").forEach(a => a.onclick = e => { e.preventDefault(); sel = { type: "lane", id: a.dataset.sub }; render(); renderSide(); });
     $("gUp").onclick = () => commit(p => moveBlock(p, p.lanes.find(l => l.id === first.id), -1), true);
     $("gDown").onclick = () => commit(p => moveBlock(p, p.lanes.find(l => l.id === first.id), 1), true);
-    $("gAdd").onclick = () => { let n; commit(p => n = addSubLane(p, kids[kids.length - 1].id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+    $("gAdd").onclick = () => { let n; commit(p => n = addSubLane(p, kids[kids.length - 1].id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { const n = $("lName"); if (n) { n.focus(); n.select(); } }, 0); };
     side.querySelectorAll("[data-gside]").forEach(b => b.onclick = () => commit(p => setLaneSide(p, p.lanes.find(l => l.id === first.id), b.dataset.gside === "below"), true));
     $("gUngroup").onclick = () => { commit(p => { p.lanes.forEach(l => { if (l.group === cur.id) delete l.group; }); p.laneGroups = p.laneGroups.filter(g => g.id !== cur.id); }); sel = null; renderSide(); };
     return;
   }
   if (sel && sel.type === "lane" && cur) {
-    const idx = P.lanes.indexOf(cur), n = P.items.filter(i => i.lane === cur.id).length, grp = laneGroupOf(P, cur), groups = P.laneGroups || [];
+    const n = P.items.filter(i => i.lane === cur.id).length, grp = laneGroupOf(P, cur), groups = P.laneGroups || [];
     const custom = !lanePresets().some(([, c]) => c.toUpperCase() === cur.colour.toUpperCase());
     side.innerHTML = `
       <h2>Swimlane</h2>
@@ -3256,7 +3268,7 @@ function renderSideInner() {
     $("lGroup").onchange = e => commit(p => { const l = p.lanes.find(x => x.id === cur.id), g = (p.laneGroups || []).find(x => x.id === e.target.value); if (g) { l.group = g.id; l.colour = g.colour; } else delete l.group; }, true);
     side.querySelectorAll("[data-lside]").forEach(b => b.onclick = () => commit(p => setLaneSide(p, p.lanes.find(l => l.id === cur.id), b.dataset.lside === "below"), true));
     side.querySelectorAll("[data-ldir]").forEach(b => b.onclick = () => upd(l => { if (b.dataset.ldir === "up") l.upright = true; else delete l.upright; }));
-    $("lSub").onclick = () => { let n; commit(p => n = addSubLane(p, cur.id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+    $("lSub").onclick = () => { let n; commit(p => n = addSubLane(p, cur.id)); sel = { type: "lane", id: n.id }; render(); renderSide(); setTimeout(() => { const n = $("lName"); if (n) { n.focus(); n.select(); } }, 0); };
     if ($("lGrp")) $("lGrp").onclick = () => { sel = { type: "lanegroup", id: grp.id }; render(); renderSide(); };
     $("lUp").onclick = () => move(-1); $("lDown").onclick = () => move(1);
     $("lPack").onclick = () => commit(p => packLane(p, cur.id), true);
@@ -3688,7 +3700,7 @@ function itemExtras(cur) {
     ${mode === "auto" && plan ? `<p class="note">Auto puts it ${{ right: "to the right of the marker", left: "to the left of the marker", above: "above the marker", key: `as no. ${plan.n}, listed in the key at the bottom of the page` }[plan.mode] || "beside the marker"}, clear of the bars and names around it.</p>` : ""}`;
   }
   if (isContainer(P, cur)) {
-    const kids = containerChildren(P, cur), box = styleOf(P, cur.style).shape === "container-box";
+    const kids = containerChildren(P, cur);
     const tf = titleFmt(P, cur), tseg = (key, label, opts, val) => `<div class="f"><label>${label}</label><div class="seg" role="group" aria-label="${label}">${opts.map(([v, n]) => `<button type="button" data-tset="${key}" data-val="${v}" aria-pressed="${val === v}">${n}</button>`).join("")}</div></div>`;
     const titleCtl = `<div class="tagfmt">
       ${isUmbrella(P, cur) ? `${tseg("labelMode", "Title", UMB_MODES, cur.labelMode || "auto")}
@@ -4375,7 +4387,7 @@ $("showGrp").querySelectorAll("[data-show]").forEach(b => b.onclick = () => comm
 /* =====================================================================
    Toolbar actions
    ===================================================================== */
-$("bLane").onclick = () => { const l = { id: "L" + uid(), name: "New lane", colour: P.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 2 }; commit(p => p.lanes.push(l)); sel = { type: "lane", id: l.id }; render(); renderSide(); setTimeout(() => { $("lName").focus(); $("lName").select(); }, 0); };
+$("bLane").onclick = () => { const l = { id: "L" + uid(), name: "New lane", colour: P.lanes.length % 2 ? BRAND.navy : BRAND.orange, minRows: 2 }; commit(p => p.lanes.push(l)); sel = { type: "lane", id: l.id }; render(); renderSide(); setTimeout(() => { const n = $("lName"); if (n) { n.focus(); n.select(); } }, 0); };
 $("bBar").onclick = () => addItem(defaultStyle("Stretch"));
 $("bMs").onclick = () => addItem(defaultStyle("Move"));
 $("bCurtain").onclick = () => {
@@ -5721,10 +5733,9 @@ function openP6Builder(M, rec, fname, mode, from = null) {
     const count = (its, test, w) => { const n = its.filter(test).length; return n ? `${n} ${w}${n > 1 ? "s" : ""}` : ""; };
     const per = lanes.map(l => { const its = items.filter(i => i.lane === l.name);
       return `<li><b>${esc(l.name)}</b><span class="note">${[count(its, i => /^U_/.test(i.style), "umbrella"), count(its, i => i.style === "SUMMARY_BOX", "summary box"), count(its, i => i.style === "BAR" && !i.parent, "bar"), count(its, i => i.style === "BAR" && i.parent && !its.some(b => b.id === i.parent && b.style === "SUMMARY_BOX"), "stage"), count(its, i => /^POS_/.test(i.style), "possession"), count(its, i => /^ML_/.test(i.style), "milestone")].filter(Boolean).join(", ")}</span></li>`; }).join("");
-    const left = M.includeAll ? 0 : M.out.size;
     let dates = "";
     if (summary() && built.keyMs.length) {
-      const roles = rec["~dates"] || {}, band = rec["~band"] || {};
+      const band = rec["~band"] || {};
       const opt = (t, v, n) => `<option value="${v}" ${built.role(t) === v ? "selected" : ""}>${n}</option>`;
       const span = rs => rs.length ? `${fmt(rs.reduce((m, r) => r.start < m ? r.start : m, rs[0].start))} – ${fmt(rs.reduce((m, r) => r.end > m ? r.end : m, rs[0].end))}` : null;
       dates = `<h4>Key dates</h4>
@@ -6565,7 +6576,7 @@ async function loadHistory(id, box) {
   if (!box.isConnected) return;
   if (error) { box.innerHTML = `<p class="note">History isn't available: ${esc(error.message)}</p>`; return; }
   if (!data.length) { box.innerHTML = `<p class="note">No saved versions yet.</p>`; return; }
-  const what = d => d ? `${esc(d.name || "")}<br><span class="note">${fmt(d.start)}${d.end && d.end !== d.start ? ` – ${fmt(d.end)}` : ""}${d.pct ? ` · ${d.pct}%` : ""}</span>` : "";
+  const what = d => d ? `${esc(d.name || "")}<br><span class="note">${fmt(d.start)}${d.end && d.end !== d.start ? ` – ${fmt(d.end)}` : ""}${+d.pct ? ` · ${Math.round(+d.pct)}%` : ""}</span>` : "";
   box.innerHTML = `<ol class="hist">${data.map((h, i) => `<li><div><b>${esc(timeAgo(h.changed_at))}</b> · ${esc(h.changed_by_email || "someone")}${i === 0 ? ` <span class="note">(current)</span>` : ""}${h.deleted ? ` <span class="note">(deleted)</span>` : ""}</div><div>${what(h.data)}</div>${i > 0 && h.data && !h.deleted ? `<button class="btn" data-hist="${i}">Put this version back</button>` : ""}</li>`).join("")}</ol>`;
   box.querySelectorAll("[data-hist]").forEach(b => b.onclick = () => {
     const v = data[+b.dataset.hist].data;
@@ -6915,7 +6926,7 @@ showStartScreen();
 startCloud().then(reopened => { if (!reopened && ROOT.querySelector(".startscreen") && me) showStartScreen(); }, e => console.warn(e));
 window.POAP_READY = true;   // the whole script ran (the tests check this)
 // the fonts arrive in the background: draw again once they're in, so labels are measured with them
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { try { if (P) render(); } catch (e) {} });
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { TEXT_W.clear(); try { if (P) render(); } catch (e) {} });
 // an export before the Excel / PDF libraries have arrived says so, instead of failing quietly
 window.addEventListener("error", e => { if (/XLSX|jspdf|svg2pdf/i.test(String(e.message))) toast("The Excel / PDF tools are still downloading. Try again in a moment.", 5000); });
 </script>

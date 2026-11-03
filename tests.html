@@ -75,6 +75,24 @@ const TESTS = {
   "Starts on a first visit (nothing saved yet)": () => {
     T.ok(window.POAP_READY === true, "the app stopped part-way through starting");
   },
+  "A page view builds the sheet once; sizing passes leave it alone": () => {
+    T.clean(); loadDoc(seedProject(), null); P.view.mode = "page-width"; render();
+    const svg = $("chart"), was = svg.innerHTML;
+    let builds = 0; const real = svg.setAttribute; svg.setAttribute = function (k, v) { if (k === "viewBox") builds++; return real.call(this, k, v); };
+    try { drawPage(svg); } finally { svg.setAttribute = real; }
+    T.eq(builds, 1, "times the sheet was built");
+    const L = draw(svg, { ppd: 3, measure: true });
+    T.ok(L.W > 0 && L.H > 0 && L.lanes.length === P.lanes.length, "a sizing pass still lays the sheet out");
+    render(); T.eq(svg.innerHTML === was, true, "the same sheet as before");
+    T.eq(svg.getAttribute("viewBox"), `0 0 ${LAY.W} ${LAY.H}`, "the sheet's size matches its layout");
+  },
+  "Kept text widths and dates give the same answers": () => {
+    TEXT_W.clear(); const a = textW("Bulk Earthworks & Drainage", 9, 500), b = textW("Bulk Earthworks & Drainage", 9, 500);
+    T.eq(a, b); T.ok(a > 0);
+    T.ok(textW("WW", 9, 500) > textW("W", 9, 500), "different text, different width");
+    T.eq(toDays("2027-03-01") - toDays("2027-02-28"), 1); T.eq(toDays("2028-03-01") - toDays("2028-02-28"), 2, "leap year");
+    T.eq(toDays("2027-03-01"), toDays("2027-03-01"));
+  },
   "Date helpers": () => {
     T.eq(addDays("2027-01-30", 3), "2027-02-02");
     T.eq(fromDays(toDays("2028-02-29")), "2028-02-29");
@@ -1392,6 +1410,18 @@ const TEAM_TESTS = {
     A.document.querySelector(".histbox [data-hist]").click();
     if (ev(A, `P.items.find(i => i.id === "CON003").name`) !== "Bulk Earthworks & Drainage") throw new Error("the old version didn't come back");
     await until(() => MOCK.db.poap_entities.find(e => e.id === "CON003").data.name === "Bulk Earthworks & Drainage", 3000, "the restored version to be saved");
+    ev(A, `SIDE_TAB.item = "activity"`);
+  },
+  "Team: a teammate's history entry can't put markup in the panel": async () => {
+    const A = await openApp("alice@x.com");
+    ev(A, `loadDoc(seedProject(), null)`); await ev(A, `shareProject()`);
+    ev(A, `commit(p => { p.items.find(i => i.id === "CON003").name = "Version two"; }, true)`);
+    await until(() => ev(A, "CLOUD.state") === "synced" && MOCK.db.poap_entity_history.filter(h => h.id === "CON003").length === 2, 3000, "two saved versions");
+    // what a hostile client could write straight to the server: a percentage that is really HTML
+    MOCK.db.poap_entity_history.filter(h => h.id === "CON003").forEach(h => { h.data = { ...h.data, pct: '50<img src=x id=pwn>' }; });
+    ev(A, `sel = { type: "item", id: "CON003" }; SIDE_TAB.item = "history"; wantSelTab = true; render(); renderSide();`);
+    await until(() => A.document.querySelector(".histbox li"), 3000, "the history list");
+    if (A.document.querySelector(".histbox img, #pwn")) throw new Error("the history entry's markup was put in the page");
     ev(A, `SIDE_TAB.item = "activity"`);
   },
   "Sign-in: emailed code, then choose a password, then sign in with it": async () => {
