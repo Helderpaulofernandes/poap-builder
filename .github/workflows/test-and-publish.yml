@@ -1,0 +1,52 @@
+# Every push runs tests.html in a headless browser. On main, the site is published only when they all pass,
+# so a broken version never goes live (the last good one stays up).
+name: Test and publish
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: Serve the app
+        run: |
+          python3 -m http.server 8773 >/dev/null 2>&1 &
+          for i in $(seq 1 20); do curl -sf http://localhost:8773/tests.html >/dev/null && break; sleep 0.5; done
+      - name: Run tests.html
+        run: node tools/run-tests.mjs http://localhost:8773/tests.html
+
+  publish:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploy
+        uses: actions/deploy-pages@v4

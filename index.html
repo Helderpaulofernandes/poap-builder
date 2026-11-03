@@ -9,8 +9,8 @@
 <!-- fonts and the Excel / PDF libraries load in the background: the page opens at once, even on a slow connection -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Roboto+Condensed:wght@500;700&display=swap" media="print" onload="this.media='all'">
 <script defer src="vendor/xlsx-0.20.3.full.min.js"></script>   <!-- SheetJS 0.20.3, from cdn.sheetjs.com (0.18.5 had known issues reading crafted files) -->
-<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script defer src="https://unpkg.com/svg2pdf.js@2.2.3/dist/svg2pdf.umd.min.js"></script>
+<script defer src="vendor/jspdf-2.5.1.umd.min.js"></script>
+<script defer src="vendor/svg2pdf-2.2.3.umd.min.js"></script>
 <script src="brand-logo.js"></script>
 <script src="channel.js"></script>
 <style>
@@ -5884,13 +5884,13 @@ $("bP6Edit").onclick = async () => {
    PDF: the same SVG sheet, scaled onto A3 landscape as vectors
    ===================================================================== */
 const FONT_URLS = {
-  normal: "https://cdn.jsdelivr.net/gh/JulietaUla/Montserrat@master/fonts/ttf/Montserrat-Medium.ttf",
-  bold: "https://cdn.jsdelivr.net/gh/JulietaUla/Montserrat@master/fonts/ttf/Montserrat-Bold.ttf",
+  normal: "vendor/fonts/Montserrat-Medium.ttf",
+  bold: "vendor/fonts/Montserrat-Bold.ttf",
 };
 // the condensed summary face, embedded the same way
 const FONT_URLS_CONDENSED = {
-  normal: "https://cdn.jsdelivr.net/fontsource/fonts/roboto-condensed@latest/latin-500-normal.ttf",
-  bold: "https://cdn.jsdelivr.net/fontsource/fonts/roboto-condensed@latest/latin-700-normal.ttf",
+  normal: "vendor/fonts/RobotoCondensed-500.ttf",
+  bold: "vendor/fonts/RobotoCondensed-700.ttf",
 };
 const fontCaches = {};
 async function loadPdfFonts(face = "montserrat") {

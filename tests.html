@@ -1109,6 +1109,8 @@ const TESTS = {
     loadDoc(seedProject(), null);
     const r = await buildPdfBlob();
     T.ok(r.blob.size > 50000, "PDF size " + r.blob.size);
+    T.ok(r.fonts, "the brand font is embedded (from vendor/fonts, not Helvetica)");
+    T.ok(await loadPdfFonts("condensed"), "the condensed font loads too");
   },
 };
 
