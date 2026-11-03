@@ -1192,7 +1192,50 @@ function changed(opts = {}) {
    waiting to reach the server), so the person's own draft is never overwritten */
 function saveLocalCopy() {
   if (CLOUD) return cloudCache();
-  try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {}
+  try { localStorage.setItem(STORE, JSON.stringify(P)); }
+  catch (e) { if (!storeWarned) { storeWarned = true; toast("This browser's quick copy is full (large logos?). The work is still kept under Recover earlier work, but Save it to a file to be safe.", 8000); } }
+  keepDraft();
+  if (!DOC && !HOST && !nudged) {   // a guest who hasn't saved anywhere: one reminder after a few minutes of work
+    firstTouch = firstTouch || Date.now();
+    if (Date.now() - firstTouch > 5 * 60e3) { nudged = true; toast(`This programme is only kept in this browser. Press Save to keep it in a file${cloudOn() ? ", or sign in to work on it with the team" : ""}.`, 9000); }
+  }
+}
+let storeWarned = false, nudged = false, firstTouch = 0;
+
+/* Work kept in this browser: the last 10 programmes worked on here (not team ones, which the server keeps), newest
+   first, so work replaced by New or Open, or never saved to a file, can be got back (Start › Recover earlier work).
+   IndexedDB, so a programme too big for the quick copy above is still kept. */
+const DRAFT_MAX = 10;
+let draftId = null, draftTimer = null, draftQ = Promise.resolve();
+try { draftId = localStorage.getItem(STORE + ":id"); } catch (e) {}
+function newDraftId() { draftId = "d" + uid() + uid(); try { localStorage.setItem(STORE + ":id", draftId); } catch (e) {} }
+function keepDraft(now, ifMissing) {   // ifMissing: only if it isn't kept yet (opened, not changed)
+  if (CLOUD || !P) return draftQ;
+  clearTimeout(draftTimer);
+  if (!now) { draftTimer = setTimeout(() => keepDraft(true), 2000); return draftQ; }
+  if (!draftId) newDraftId();
+  const e = { id: draftId, title: P.meta.title || "", number: P.meta.number || "", at: new Date().toISOString(), items: P.items.length, file: (DOC && DOC.name) || "", json: JSON.stringify(P) };
+  return draftQ = draftQ.then(async () => { const list = (await idbGet("drafts")) || []; if (ifMissing && list.some(x => x.id === e.id)) return; await idbSet("drafts", [e, ...list.filter(x => x.id !== e.id)].slice(0, DRAFT_MAX)); });
+}
+window.addEventListener("pagehide", () => { if (touched) keepDraft(true); });
+async function openRecover() {
+  const list = (await idbGet("drafts")) || [];
+  const name = d => esc([d.number, d.title].filter(Boolean).join(" ") || "Untitled programme");
+  const m = showModal(`<header><h3>Recover earlier work</h3><p>The last ${DRAFT_MAX} programmes worked on in this browser, as they were when you last changed them. Opening one opens a copy: press Save to keep it in a file.</p></header>
+    <div class="body">${list.length ? `<table class="diff"><thead><tr><th>Programme</th><th>Last changed</th><th>Items</th><th>Saved as</th><th></th></tr></thead><tbody>${list.map((d, i) =>
+      `<tr><td><a href="#" data-rec="${i}">${name(d)}</a></td><td>${esc(timeAgo(d.at))}</td><td>${+d.items || 0}</td><td>${d.file ? esc(d.file) : `<span class="note">never saved to a file</span>`}</td><td><a href="#" data-recdel="${i}" title="Remove from this list" aria-label="Remove from this list">✕</a></td></tr>`).join("")}</tbody></table>`
+      : `<p class="note">Nothing kept yet. Programmes you work on in this browser appear here.</p>`}</div>
+    <footer><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Close</button></footer>`);
+  m.querySelectorAll("[data-rec]").forEach(a => a.onclick = e => {
+    e.preventDefault(); const d = list[+a.dataset.rec]; let proj; try { proj = JSON.parse(d.json); } catch (err) { return toast("That copy couldn't be read.", 5000); }
+    m.remove(); ROOT.querySelectorAll(".startscreen").forEach(x => x.remove());
+    guardUnsaved(() => { loadDoc(proj, null); touched = true; keepDraft(true); toast(`Opened a copy of ${[d.number, d.title].filter(Boolean).join(" ") || "the programme"} from ${timeAgo(d.at)}. Press Save to keep it in a file.`, 7000); });
+  });
+  m.querySelectorAll("[data-recdel]").forEach(a => a.onclick = async e => {
+    e.preventDefault(); const d = list[+a.dataset.recdel];
+    if (!confirm(`Remove “${[d.number, d.title].filter(Boolean).join(" ") || "Untitled programme"}” from this list?`)) return;
+    await idbSet("drafts", list.filter(x => x !== d)); m.remove(); openRecover();
+  });
 }
 function viewOnly() {
   if (!CLOUD || CLOUD.role !== "viewer") return false;
@@ -5920,21 +5963,23 @@ function showStatus() {
   const dirty = isDirty();
   let state, text, button = "";
   if (saving) { state = "saving"; text = "Saving…"; }
-  else if (!DOC) { state = "none"; text = HOST ? "Not saved to the library" : "Not saved"; button = "Save now"; }
+  else if (!DOC) { state = "none"; text = HOST ? "Not saved to the library" : touched ? "Only in this browser" : "Not saved"; button = "Save now"; }
   else if (dirty && DOC.kind === "download") { state = "pending"; text = `Changes since ${clock(DOC.savedAt)} download`; button = "Save now"; }
   else if (dirty) { state = "pending"; text = "Unsaved changes · saving in a few seconds"; }
   else { state = "saved"; text = `All changes saved ${clock(DOC.savedAt)}`; }
   if (!saving && titleChanged()) { text += " · title block changed"; button = "Save as new file…"; }
   box.dataset.state = state; s.textContent = text; btn.hidden = !button; if (button) btn.textContent = button;
-  box.title = DOC ? `Saved to ${HOST ? DOC.path : DOC.kind === "file" ? DOC.name + " on this computer" : "your downloads as " + DOC.name}${DOC.kind === "download" ? "" : ". Changes save automatically."}` : "Save once and every change after that is saved automatically.";
+  box.title = DOC ? `Saved to ${HOST ? DOC.path : DOC.kind === "file" ? DOC.name + " on this computer" : "your downloads as " + DOC.name}${DOC.kind === "download" ? "" : ". Changes save automatically."}` : HOST ? "Save once and every change after that is saved automatically." : "Kept in this browser only (see Recover earlier work on the start screen). Save once to a file and every change after that is saved automatically.";
 }
 function loadDoc(project, doc) {
   const team = !!(doc && doc.kind === "cloud");
   if (CLOUD && !team) detachCloud();   // something on this computer opened over a team programme
+  else if (!CLOUD && P && (touched || hadDraft)) keepDraft(true, !touched);   // what's being replaced stays under Recover earlier work
+  hadDraft = false;
   P = upgradeProject(project); DOC = doc; past = []; future = []; EXTERNAL.length = 0; sel = null; MULTI.clear(); touched = false;
   if (DOC && !DOC.titleKey) DOC.titleKey = fileBase();
   rememberProjectBrand();
-  if (!team) { try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {} rememberFile(); }
+  if (!team) { try { localStorage.setItem(STORE, JSON.stringify(P)); } catch (e) {} rememberFile(); newDraftId(); nudged = false; firstTouch = 0; }
   render(); renderSide(); showStatus();
 }
 
@@ -5944,7 +5989,7 @@ async function guardUnsaved(next) {
   while (saving) await new Promise(r => setTimeout(r, 100));
   if (DOC && DOC.kind !== "download" && isDirty()) { if (await saveDoc()) next(); return; }
   if ((!DOC && touched) || (DOC?.kind === "download" && isDirty())) {
-    return showModal(`<header><h3>Save this programme first?</h3><p>${DOC ? "Your latest changes haven't been downloaded." : "It hasn't been saved anywhere yet."} If you continue without saving, those changes are lost.</p></header>
+    return showModal(`<header><h3>Save this programme first?</h3><p>${DOC ? "Your latest changes haven't been downloaded." : "It hasn't been saved anywhere yet."} If you continue without saving, ${DOC ? "those changes are only" : "it's only"} kept under Recover earlier work on the start screen (the last ${DRAFT_MAX} programmes in this browser).</p></header>
       <footer><button class="btn danger" data-act="discard">Don't save</button><span class="spacer" style="flex:1"></span><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save">Save</button></footer>`,
       { discard: () => next(), save: () => { saveDoc().then(ok => ok && next()); } });
   }
@@ -5963,7 +6008,7 @@ async function flushSave() {
   return DOC && !isDirty() ? true : saveDoc();
 }
 window.addEventListener("beforeunload", e => {
-  if ((DOC && DOC.kind !== "download" && (isDirty() || saving)) || (HOST && !DOC && touched)) { e.preventDefault(); e.returnValue = ""; }
+  if ((DOC && DOC.kind !== "download" && (isDirty() || saving)) || (!DOC && !CLOUD && touched)) { e.preventDefault(); e.returnValue = ""; }
 });
 
 /* Someone else saved since we last did: offer to combine their version with ours. */
@@ -6676,7 +6721,9 @@ async function showStartScreen(opts = {}) {
   let last = null, lastKind = null;
   if (HOST) { try { last = JSON.parse(localStorage.getItem(STORE + ":doc")); if (last) lastKind = "library"; } catch (e) {} }
   else if (canPickFiles) { const f = await idbGet("doc"); if (f && f.handle) { last = f; lastKind = "file"; } }
-  const draft = !last && hadDraft && P.items.length;
+  // the draft in this browser: offered unless it's the saved file "Continue" reopens
+  const drafts = HOST ? [] : (await idbGet("drafts")) || [], mine = drafts.find(d => d.id === draftId);
+  const draft = hadDraft && P.items.length && (mine ? !(last && mine.file && mine.file === last.name) : !last);
   const name = s => esc(String(s || "").replace(/\.poap\.json$/i, ""));
   const choice = (act, icon, title, sub, primary) => `<button type="button" class="choice${primary ? " primary" : ""}" data-start="${act}">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${START_ICONS[icon]}</svg>
@@ -6705,8 +6752,8 @@ async function showStartScreen(opts = {}) {
     </div>
     ${team}
     <div class="choices">
-      ${last && !sameAsOpen(last) ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, !team) : ""}
-      ${draft && !back ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, "Unsaved work kept in this browser.", !team) : ""}
+      ${last && !sameAsOpen(last) ? choice("continue", "continue", `Continue “${name(last.name)}”`, `Last saved ${esc(timeAgo(last.savedAt))}${lastKind === "library" ? ` in ${esc(HOST.libraryTitle)}` : ", on this computer"}.`, !team && !draft) : ""}
+      ${draft && !back ? choice("draft", "continue", `Continue “${name(P.meta.title)}”`, `Unsaved work kept in this browser${mine ? `, last changed ${esc(timeAgo(mine.at))}` : ""}.`, !team || !!last) : ""}
       ${back ? choice("back", "continue", `Back to “${name(P.meta.title || P.meta.number)}”`, "Close this and carry on with the programme that's open.", true) : ""}
       ${choice("new", "new", "New programme", `Start blank. You'll pick where to save it in ${where}; after that it saves itself.`, !last && !draft && !back && !team)}
       ${choice("open", "open", "Open a saved programme…", HOST ? `From ${esc(HOST.libraryTitle)} or your computer.` : "A .poap.json file.")}
@@ -6714,6 +6761,7 @@ async function showStartScreen(opts = {}) {
       ${choice("excel", "excel", "Start from an Excel workbook…", "A programme exported from PoaP Builder, or the older Visio workbook.")}
       ${choice("example", "example", "Explore the example", "A sample programme to try things out. Nothing is saved until you choose to.")}
     </div>
+    ${drafts.length ? `<p class="tourlink"><button type="button" class="linkbtn" data-start="recover">Recover earlier work (${drafts.length})</button></p>` : ""}
     ${!HOST && !canPickFiles ? `<p class="note warnnote">This browser can't save to a file automatically; Save downloads a copy instead. Use Microsoft Edge or Google Chrome for auto-save.</p>` : ""}
     ${cloudOn() ? `<p class="tourlink"><button type="button" class="linkbtn" data-start="tour">New here? Take the tour</button></p>` : ""}
     ${channelCard()}
@@ -6730,6 +6778,7 @@ async function showStartScreen(opts = {}) {
     if (a === "signin") return openSignIn();
     if (a === "signout") return signOut().then(() => { toast("Signed out."); showStartScreen(); });
     if (a === "tour") return startPoapTour({ fromStart: true });
+    if (a === "recover") return openRecover();
     if (a.startsWith("cloud:")) { close(); return openCloud(a.slice(6)).catch(err => { toast("Couldn't open the team programme: " + (err.message || err), 7000); showStartScreen(); }); }
     close();
     if (a === "continue") return lastKind === "library" ? reconnectLibrary(last) : reconnectFile(last);

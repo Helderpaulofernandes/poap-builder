@@ -864,6 +864,39 @@ const TESTS = {
     T.ok(shown.every(h => !/<img src=nothing/.test(h)), "the text is shown as text");
     loadDoc(seedProject(), null);
   },
+  "Guest work replaced by New is kept under Recover earlier work": async () => {
+    const waitFor = async (fn, ms, what) => { for (let t = 0; t < ms; t += 50) { if (fn()) return; await new Promise(r => setTimeout(r, 50)); } throw new Error("timed out waiting for " + what); };
+    const keep = await idbGet("drafts"), keepDoc = await idbGet("doc");
+    try {
+      await idbSet("drafts", null);
+      loadDoc(seedProject(), null);
+      commit(p => { p.meta.title = "Lost Work"; });
+      T.eq($("saved").textContent, "Only in this browser", "the status says where it is");
+      const n = P.items.length;
+      startNew(blankProject()); await draftQ;
+      const list = await idbGet("drafts");
+      const d = list.find(x => x.title === "Lost Work");
+      T.ok(d && d.items === n && !d.file, "the replaced programme is in the list");
+      // the start screen offers it, and opening it brings it back
+      await showStartScreen(); const rec = document.querySelector('[data-start="recover"]');
+      T.ok(rec && /Recover earlier work/.test(rec.textContent), "the start screen offers to recover");
+      rec.click(); await waitFor(() => document.querySelector("[data-rec]"), 2000, "the list of kept work");
+      const link = [...document.querySelectorAll("[data-rec]")].find(x => /Lost Work/.test(x.textContent)); link.click();
+      document.querySelectorAll(".modal [data-act=discard]").forEach(x => x.click());   // the blank programme isn't worth keeping
+      await waitFor(() => P.meta.title === "Lost Work", 2000, "the work back");
+      T.eq(P.items.length, n, "all of it");
+      // unsaved work in this browser is offered even when a saved file could be continued
+      await idbSet("doc", { name: "Older.poap.json", savedAt: new Date().toISOString(), handle: { kind: "file" } });
+      await keepDraft(true); hadDraft = true;
+      await showStartScreen();
+      T.ok(document.querySelector('.startscreen [data-start="draft"]'), "the unsaved work is offered");
+      T.ok(document.querySelector('.startscreen [data-start="draft"]').classList.contains("primary"), "first choice");
+    } finally {
+      T.clean(); document.querySelectorAll(".startscreen").forEach(x => x.remove()); hadDraft = false;
+      await idbSet("drafts", keep); await idbSet("doc", keepDoc);
+      loadDoc(seedProject(), null);
+    }
+  },
   "A dialog stays open when a text selection ends on the backdrop": () => {
     const m = showModal(`<div class="body"><input id="tSel" value="Planned (Rev A)"></div>`, {});
     const fire = (t, type) => t.dispatchEvent(new MouseEvent(type, { bubbles: true }));
